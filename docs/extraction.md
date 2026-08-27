@@ -5,7 +5,10 @@ original `SimplicityGuy/discogsography` monorepo.
 
 The standalone clone was filtered with `git-filter-repo` to retain root Compose
 files, the production secret examples and bootstrap/entrypoint scripts,
-deployment and API performance tests, and stack-level operations documents.
+deployment tests, the performance environment configuration, and stack-level operations
+documents. The filtered history retains the original performance runner, while its
+current source and image ownership moved to `catalog-api` to avoid duplicate release
+units.
 Service source trees and Dockerfiles were intentionally excluded because their
 new repositories own builds and image releases.
 

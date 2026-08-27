@@ -22,8 +22,7 @@ digest policy, base and production Compose merges, deployment regression tests,
 and secret leaks. `config/validation.env` contains non-published dummy digests
 used only for syntax validation.
 
-`just build` additionally requires Docker Buildx and builds the locked,
-non-root API performance-test image without publishing it.
+`just build` validates both Compose configurations without starting containers.
 
 ## Configure an environment
 
@@ -55,6 +54,9 @@ a production configuration.
   `config/provenance.json`.
 - Runtime secrets, `.env`, Docker authentication, volumes, and performance
   results are untracked.
+- `catalog-api` owns the performance-runner source and image. This repository owns its
+  environment configuration and an explicitly invoked, digest-pinned `just performance`
+  recipe; CI never starts it.
 - This repository is intentionally unversioned: deployable source repositories
   own artifact versions, while environments record their exact image digests.
 - CI performs source/Compose validation only. It neither starts the production

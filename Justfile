@@ -11,6 +11,7 @@ source-check:
     uvx --from ruff==0.16.4 ruff check .
     uv run python scripts/check-images.py
     uv run python scripts/check-licenses.py
+    uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"
     bash scripts/check-compose.sh
     gitleaks git --config .gitleaks.toml --redact --no-banner
     gitleaks dir . --config .gitleaks.toml --redact --no-banner
@@ -22,7 +23,10 @@ test:
 
 build:
     bash scripts/check-compose.sh
-    bash scripts/build-perftest.sh
+
+# Requires an approved, published catalog-api performance image and a running environment.
+performance:
+    bash scripts/run-perftest.sh
 
 config:
     docker compose config
