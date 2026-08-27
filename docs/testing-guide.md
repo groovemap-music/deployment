@@ -1,10 +1,10 @@
 # 🧪 Testing Guide
 
-> Comprehensive testing strategies for the Discogsography monorepo
+> Comprehensive testing strategies for the GrooveMap monorepo
 
 ## Overview
 
-Discogsography employs a multi-layered testing approach including unit tests, integration tests, and end-to-end (E2E)
+GrooveMap employs a multi-layered testing approach including unit tests, integration tests, and end-to-end (E2E)
 tests. This guide covers testing patterns, best practices, and common scenarios.
 
 ## 🎯 Testing Philosophy
@@ -443,7 +443,7 @@ async def test_dashboard_navigation(page: Page, test_server):
     await page.wait_for_url("**/explore")
 
     # Verify page loaded
-    assert await page.title() == "Music Discovery - Discogsography"
+    assert await page.title() == "Music Discovery - GrooveMap"
 ```
 
 ### Browser Configuration

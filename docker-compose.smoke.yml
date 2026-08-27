@@ -1,0 +1,13 @@
+---
+
+# Local, disposable infrastructure smoke overlay. Do not publish database,
+# broker, or cache ports while exercising clean startup and health checks.
+services:
+  rabbitmq:
+    ports: !override []
+  postgres:
+    ports: !override []
+  neo4j:
+    ports: !override []
+  redis:
+    ports: !override []

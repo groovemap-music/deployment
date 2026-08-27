@@ -1,5 +1,5 @@
 ---
-# Discogsography API Performance Test Configuration
+# GrooveMap API Performance Test Configuration
 #
 # Customize this file to test different entities against your dataset.
 # All entity names must exist in your Neo4j graph for meaningful results.

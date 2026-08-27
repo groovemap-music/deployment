@@ -2,7 +2,7 @@
 set -e
 
 echo "=================================================="
-echo "  Discogsography API Performance Test"
+echo "  GrooveMap API Performance Test"
 echo "=================================================="
 echo ""
 
@@ -13,6 +13,6 @@ echo ""
 echo "Results saved to /results/"
 echo ""
 echo "To collect API logs, run from the host:"
-echo "  docker cp discogsography-api:/logs/api.log ./perftest-results/"
-echo "  docker cp discogsography-api:/logs/profiling.log ./perftest-results/"
+echo "  docker cp groovemap-api:/logs/api.log ./perftest-results/"
+echo "  docker cp groovemap-api:/logs/profiling.log ./perftest-results/"
 echo "=================================================="

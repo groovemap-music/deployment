@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reset a user's password in the Discogsography PostgreSQL database.
+# Reset a user's password in the GrooveMap PostgreSQL database.
 #
 # Usage:
 #   ./scripts/reset-password.sh <container_name> <postgres_password> <email> <new_password>

@@ -14,7 +14,6 @@ from pathlib import Path
 
 from tests.deploy.test_docker_compose_prod import _base_compose, _prod_compose
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

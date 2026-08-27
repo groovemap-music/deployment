@@ -10,7 +10,7 @@
 
 ## Overview
 
-Discogsography provides comprehensive monitoring and observability features to track system health, performance, and processing progress. This guide covers dashboards, debugging tools, metrics, and operational procedures.
+GrooveMap provides comprehensive monitoring and observability features to track system health, performance, and processing progress. This guide covers dashboards, debugging tools, metrics, and operational procedures.
 
 ## 📊 Dashboard
 
@@ -372,11 +372,11 @@ Login: `discogsography` / `discogsography`
 
 ```bash
 # Queue overview
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/queues
 
 # Specific queue
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/queues/%2F/artists_queue
 ```
 
@@ -537,7 +537,7 @@ PGPASSWORD=discogsography psql \
 
 ```bash
 # Check management API
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/overview
 ```
 

@@ -13,9 +13,8 @@ is exactly what happens "if unset".
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
@@ -37,12 +36,9 @@ def test_documents_encryption_master_key_instead() -> None:
 
 
 def test_env_example_var_names_are_all_read_by_config_or_documented_elsewhere() -> None:
-    """The var this bead renamed (ENCRYPTION_MASTER_KEY) must be one that
-    common/config.py's get_secret() convention actually consults — i.e. it
-    isn't itself a new dead var.
-    """
-    config_text = (REPO_ROOT / "common" / "config.py").read_text()
-    assert 'get_secret("ENCRYPTION_MASTER_KEY")' in config_text
+    """The production overlay must deliver the documented key as a file secret."""
+    compose_text = (REPO_ROOT / "docker-compose.prod.yml").read_text()
+    assert "ENCRYPTION_MASTER_KEY_FILE: /run/secrets/encryption_master_key" in compose_text
 
 
 def test_migrate_encryption_key_script_still_references_old_name() -> None:

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Keeping Discogsography up-to-date and running smoothly**
+**Keeping GrooveMap up-to-date and running smoothly**
 
 [🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [👨‍💻 Development Guide](development.md)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-Regular maintenance keeps Discogsography secure, performant, and up-to-date. This guide covers dependency management, database maintenance, and system health monitoring.
+Regular maintenance keeps GrooveMap secure, performant, and up-to-date. This guide covers dependency management, database maintenance, and system health monitoring.
 
 ## 📦 Dependency Management
 
@@ -320,16 +320,16 @@ FROM pg_statio_user_tables;
 
 ```bash
 # List all queues
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/queues
 
 # Purge a queue (if needed)
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   -X DELETE \
   http://localhost:15672/api/queues/%2F/queue_name/contents
 
 # Delete a queue
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   -X DELETE \
   http://localhost:15672/api/queues/%2F/queue_name
 ```
@@ -338,11 +338,11 @@ curl -u discogsography:discogsography \
 
 ```bash
 # List connections
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/connections
 
 # Close a connection
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   -X DELETE \
   http://localhost:15672/api/connections/connection_name
 ```
@@ -652,7 +652,7 @@ PGPASSWORD=discogsography psql -h localhost -p 5433 \
   -U discogsography -d discogsography -c "\du"
 
 # RabbitMQ
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/users
 ```
 

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Detailed system architecture and component documentation for Discogsography**
+**Detailed system architecture and component documentation for GrooveMap**
 
 [🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-Discogsography is built as a microservices platform that processes large-scale music data from Discogs and transforms it into queryable knowledge graphs and relational databases. The architecture emphasizes scalability, reliability, and performance.
+GrooveMap is built as a microservices platform that processes large-scale music data from Discogs and transforms it into queryable knowledge graphs and relational databases. The architecture emphasizes scalability, reliability, and performance.
 
 ## Core Services
 

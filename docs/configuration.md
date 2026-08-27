@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Complete configuration reference for all Discogsography services**
+**Complete configuration reference for all GrooveMap services**
 
 [🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [🚀 Quick Start](quick-start.md)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-Discogsography uses environment variables for all configuration. This approach provides flexibility for different deployment environments (development, staging, production) without code changes.
+GrooveMap uses environment variables for all configuration. This approach provides flexibility for different deployment environments (development, staging, production) without code changes.
 
 ## Configuration Methods
 
@@ -388,7 +388,7 @@ JWT_EXPIRE_MINUTES=60     # 1 hour
 JWT_EXPIRE_MINUTES=1440   # 24 hours
 
 # Discogs User-Agent (required for Discogs API)
-DISCOGS_USER_AGENT="Discogsography/1.0 +https://github.com/SimplicityGuy/discogsography"
+DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — public Discogs OAuth callback URL. When set, end users no longer
 # have to copy/paste a verifier code; Discogs redirects directly back to the
@@ -603,7 +603,7 @@ POSTGRES_PASSWORD="discogsography"
 POSTGRES_DATABASE="discogsography"
 REDIS_HOST="localhost"
 JWT_SECRET_KEY="your-secret-key-here"
-DISCOGS_USER_AGENT="Discogsography/1.0 +https://github.com/SimplicityGuy/discogsography"
+DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — HKDF master encryption key (derives OAuth + TOTP encryption keys)
 # Required for TOTP 2FA. Without it, OAuth tokens are stored unencrypted and 2FA is disabled.
@@ -625,7 +625,7 @@ INSIGHTS_INTERNAL_SECRET="change-me-in-production"
 # Get your API key from https://resend.com/api-keys
 # RESEND_API_KEY="your-resend-api-key"
 # RESEND_SENDER_EMAIL="noreply@yourdomain.com"   # Must be verified in Resend
-# RESEND_SENDER_NAME="Discogsography"
+# RESEND_SENDER_NAME="GrooveMap"
 
 # Optional — CORS origins (comma-separated; omit to disable CORS)
 CORS_ORIGINS="http://localhost:8003,http://localhost:8006"
@@ -915,7 +915,7 @@ Health check: http://localhost:8010/health
 
 ```bash
 # Required
-API_BASE_URL="http://api:8004"   # Base URL for the Discogsography API
+API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API
 ```
 
 **Notes**: The MCP server has no direct database dependencies — all data is fetched via the API service over HTTP. It supports `stdio` (default, for local use with Claude Desktop/Cursor/Zed) and `streamable-http` (for hosted deployments) transports.
@@ -947,7 +947,7 @@ REDIS_HOST=localhost
 # JWT (API)
 JWT_SECRET_KEY=dev-secret-key-not-for-production
 JWT_EXPIRE_MINUTES=1440
-DISCOGS_USER_AGENT="Discogsography/1.0-dev +https://github.com/SimplicityGuy/discogsography"
+DISCOGS_USER_AGENT="GrooveMap/1.0-dev +https://groovemap.music"
 
 # Data
 DISCOGS_ROOT=/tmp/discogs-data-dev
@@ -1008,7 +1008,7 @@ REDIS_HOST=redis
 
 # JWT (optional non-secret settings)
 JWT_EXPIRE_MINUTES=1440
-DISCOGS_USER_AGENT="Discogsography/1.0 +https://github.com/SimplicityGuy/discogsography"
+DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Data
 DISCOGS_ROOT=/mnt/data/discogs

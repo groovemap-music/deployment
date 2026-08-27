@@ -26,7 +26,6 @@ from typing import Any
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Every Python service whose Dockerfile builds a /app/start.sh shim that sleeps
@@ -65,18 +64,11 @@ class TestExtractorStartupDelayRemoved:
             env = compose["services"][name].get("environment", {}) or {}
             assert "STARTUP_DELAY" not in env, f"{name} still sets the dead STARTUP_DELAY knob"
 
-    def test_extractor_dockerfile_has_no_start_sh_shim(self) -> None:
-        """The extractor image execs the raw binary directly — confirms STARTUP_DELAY
-        genuinely has no code path that would honor it, so dropping the compose
-        knob (rather than implementing it) is the correct fix."""
-        dockerfile = (REPO_ROOT / "extractor" / "Dockerfile").read_text()
-        assert "start.sh" not in dockerfile
-        assert 'ENTRYPOINT ["extractor"]' in dockerfile
-
-    def test_extractor_rust_source_has_no_startup_delay_reference(self) -> None:
-        src_dir = REPO_ROOT / "extractor" / "src"
-        for path in src_dir.rglob("*.rs"):
-            assert "STARTUP_DELAY" not in path.read_text(), f"{path} unexpectedly references STARTUP_DELAY"
+    def test_extractor_services_consume_the_same_released_image(self) -> None:
+        compose = _base_compose()
+        images = {compose["services"][name]["image"] for name in EXTRACTOR_SERVICES}
+        assert len(images) == 1
+        assert images.pop().startswith("${CATALOG_INGESTION_IMAGE:?")
 
 
 class TestPythonServicesForwardSignalsDuringStartupDelay:
@@ -96,23 +88,14 @@ class TestPythonServicesForwardSignalsDuringStartupDelay:
             assert compose["services"][name].get("init") is not True
 
     def test_schema_init_does_not_need_init(self) -> None:
-        """schema-init execs python directly with no start.sh shim (verified by the
-        bug-hunt), so it never runs a PID-1 shell sleep either."""
+        """The deployment consumes the schema repository's released image."""
         compose = _base_compose()
         assert compose["services"]["schema-init"].get("init") is not True
-        dockerfile = (REPO_ROOT / "schema-init" / "Dockerfile").read_text()
-        assert "start.sh" not in dockerfile
+        assert "build" not in compose["services"]["schema-init"]
+        assert compose["services"]["schema-init"]["image"].startswith("${DATABASE_SCHEMA_IMAGE:?")
 
 
-class TestConfigureDiscogsContainerDefault:
-    """discogsography-wa1x: the recipe's default container must exist."""
-
-    def test_justfile_default_matches_compose_container_name(self) -> None:
-        justfile_text = (REPO_ROOT / "justfile").read_text()
+class TestRepositoryBoundary:
+    def test_no_service_uses_a_sibling_build_context(self) -> None:
         compose = _base_compose()
-        api_container_name = compose["services"]["api"]["container_name"]
-
-        assert f'container="{api_container_name}"' in justfile_text
-        # Regression guard: the old default had a Compose-auto-naming "-1" suffix
-        # that never matched the pinned container_name.
-        assert f'container="{api_container_name}-1"' not in justfile_text
+        assert all("build" not in service for service in compose["services"].values())

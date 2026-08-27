@@ -9,10 +9,9 @@ was added.
 
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
 import subprocess
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "create-secrets.sh"
@@ -30,7 +29,7 @@ def test_generates_redis_password_secret(tmp_path: Path) -> None:
     shutil.copy(SCRIPT, scratch_script)
     scratch_script.chmod(0o755)
 
-    result = subprocess.run(  # noqa: S603 — fixed args, no shell, test-controlled script
+    result = subprocess.run(
         [_BASH, str(scratch_script)],
         capture_output=True,
         text=True,

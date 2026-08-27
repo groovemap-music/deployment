@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Discogsography API Performance Test Runner.
+"""GrooveMap API Performance Test Runner.
 
 Sequentially times all API query endpoints, computes statistics,
 and writes results to JSON and human-readable report files.
@@ -8,18 +8,17 @@ and writes results to JSON and human-readable report files.
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
-from itertools import combinations
 import json
 import math
-from pathlib import Path
 import sys
 import time
+from datetime import UTC, datetime
+from itertools import combinations
+from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Database index listing
@@ -33,9 +32,8 @@ def list_neo4j_indexes(config: dict[str, Any]) -> list[str]:
         return ["  (neo4j_uri not configured — skipped)"]
     driver = None
     try:
-        from neo4j import GraphDatabase
-
         from common.config import neo4j_security_kwargs
+        from neo4j import GraphDatabase
 
         driver = GraphDatabase.driver(
             uri,
@@ -744,7 +742,7 @@ def write_report(
     report_path = output_dir / "perftest-report.txt"
     lines = [
         "=" * 78,
-        "  Discogsography API Performance Test Report",
+        "  GrooveMap API Performance Test Report",
         f"  Generated: {datetime.now(tz=UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
         "=" * 78,
         "",
@@ -812,7 +810,7 @@ def write_report(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Discogsography API Performance Test")
+    parser = argparse.ArgumentParser(description="GrooveMap API Performance Test")
     parser.add_argument(
         "--config",
         default="/config/config.yaml",

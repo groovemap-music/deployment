@@ -1,0 +1,110 @@
+---
+# Promoted from groovemap-music/catalog-ingestion commit
+# e7038d1492da54e91444bfa990598e8963972ce2. Update provenance.json whenever
+# this file changes.
+skip_records:
+  artists:
+    - field: profile
+      contains: "DO NOT USE"
+      reason: "Upstream junk entry marked DO NOT USE"
+  labels:
+    - field: profile
+      contains: "DO NOT USE"
+      reason: "Upstream junk entry marked DO NOT USE"
+
+filters:
+  releases:
+    - field: genres.genre
+      remove_matching: "^\\d+$"
+      reason: "Strip legacy numeric genre IDs from upstream data"
+    - field: released
+      nullify_when:
+        type: range
+        below: 1860
+        above: 2027
+      reason: "Treat sentinel and implausible release dates as unknown"
+    - field: year
+      nullify_when:
+        type: range
+        below: 1860
+        above: 2027
+      reason: "Treat sentinel and implausible years as unknown"
+  masters:
+    - field: genres.genre
+      remove_matching: "^\\d+$"
+      reason: "Strip legacy numeric genre IDs from upstream data"
+    - field: year
+      nullify_when:
+        type: range
+        below: 1860
+        above: 2027
+      reason: "Treat sentinel and implausible years as unknown"
+
+rules:
+  releases:
+    - name: year-out-of-range
+      description: "Release year is before 1860 or after current year + 1"
+      field: year
+      condition:
+        type: range
+        min: 1860
+        max: 2027
+      severity: warning
+    - name: missing-title
+      description: "Release has no title"
+      field: title
+      condition:
+        type: required
+      severity: error
+    - name: genre-not-recognized
+      description: "Genre value is not in the known Discogs genre list"
+      field: genres.genre
+      condition:
+        type: enum
+        values:
+          - Blues
+          - Brass & Military
+          - "Children's"
+          - Classical
+          - Electronic
+          - "Folk, World, & Country"
+          - Funk / Soul
+          - Hip Hop
+          - Jazz
+          - Latin
+          - Non-Music
+          - Pop
+          - Reggae
+          - Rock
+          - Stage & Screen
+      severity: warning
+    - name: genre-is-numeric
+      description: "Genre value is purely numeric — likely a parsing error"
+      field: genres.genre
+      condition:
+        type: regex
+        pattern: "^\\d+$"
+      severity: error
+  artists:
+    - name: empty-artist-name
+      description: "Artist has no name"
+      field: name
+      condition:
+        type: required
+      severity: error
+  labels:
+    - name: empty-label-name
+      description: "Label has no name"
+      field: name
+      condition:
+        type: required
+      severity: error
+  masters:
+    - name: year-out-of-range
+      description: "Master year is before 1860 or after current year + 1"
+      field: year
+      condition:
+        type: range
+        min: 1860
+        max: 2027
+      severity: warning

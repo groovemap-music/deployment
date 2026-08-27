@@ -14,10 +14,9 @@ invokes it with the right arguments.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
 import textwrap
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "redis-entrypoint.sh"
@@ -63,7 +62,7 @@ def _run_with_stub_entrypoint(tmp_path: Path, secret_file: Path | None) -> subpr
     patched_script.write_text(SCRIPT.read_text().replace("/run/secrets/redis_password", str(secrets_dir / "redis_password")))
     patched_script.chmod(0o755)
 
-    return subprocess.run(  # noqa: S603 — fixed args, test-controlled script/paths, no shell
+    return subprocess.run(
         [str(patched_script), "redis-server", "--appendonly", "yes"],
         capture_output=True,
         text=True,

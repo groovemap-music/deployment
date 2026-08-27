@@ -1,6 +1,6 @@
 # Platform Targeting Configuration
 
-This document explains how Discogsography handles platform-specific Python package wheels to ensure compatibility with
+This document explains how GrooveMap handles platform-specific Python package wheels to ensure compatibility with
 our Docker build environments.
 
 ## Problem

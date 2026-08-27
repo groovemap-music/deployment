@@ -1,5 +1,9 @@
 ---
 
+# This repository deploys prebuilt images from independently versioned source
+# repositories. Every internal image variable is required and must use an
+# immutable registry digest; `scripts/check-images.py` enforces that contract.
+
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -16,7 +20,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management
+    image: rabbitmq:4-management@sha256:45226f38499559b9f56875c752cc6689ff90e8f20796fe80fd9bc28d64723031
     container_name: discogsography-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -58,7 +62,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     container_name: discogsography-postgres
     hostname: postgres
     command:
@@ -95,7 +99,7 @@ services:
 
   # Neo4j graph database
   neo4j:
-    image: neo4j:2026-community
+    image: neo4j:2026-community@sha256:dbc377fb9cd8fe8dabc19d3041b197d5ca0ef8bae514cea175b8df265e5b7a76
     container_name: discogsography-neo4j
     hostname: neo4j
     ulimits:
@@ -146,7 +150,7 @@ services:
 
   # Redis cache
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     container_name: discogsography-redis
     hostname: redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -174,14 +178,7 @@ services:
   # schema before any other service starts.  Docker Compose waits for it to exit
   # successfully (service_completed_successfully) before starting dependents.
   schema-init:
-    build:
-      context: .
-      dockerfile: schema-init/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/schema-init:latest
+    image: "${DATABASE_SCHEMA_IMAGE:?Set DATABASE_SCHEMA_IMAGE to a digest-pinned database-schema image}"
     container_name: discogsography-schema-init
     hostname: schema-init
     user: "${UID:-1000}:${GID:-1000}"
@@ -216,14 +213,7 @@ services:
 
   # API service — user accounts, JWT, Discogs OAuth
   api:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/api:latest
+    image: "${CATALOG_API_IMAGE:?Set CATALOG_API_IMAGE to a digest-pinned catalog-api image}"
     container_name: discogsography-api
     hostname: api
     user: "${UID:-1000}:${GID:-1000}"
@@ -307,13 +297,7 @@ services:
 
   # Rust-based extractor service for Discogs data
   extractor-discogs:
-    build:
-      context: .
-      dockerfile: extractor/Dockerfile
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/extractor:latest
+    image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
     container_name: discogsography-extractor-discogs
     hostname: extractor-discogs
     command: ["--source", "discogs"]
@@ -326,11 +310,11 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: discogsography
       RABBITMQ_USERNAME: discogsography
-      DATA_QUALITY_RULES: /discogs-data/extraction-rules.yaml
+      DATA_QUALITY_RULES: /config/extraction-rules.yaml
     volumes:
       - discogs_data:/discogs-data
       - extractor_discogs_logs:/logs
-      - ./extractor/extraction-rules.yaml:/discogs-data/extraction-rules.yaml:ro
+      - ./config/extraction-rules.yaml:/config/extraction-rules.yaml:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -351,13 +335,7 @@ services:
 
   # Rust-based extractor service for MusicBrainz data
   extractor-musicbrainz:
-    build:
-      context: .
-      dockerfile: extractor/Dockerfile
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/extractor:latest
+    image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
     container_name: discogsography-extractor-musicbrainz
     hostname: extractor-musicbrainz
     command: ["--source", "musicbrainz"]
@@ -393,14 +371,7 @@ services:
 
   # Graphinator service
   graphinator:
-    build:
-      context: .
-      dockerfile: graphinator/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/graphinator:latest
+    image: "${DISCOGS_GRAPH_ENRICHER_IMAGE:?Set DISCOGS_GRAPH_ENRICHER_IMAGE to a digest-pinned discogs-graph-enricher image}"
     container_name: discogsography-graphinator
     hostname: graphinator
     user: "${UID:-1000}:${GID:-1000}"
@@ -449,14 +420,7 @@ services:
 
   # Brainzgraphinator service — MusicBrainz Neo4j enrichment
   brainzgraphinator:
-    build:
-      context: .
-      dockerfile: brainzgraphinator/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/brainzgraphinator:latest
+    image: "${MUSICBRAINZ_GRAPH_ENRICHER_IMAGE:?Set MUSICBRAINZ_GRAPH_ENRICHER_IMAGE to a digest-pinned musicbrainz-graph-enricher image}"
     container_name: discogsography-brainzgraphinator
     hostname: brainzgraphinator
     user: "${UID:-1000}:${GID:-1000}"
@@ -505,14 +469,7 @@ services:
 
   # Tableinator service
   tableinator:
-    build:
-      context: .
-      dockerfile: tableinator/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/tableinator:latest
+    image: "${DISCOGS_SQL_LOADER_IMAGE:?Set DISCOGS_SQL_LOADER_IMAGE to a digest-pinned discogs-sql-loader image}"
     container_name: discogsography-tableinator
     hostname: tableinator
     user: "${UID:-1000}:${GID:-1000}"
@@ -562,14 +519,7 @@ services:
 
   # Brainztableinator service (MusicBrainz data to PostgreSQL)
   brainztableinator:
-    build:
-      context: .
-      dockerfile: brainztableinator/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/brainztableinator:latest
+    image: "${MUSICBRAINZ_SQL_LOADER_IMAGE:?Set MUSICBRAINZ_SQL_LOADER_IMAGE to a digest-pinned musicbrainz-sql-loader image}"
     container_name: discogsography-brainztableinator
     hostname: brainztableinator
     user: "${UID:-1000}:${GID:-1000}"
@@ -619,14 +569,7 @@ services:
 
   # Dashboard service
   dashboard:
-    build:
-      context: .
-      dockerfile: dashboard/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/dashboard:latest
+    image: "${OPERATIONS_CONSOLE_IMAGE:?Set OPERATIONS_CONSOLE_IMAGE to a digest-pinned operations-console image}"
     container_name: discogsography-dashboard
     hostname: dashboard
     user: "${UID:-1000}:${GID:-1000}"
@@ -686,14 +629,7 @@ services:
 
   # Explore service
   explore:
-    build:
-      context: .
-      dockerfile: explore/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/explore:latest
+    image: "${GRAPH_EXPLORER_IMAGE:?Set GRAPH_EXPLORER_IMAGE to a digest-pinned graph-explorer image}"
     container_name: discogsography-explore
     hostname: explore
     user: "${UID:-1000}:${GID:-1000}"
@@ -732,14 +668,7 @@ services:
 
   # Insights service — precomputed analytics and music trends
   insights:
-    build:
-      context: .
-      dockerfile: insights/Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-    image: discogsography/insights:latest
+    image: "${ANALYTICS_ENGINE_IMAGE:?Set ANALYTICS_ENGINE_IMAGE to a digest-pinned analytics-engine image}"
     container_name: discogsography-insights
     hostname: insights
     user: "${UID:-1000}:${GID:-1000}"

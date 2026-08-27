@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Get Discogsography up and running in minutes**
+**Get GrooveMap up and running in minutes**
 
 [🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [🏛️ Architecture](architecture.md)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-This guide will help you get Discogsography running quickly, whether you're using Docker Compose for a simple setup or setting up a local development environment.
+This guide will help you get GrooveMap running quickly, whether you're using Docker Compose for a simple setup or setting up a local development environment.
 
 ## ✅ Prerequisites
 
@@ -44,7 +44,7 @@ The fastest way to get started is using Docker Compose, which handles all servic
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/SimplicityGuy/discogsography.git
+git clone https://github.com/groovemap-music/deployment.git
 cd discogsography
 ```
 
@@ -184,7 +184,7 @@ export REDIS_HOST="localhost"
 
 # API settings
 export JWT_SECRET_KEY="dev-secret-key-change-in-production"
-export DISCOGS_USER_AGENT="Discogsography/1.0 +https://github.com/SimplicityGuy/discogsography"
+export DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional: Set log level
 export LOG_LEVEL="INFO"  # or DEBUG for detailed output
@@ -368,7 +368,7 @@ For more detailed troubleshooting, see the [Troubleshooting Guide](troubleshooti
 
 ## 🎓 Next Steps
 
-Now that you have Discogsography running:
+Now that you have GrooveMap running:
 
 1. **Explore the Dashboard**: http://localhost:8003
 

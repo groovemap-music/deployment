@@ -1,0 +1,31 @@
+[project]
+name = "groovemap-deployment-validation"
+version = "0.0.0"
+description = "Validation tooling for the unversioned GrooveMap deployment repository"
+requires-python = ">=3.13"
+dependencies = ["pyyaml==6.0.3"]
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.4",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "2 days"
+
+[tool.ruff]
+line-length = 150
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "PTH", "RUF", "S", "SIM", "UP", "W"]
+ignore = ["E501", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S105", "S106", "S603"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -q --strict-markers --tb=short"
+testpaths = ["tests/deploy"]

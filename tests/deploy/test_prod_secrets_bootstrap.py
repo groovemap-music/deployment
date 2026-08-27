@@ -17,12 +17,11 @@ consumes must be declared at the top level.
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from tests.deploy.test_docker_compose_prod import _load_compose
-
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 PROD_COMPOSE = REPO_ROOT / "docker-compose.prod.yml"

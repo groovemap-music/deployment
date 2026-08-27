@@ -1,0 +1,5 @@
+httpx
+neo4j
+psycopg[binary]
+psycopg2-binary
+pyyaml

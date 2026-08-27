@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Common issues and solutions for Discogsography**
+**Common issues and solutions for GrooveMap**
 
 [🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [📊 Monitoring](monitoring.md)
 
@@ -10,7 +10,7 @@
 
 ## Overview
 
-This guide covers common issues you might encounter while using Discogsography and provides step-by-step solutions. For real-time monitoring and debugging tools, see the [Monitoring Guide](monitoring.md).
+This guide covers common issues you might encounter while using GrooveMap and provides step-by-step solutions. For real-time monitoring and debugging tools, see the [Monitoring Guide](monitoring.md).
 
 ## 🚨 Common Issues & Solutions
 
@@ -91,7 +91,7 @@ docker-compose ps rabbitmq
 docker-compose logs rabbitmq
 
 # Test connection
-curl -u discogsography:discogsography http://localhost:15672/api/overview
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" http://localhost:15672/api/overview
 
 # Check if port is accessible
 netstat -an | grep 5672
@@ -456,7 +456,7 @@ open http://localhost:15672
 just monitor
 
 # Or API
-curl -u discogsography:discogsography \
+curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
   http://localhost:15672/api/queues
 ```
 

@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+# These two retained source commits contain only documented local-development
+# basic-auth examples and a synthetic API-key detector fixture. Current files
+# use environment variables instead. The allowlist is commit-exact so future
+# findings, other history, and the entire current tree remain scanned.
+[[allowlists]]
+description = "Reviewed historical development examples"
+commits = [
+  "8911ba0edeebbefeed10b23bcce5d67619490694",
+  "896cd17aa27df3bc50c9d0faa54939d968532b36",
+]

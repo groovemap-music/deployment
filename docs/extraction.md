@@ -1,0 +1,41 @@
+# Source extraction
+
+`deployment` was extracted without modifying or deleting content from the
+original `SimplicityGuy/discogsography` monorepo.
+
+The standalone clone was filtered with `git-filter-repo` to retain root Compose
+files, the production secret examples and bootstrap/entrypoint scripts,
+deployment and API performance tests, and stack-level operations documents.
+Service source trees and Dockerfiles were intentionally excluded because their
+new repositories own builds and image releases.
+
+```bash
+git clone --no-local --single-branch --no-tags \
+  --branch wt/bead/issue/discogsography-2kpm.23 \
+  /Users/Robert/workspaces/github/SimplicityGuy/discogsography deployment
+git filter-repo --force \
+  --path docker-compose.yml --path docker-compose.prod.yml \
+  --path .dockerignore --path .env.example --path .gitignore \
+  --path .yamllint --path LICENSE \
+  --path scripts/create-secrets.sh \
+  --path scripts/migrate-encryption-key.sh \
+  --path scripts/neo4j-entrypoint.sh \
+  --path scripts/rabbitmq-entrypoint.sh \
+  --path scripts/redis-entrypoint.sh \
+  --path scripts/reset-password.sh \
+  --path scripts/test-database-resilience.sh \
+  --path secrets.example/ --path tests/deploy/ --path tests/perftest/ \
+  --path tests/conftest.py \
+  --path docs/admin-guide.md --path docs/architecture.md \
+  --path docs/configuration.md --path docs/database-resilience.md \
+  --path docs/docker-security.md --path docs/dockerfile-standards.md \
+  --path docs/maintenance.md --path docs/monitoring.md \
+  --path docs/performance-guide.md --path docs/platform-targeting.md \
+  --path docs/quick-start.md --path docs/testing-guide.md \
+  --path docs/troubleshooting.md --path docs/usage-examples.md \
+  --path .github/workflows/docker-compose-validate.yml
+```
+
+The filtered source branch contains 288 retained commits before the standalone
+establishment commit. `source-main-filtered` preserves the filtered source tip
+locally for audit.

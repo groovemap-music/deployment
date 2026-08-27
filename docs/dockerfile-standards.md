@@ -1,6 +1,6 @@
 # Dockerfile Standards and Guidelines
 
-This document defines the standardized patterns and best practices for all Dockerfiles in the Discogsography project.
+This document defines the standardized patterns and best practices for all Dockerfiles in the GrooveMap project.
 
 ## 🎯 Overview
 
@@ -149,12 +149,12 @@ ARG GID=1000
 Standardized format with service-specific variations:
 
 ```dockerfile
-LABEL org.opencontainers.image.title="Discogsography <Service>" \
+LABEL org.opencontainers.image.title="GrooveMap <Service>" \
       org.opencontainers.image.description="<Service description>" \
       org.opencontainers.image.authors="Robert Wlodarczyk <robert@simplicityguy.com>" \
-      org.opencontainers.image.url="https://github.com/SimplicityGuy/discogsography" \
-      org.opencontainers.image.documentation="https://github.com/SimplicityGuy/discogsography/blob/main/README.md" \
-      org.opencontainers.image.source="https://github.com/SimplicityGuy/discogsography" \
+      org.opencontainers.image.url="https://github.com/groovemap-music/REPOSITORY" \
+      org.opencontainers.image.documentation="https://github.com/groovemap-music/REPOSITORY/blob/main/README.md" \
+      org.opencontainers.image.source="https://github.com/groovemap-music/REPOSITORY" \
       org.opencontainers.image.vendor="SimplicityGuy" \
       org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
       org.opencontainers.image.version="${BUILD_VERSION:-0.1.0}" \
