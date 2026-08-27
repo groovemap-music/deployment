@@ -45,6 +45,21 @@ credentials. The production overlay replaces credential values with Docker
 file secrets and hardens exposed services. Never deploy the base file alone as
 a production configuration.
 
+## One-time data migrations
+
+The retained cleanup and backfill scripts default to read-only counts. Each requires an
+explicit `--apply` argument before it can mutate data and accepts
+`NEO4J_PASSWORD_FILE` ahead of `NEO4J_PASSWORD`:
+
+```bash
+scripts/cleanup-implausible-years.sh
+scripts/compute-label-stats.sh
+scripts/migrate-master-year-to-int.sh
+```
+
+Run them only against an approved environment after reviewing the script, current backup,
+affected-record count, and rollback procedure. `just check` and CI never invoke them.
+
 ## Boundaries
 
 - Internal service images are required, digest-pinned inputs.

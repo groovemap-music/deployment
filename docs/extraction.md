@@ -42,3 +42,9 @@ git filter-repo --force \
 The filtered source branch contains 288 retained commits before the standalone
 establishment commit. `source-main-filtered` preserves the filtered source tip
 locally for audit.
+
+A supplemental history-only merge retains the original commits for
+`cleanup-implausible-years.sh`, `compute-label-stats.sh`, and
+`migrate-master-year-to-int.sh`. Their current versions add read-only defaults, explicit
+`--apply` gates, and secret-file support; the merge imports history without replacing the
+reviewed current tree.
