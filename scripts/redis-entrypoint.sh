@@ -4,8 +4,7 @@
 # redis-server arguments before delegating to the official Redis entrypoint.
 # This is needed because Redis does not natively support the Docker _FILE
 # secret convention. Without this, prod redis runs unauthenticated even
-# though every other prod data store gets a _FILE-secret credential — see
-# discogsography-yhjn.
+# though every other prod data store gets a _FILE-secret credential.
 set -e
 
 if [ -f /run/secrets/redis_password ]; then

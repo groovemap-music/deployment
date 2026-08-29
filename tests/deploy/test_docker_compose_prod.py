@@ -1,4 +1,4 @@
-"""Deploy-config regression tests for discogsography-yhjn.
+"""Deploy-config regression tests for production Redis authentication.
 
 Base docker-compose.yml runs redis with no ``--requirepass`` and publishes
 6379 to 0.0.0.0. Every OTHER stateful service (postgres, neo4j, rabbitmq) gets
@@ -115,10 +115,7 @@ class TestProdRedisService:
 
 
 class TestProdRedisPasswordWiredIntoConsumers:
-    """api, dashboard, and insights are the three services CLAUDE.md/docker-compose.yml
-    document as REDIS_HOST consumers — all three must get REDIS_PASSWORD_FILE in prod,
-    or they'd silently connect to the now-authenticated redis without credentials.
-    """
+    """Every Compose Redis consumer must receive the production password file."""
 
     def test_api_gets_redis_password_file(self) -> None:
         api = _prod_compose()["services"]["api"]

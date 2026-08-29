@@ -283,7 +283,7 @@ services:
     # shell (and its STARTUP_DELAY sleep) instead of being discarded — a
     # non-interactive shell installs no signal handler, so without an init a
     # stop/restart landing inside the startup delay window is silently ignored
-    # until Docker's SIGKILL grace period expires (discogsography-uur3).
+    # until Docker's SIGKILL grace period expires.
     init: true
     restart: unless-stopped
     logging: *default-logging
