@@ -7,7 +7,7 @@ name = "groovemap-deployment-validation"
 version = "0.0.0"
 description = "Validation tooling for the unversioned GrooveMap deployment repository"
 requires-python = ">=3.13"
-license = "PolyForm-Noncommercial-1.0.0"
+license = "MIT"
 license-files = ["LICENSE"]
 dependencies = ["pyyaml==6.0.3"]
 

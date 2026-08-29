@@ -6,8 +6,8 @@ configuration promotion, and stack-level validation. Each service's source,
 Dockerfile, release version, and image publication remain in its own source
 repository.
 
-Current source is licensed under the [PolyForm Noncommercial License
-1.0.0](LICENSE). Historical license states remain in retained Git history.
+Current source is licensed under the [MIT License](LICENSE). Historical license
+states remain in retained Git history.
 
 ## Setup and validation
 
