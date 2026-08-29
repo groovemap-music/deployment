@@ -2,17 +2,17 @@
 
 Covers:
 
-- discogsography-skmw: the extractor image never honored STARTUP_DELAY (no start.sh
-  shim, raw ENTRYPOINT), so the dead ``STARTUP_DELAY: "30"`` knob must not remain on
+- The extractor image never honored STARTUP_DELAY (no start.sh shim, raw
+  ENTRYPOINT), so the dead ``STARTUP_DELAY: "30"`` knob must not remain on
   extractor-discogs/extractor-musicbrainz — it silently did nothing and misled
   operators into believing a startup stagger existed.
-- discogsography-uur3: the Python consumer images run a PID-1 shell
+- The Python consumer images run a PID-1 shell
   (``/app/start.sh``) that sleeps ``STARTUP_DELAY`` seconds before ``exec``-ing
   python. A non-interactive shell installs no SIGTERM handler, so without an init
   process forwarding signals, a stop/restart landing in that window is silently
   ignored until Docker's SIGKILL grace period. ``init: true`` (tini as PID 1) fixes
   this uniformly for every affected service.
-- discogsography-wa1x: operator helpers that invoke the API container must match the
+- Operator helpers that invoke the API container must match the
   Compose ``container_name:`` the API service actually runs under.
 
 These tests parse the compose YAML directly (no ``docker`` binary required), mirroring
@@ -57,7 +57,7 @@ def _base_compose() -> dict[str, Any]:
 
 
 class TestExtractorStartupDelayRemoved:
-    """discogsography-skmw: STARTUP_DELAY was dead on the extractor image."""
+    """STARTUP_DELAY was dead on the catalog-ingestion image."""
 
     def test_extractor_services_have_no_startup_delay_env(self) -> None:
         compose = _base_compose()
@@ -73,7 +73,7 @@ class TestExtractorStartupDelayRemoved:
 
 
 class TestPythonServicesForwardSignalsDuringStartupDelay:
-    """discogsography-uur3: init: true so SIGTERM reaches the PID-1 shell's sleep."""
+    """Use init so SIGTERM reaches each Python image's PID-1 shell."""
 
     def test_start_sh_python_services_have_init_true(self) -> None:
         compose = _base_compose()
@@ -103,7 +103,7 @@ class TestRepositoryBoundary:
 
 
 class TestApiContainerNameContract:
-    """Historical issue discogsography-wa1x: helpers and Compose must not drift."""
+    """Operator helpers and the retained Compose API name must not drift."""
 
     def test_reset_password_fallback_matches_compose_api_container(self) -> None:
         expected = _base_compose()["services"]["api"]["container_name"]

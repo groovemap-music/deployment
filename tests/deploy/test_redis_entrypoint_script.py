@@ -1,4 +1,4 @@
-"""Functional tests for scripts/redis-entrypoint.sh (discogsography-yhjn).
+"""Functional tests for scripts/redis-entrypoint.sh.
 
 Redis doesn't natively support the Docker ``_FILE`` secret convention, so the
 production overlay delegates to this wrapper to read

@@ -1,7 +1,8 @@
 # Source extraction
 
 `deployment` was extracted without modifying or deleting content from the
-original `SimplicityGuy/discogsography` monorepo.
+private source monorepository. Exact historical repository and branch names
+remain in retained Git history rather than the active documentation surface.
 
 The standalone clone was filtered with `git-filter-repo` to retain root Compose
 files, the production secret examples and bootstrap/entrypoint scripts,
@@ -13,9 +14,10 @@ Service source trees and Dockerfiles were intentionally excluded because their
 new repositories own builds and image releases.
 
 ```bash
+source_repository=/path/to/private-source
+source_branch=<reviewed-source-branch>
 git clone --no-local --single-branch --no-tags \
-  --branch wt/bead/issue/discogsography-2kpm.23 \
-  /Users/Robert/workspaces/github/SimplicityGuy/discogsography deployment
+  --branch "$source_branch" "$source_repository" deployment
 git filter-repo --force \
   --path docker-compose.yml --path docker-compose.prod.yml \
   --path .dockerignore --path .env.example --path .gitignore \

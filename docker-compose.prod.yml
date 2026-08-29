@@ -30,7 +30,7 @@ secrets:
     file: ./secrets/redis_password.txt
   # Shared secret gating /api/internal/insights/* (api/routers/insights_compute.py).
   # Base docker-compose.yml falls back to a repo-published dev default when this
-  # isn't set — see discogsography-q31w.
+  # isn't set. Production must always override it with this file-backed secret.
   insights_internal_secret:
     file: ./secrets/insights_internal_secret.txt
 
@@ -194,7 +194,7 @@ services:
   # Base docker-compose.yml runs redis with no --requirepass and publishes 6379 to
   # 0.0.0.0 — unlike every other stateful service, prod gave it no hardening
   # override, so anyone who can reach host:6379 could FLUSHALL / read the
-  # insights+dashboard cache with zero credentials. See discogsography-yhjn.
+  # insights+dashboard cache with zero credentials.
   redis:
     restart: always
     entrypoint: ["/scripts/redis-entrypoint.sh"]

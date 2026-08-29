@@ -9,24 +9,41 @@ Each source repository owns its Dockerfile, tests, OCI metadata, version tag,
 and GHCR publication. Deployment owns the environment variable that promotes a
 released image into the stack.
 
-| Compose service | Source repository | Required variable |
-| --- | --- | --- |
-| `schema-init` | [`database-schema`](https://github.com/groovemap-music/database-schema) | `DATABASE_SCHEMA_IMAGE` |
-| `api` | [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `CATALOG_API_IMAGE` |
-| `extractor-discogs`, `extractor-musicbrainz` | [`catalog-ingestion`](https://github.com/groovemap-music/catalog-ingestion) | `CATALOG_INGESTION_IMAGE` |
-| `graphinator` | [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `DISCOGS_GRAPH_ENRICHER_IMAGE` |
-| `brainzgraphinator` | [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` |
-| `tableinator` | [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `DISCOGS_SQL_LOADER_IMAGE` |
-| `brainztableinator` | [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `MUSICBRAINZ_SQL_LOADER_IMAGE` |
-| `dashboard` | [`operations-console`](https://github.com/groovemap-music/operations-console) | `OPERATIONS_CONSOLE_IMAGE` |
-| `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
-| `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
+| Source repository and primary image | Compose service | Container name | Required variable |
+| --- | --- | --- | --- |
+| [`database-schema`](https://github.com/groovemap-music/database-schema) / `groovemap-music/database-schema` | `schema-init` | `groovemap-schema-init` | `DATABASE_SCHEMA_IMAGE` |
+| [`catalog-api`](https://github.com/groovemap-music/catalog-api) / `groovemap-music/catalog-api` | `api` | `groovemap-api` | `CATALOG_API_IMAGE` |
+| [`catalog-ingestion`](https://github.com/groovemap-music/catalog-ingestion) / `groovemap-music/catalog-ingestion` | `extractor-discogs`, `extractor-musicbrainz` | `groovemap-extractor-discogs`, `groovemap-extractor-musicbrainz` | `CATALOG_INGESTION_IMAGE` |
+| [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) / `groovemap-music/discogs-graph-enricher` | `graphinator` | `groovemap-graphinator` | `DISCOGS_GRAPH_ENRICHER_IMAGE` |
+| [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) / `groovemap-music/musicbrainz-graph-enricher` | `brainzgraphinator` | `groovemap-brainzgraphinator` | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` |
+| [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) / `groovemap-music/discogs-sql-loader` | `tableinator` | `groovemap-tableinator` | `DISCOGS_SQL_LOADER_IMAGE` |
+| [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) / `groovemap-music/musicbrainz-sql-loader` | `brainztableinator` | `groovemap-brainztableinator` | `MUSICBRAINZ_SQL_LOADER_IMAGE` |
+| [`operations-console`](https://github.com/groovemap-music/operations-console) / `groovemap-music/operations-console` | `dashboard` | `groovemap-dashboard` | `OPERATIONS_CONSOLE_IMAGE` |
+| [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) / `groovemap-music/graph-explorer` | `explore` | `groovemap-explore` | `GRAPH_EXPLORER_IMAGE` |
+| [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) / `groovemap-music/analytics-engine` | `insights` | `groovemap-insights` | `ANALYTICS_ENGINE_IMAGE` |
 
-The repository name is also the GHCR image name:
+Each primary image therefore has the form
+`ghcr.io/groovemap-music/<source-repository>`. An auxiliary image appends its
+role to the owning repository name. The performance runner is owned by
+`catalog-api` and uses
+`ghcr.io/groovemap-music/catalog-api-performance`; deployment does not publish
+it.
 
-```text
-ghcr.io/groovemap-music/<repository>
-```
+## Compatibility identifiers
+
+The Compose service keys, hostnames, and `groovemap-*` container names in the
+table are retained runtime contracts. They appear in service discovery,
+operator commands, volumes, and health checks, so changing them would be an
+environment migration. Names such as `graphinator`, `tableinator`, `explore`,
+and `insights` describe those compatibility identifiers only; the source
+repository and GHCR path are the canonical service and artifact identities.
+
+RabbitMQ exchanges and queues are also retained wire contracts. The
+`groovemap-discogs-*`, `groovemap-musicbrainz-*`, `graphinator-*`,
+`tableinator-*`, `brainzgraphinator-*`, and `brainztableinator-*` names must
+remain compatible across independently released producers and consumers. See
+the [message queue architecture](architecture.md#message-queue-architecture)
+for the exact topology.
 
 ## Promotion requirements
 

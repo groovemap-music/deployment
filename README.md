@@ -23,6 +23,7 @@ and secret leaks. `config/validation.env` contains non-published dummy digests
 used only for syntax validation.
 
 `just build` validates both Compose configurations without starting containers.
+The [quick start](docs/quick-start.md) explains the complete local workflow.
 
 ## Configure an environment
 
@@ -77,5 +78,12 @@ affected-record count, and rollback procedure. `just check` and CI never invoke 
 - CI performs source/Compose validation only. It neither starts the production
   stack nor reads deployment secrets.
 
-See the [documentation index](docs/README.md) for architecture, configuration,
-operations, testing, and troubleshooting guidance.
+Primary GrooveMap images are named after their source repositories. The stack
+retains shorter Compose service names such as `api`, `graphinator`, and
+`dashboard` because they are internal DNS and operator compatibility
+identifiers, not product or image names. See the local [container image and
+identifier map](docs/dockerfile-standards.md) and [architecture
+guide](docs/architecture.md) for the complete mapping.
+
+The [documentation index](docs/README.md) links configuration, operations,
+testing, performance, and troubleshooting guidance.
