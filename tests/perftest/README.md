@@ -1,12 +1,15 @@
 # Catalog API performance deployment
 
+See the deployment [documentation index](../../docs/README.md) for environment and
+performance guidance.
+
 The performance-runner source and image are owned and versioned by
 [`groovemap-music/catalog-api`](https://github.com/groovemap-music/catalog-api) under its
 `performance/` directory. This deployment repository owns only environment-specific
 configuration and invocation.
 
 Set `PERFTEST_IMAGE` to an approved immutable image reference containing `@sha256:`, set
-`PERFTEST_NETWORK` if the Compose network is not `deployment_discogsography`, and run:
+`PERFTEST_NETWORK` if the Compose network is not `deployment_groovemap`, and run:
 
 ```bash
 PERFTEST_IMAGE='ghcr.io/groovemap-music/catalog-api-performance@sha256:<digest>' \

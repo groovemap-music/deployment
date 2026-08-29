@@ -18,31 +18,31 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 
 | Service                                                  | Purpose                                                                                                         | Key Technologies                                             | Port(s)                 |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------- |
-| **[🔐](emoji-guide.md#service-identifiers) API**         | User auth, graph queries, and sync triggers                                                                     | `FastAPI`, `psycopg3`, `redis`, Discogs OAuth 1.0            | 8004 (ext), 8005        |
-| **[⚡](emoji-guide.md#service-identifiers) Extractor**   | High-performance Rust-based extractor (runs as `extractor-discogs` and `extractor-musicbrainz` Docker services) | `tokio`, `quick-xml`, `lapin`                                | 8000 (health)           |
-| **[🔧](emoji-guide.md#service-identifiers) Schema-Init** | One-shot DB schema initializer                                                                                  | `neo4j-driver`, `psycopg3`                                   | —                       |
-| **[🔗](emoji-guide.md#service-identifiers) Graphinator** | Builds Neo4j knowledge graphs                                                                                   | `neo4j-driver`, graph algorithms                             | 8001 (health)           |
-| **[🐘](emoji-guide.md#service-identifiers) Tableinator** | Creates PostgreSQL analytics tables                                                                             | `psycopg3`, JSONB, full-text search                          | 8002 (health)           |
-| **[🔍](emoji-guide.md#service-identifiers) Explore**     | Static frontend files and health check                                                                          | `FastAPI`, `Tailwind CSS`, `Alpine.js`, `D3.js`, `Plotly.js` | 8006, 8007 (ext)        |
-| **[📊](emoji-guide.md#service-identifiers) Dashboard**   | Real-time monitoring and admin panel                                                                            | `FastAPI`, WebSocket, reactive UI, `httpx`                   | 8003 (ext)              |
-| **[📈](emoji-guide.md#service-identifiers) Insights**    | Precomputed analytics and music trends                                                                          | `FastAPI`, `psycopg3`, `httpx`                               | 8008, 8009 (internal)   |
-| **[🤖](emoji-guide.md#service-identifiers) MCP Server**  | Exposes knowledge graph to AI assistants                                                                        | `FastMCP`, `httpx`                                           | stdio / streamable-http |
+| **[🔐](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) API**         | User auth, graph queries, and sync triggers                                                                     | `FastAPI`, `psycopg3`, `redis`, Discogs OAuth 1.0            | 8004 (ext), 8005        |
+| **[⚡](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Extractor**   | High-performance Rust-based extractor (runs as `extractor-discogs` and `extractor-musicbrainz` Docker services) | `tokio`, `quick-xml`, `lapin`                                | 8000 (health)           |
+| **[🔧](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Schema-Init** | One-shot DB schema initializer                                                                                  | `neo4j-driver`, `psycopg3`                                   | —                       |
+| **[🔗](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Graphinator** | Builds Neo4j knowledge graphs                                                                                   | `neo4j-driver`, graph algorithms                             | 8001 (health)           |
+| **[🐘](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Tableinator** | Creates PostgreSQL analytics tables                                                                             | `psycopg3`, JSONB, full-text search                          | 8002 (health)           |
+| **[🔍](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Explore**     | Static frontend files and health check                                                                          | `FastAPI`, `Tailwind CSS`, `Alpine.js`, `D3.js`, `Plotly.js` | 8006, 8007 (ext)        |
+| **[📊](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Dashboard**   | Real-time monitoring and admin panel                                                                            | `FastAPI`, WebSocket, reactive UI, `httpx`                   | 8003 (ext)              |
+| **[📈](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Insights**    | Precomputed analytics and music trends                                                                          | `FastAPI`, `psycopg3`, `httpx`                               | 8008, 8009 (internal)   |
+| **[🤖](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) MCP Server**  | Exposes knowledge graph to AI assistants                                                                        | `FastMCP`, `httpx`                                           | stdio / streamable-http |
 
 ### MusicBrainz Enrichment Services
 
 | Service                                                        | Purpose                                                          | Key Technologies       | Port(s)       |
 | -------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------- | ------------- |
-| **[🧠](emoji-guide.md#service-identifiers) Brainzgraphinator** | Enriches Neo4j graph with MusicBrainz metadata and relationships | `neo4j-driver`, `pika` | 8011 (health) |
-| **[🧬](emoji-guide.md#service-identifiers) Brainztableinator** | Stores all MusicBrainz data in PostgreSQL                        | `psycopg3`, `pika`     | 8010 (health) |
+| **[🧠](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Brainzgraphinator** | Enriches Neo4j graph with MusicBrainz metadata and relationships | `neo4j-driver`, `pika` | 8011 (health) |
+| **[🧬](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Brainztableinator** | Stores all MusicBrainz data in PostgreSQL                        | `psycopg3`, `pika`     | 8010 (health) |
 
 ### Infrastructure Components
 
 | Component                                               | Purpose                                          | Port(s)       |
 | ------------------------------------------------------- | ------------------------------------------------ | ------------- |
-| **[🐰](emoji-guide.md#service-identifiers) RabbitMQ**   | Message broker and queue management              | 5672, 15672   |
-| **[🔗](emoji-guide.md#service-identifiers) Neo4j**      | Graph database for relationships                 | 7474, 7687    |
-| **[🐘](emoji-guide.md#service-identifiers) PostgreSQL** | Relational database for analytics                | 5433 (mapped) |
-| **[🔴](emoji-guide.md#service-identifiers) Redis**      | Cache layer for queries, sessions, and analytics | 6379          |
+| **[🐰](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) RabbitMQ**   | Message broker and queue management              | 5672, 15672   |
+| **[🔗](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Neo4j**      | Graph database for relationships                 | 7474, 7687    |
+| **[🐘](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) PostgreSQL** | Relational database for analytics                | 5433 (mapped) |
+| **[🔴](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#service-identifiers) Redis**      | Cache layer for queries, sessions, and analytics | 6379          |
 
 ## System Architecture Diagrams
 
@@ -225,17 +225,17 @@ graph LR
 
 **Discogs exchanges** (4):
 
-- `discogsography-discogs-artists`: Artist and band data
-- `discogsography-discogs-labels`: Record label information
-- `discogsography-discogs-releases`: Release records
-- `discogsography-discogs-masters`: Master recording data
+- `groovemap-discogs-artists`: Artist and band data
+- `groovemap-discogs-labels`: Record label information
+- `groovemap-discogs-releases`: Release records
+- `groovemap-discogs-masters`: Master recording data
 
 **MusicBrainz exchanges** (4):
 
-- `discogsography-musicbrainz-artists`: MusicBrainz artist data with Discogs cross-references
-- `discogsography-musicbrainz-labels`: MusicBrainz label data with Discogs cross-references
-- `discogsography-musicbrainz-release-groups`: MusicBrainz release-group data with Discogs master cross-references
-- `discogsography-musicbrainz-releases`: MusicBrainz release data with Discogs cross-references
+- `groovemap-musicbrainz-artists`: MusicBrainz artist data with Discogs cross-references
+- `groovemap-musicbrainz-labels`: MusicBrainz label data with Discogs cross-references
+- `groovemap-musicbrainz-release-groups`: MusicBrainz release-group data with Discogs master cross-references
+- `groovemap-musicbrainz-releases`: MusicBrainz release data with Discogs cross-references
 
 Each consumer independently declares and binds its own queues to these exchanges.
 
@@ -254,7 +254,7 @@ Each consumer independently declares and binds its own queues to these exchanges
 }
 ```
 
-See [Database Schema — Extractor Message Format](database-schema.md#extractor-message-format) for detailed examples.
+See [Database Schema — Extractor Message Format](https://github.com/groovemap-music/database-schema) for detailed examples.
 
 ### 3. Data Persistence Phase
 
@@ -273,7 +273,7 @@ See [Database Schema — Extractor Message Format](database-schema.md#extractor-
 - Creates indexes for fast queries
 - On `extraction_complete`: purges stale rows where `updated_at < started_at`
 
-See [Database Schema — Post-Extraction Cleanup](database-schema.md#post-extraction-cleanup) for details.
+See [Database Schema — Post-Extraction Cleanup](https://github.com/groovemap-music/database-schema) for details.
 
 ### 3b. MusicBrainz Enrichment Phase
 
@@ -294,7 +294,7 @@ See [Database Schema — Post-Extraction Cleanup](database-schema.md#post-extrac
 - Stores external links (Wikipedia, Wikidata, AllMusic, Last.fm, IMDb)
 - Idempotent via `ON CONFLICT DO UPDATE/NOTHING`
 
-See [MusicBrainz Sync Guide](musicbrainz-sync.md) for operational instructions.
+See [MusicBrainz Sync Guide](https://github.com/groovemap-music/musicbrainz-graph-enricher/blob/main/docs/musicbrainz-sync.md) for operational instructions.
 
 ### 4. Query and Analytics Phase
 
@@ -389,11 +389,11 @@ The `internal` prefix on hop 2 is only a URL path: those routes live on the **sa
 - `PERIODIC_CHECK_DAYS`: Update check interval
 - `RABBITMQ_HOST`: RabbitMQ hostname
 - `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`: RabbitMQ auth credentials
-- `DISCOGS_EXCHANGE_PREFIX`: Exchange name prefix (default: `discogsography-discogs` for Discogs, `discogsography-musicbrainz` for MB)
+- `DISCOGS_EXCHANGE_PREFIX`: Exchange name prefix (default: `groovemap-discogs` for Discogs, `groovemap-musicbrainz` for MB)
 
-See [Extractor README](../extractor/README.md) for details.
+See [Extractor README](https://github.com/groovemap-music/catalog-ingestion) for details.
 
-### Schema-Init
+### Database schema initializer
 
 **Responsibilities**:
 
@@ -406,7 +406,9 @@ See [Extractor README](../extractor/README.md) for details.
 
 - Idempotent: re-running on an already-initialized database is a no-op
 - Single source of truth for both Neo4j and PostgreSQL schema definitions
-- Schema definitions live in `schema-init/neo4j_schema.py` and `schema-init/postgres_schema.py`
+- Schema definitions are owned by the `database-schema` repository in
+  [`src/groovemap_schema/neo4j.py`](https://github.com/groovemap-music/database-schema/blob/main/src/groovemap_schema/neo4j.py)
+  and [`src/groovemap_schema/postgres.py`](https://github.com/groovemap-music/database-schema/blob/main/src/groovemap_schema/postgres.py)
 - Parallel initialization: Neo4j and PostgreSQL schema creation run concurrently
 - Exits 0 on success, 1 on any failure (so dependent services will not start)
 
@@ -414,6 +416,8 @@ See [Extractor README](../extractor/README.md) for details.
 
 - `NEO4J_HOST`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`: Neo4j connection
 - `POSTGRES_HOST`, `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`: PostgreSQL connection
+
+See the [database-schema repository](https://github.com/groovemap-music/database-schema) for source and release details.
 
 ### Graphinator
 
@@ -439,7 +443,7 @@ See [Extractor README](../extractor/README.md) for details.
 - `NEO4J_USERNAME`, `NEO4J_PASSWORD`: Auth credentials
 - `CONSUMER_CANCEL_DELAY`: Idle timeout before shutdown
 
-See [Graphinator README](../graphinator/README.md) for details.
+See [Graphinator README](https://github.com/groovemap-music/discogs-graph-enricher/blob/main/graphinator/README.md) for details.
 
 ### Tableinator
 
@@ -463,7 +467,7 @@ See [Graphinator README](../graphinator/README.md) for details.
 - `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`: Auth credentials
 - `POSTGRES_DATABASE`: Database name
 
-See [Tableinator README](../tableinator/README.md) for details.
+See [Tableinator README](https://github.com/groovemap-music/discogs-sql-loader/blob/main/tableinator/README.md) for details.
 
 ### Brainzgraphinator
 
@@ -489,7 +493,7 @@ See [Tableinator README](../tableinator/README.md) for details.
 - `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`: RabbitMQ connection
 - `CONSUMER_CANCEL_DELAY`: Idle timeout before consumer cancellation (default: 300s)
 
-See [Brainzgraphinator README](../brainzgraphinator/README.md) for details.
+See [Brainzgraphinator README](https://github.com/groovemap-music/musicbrainz-graph-enricher/blob/main/brainzgraphinator/README.md) for details.
 
 ### Brainztableinator
 
@@ -514,7 +518,7 @@ See [Brainzgraphinator README](../brainzgraphinator/README.md) for details.
 - `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`: RabbitMQ connection
 - `CONSUMER_CANCEL_DELAY`: Idle timeout before consumer cancellation (default: 300s)
 
-See [Brainztableinator README](../brainztableinator/README.md) for details.
+See [Brainztableinator README](https://github.com/groovemap-music/musicbrainz-sql-loader/blob/main/brainztableinator/README.md) for details.
 
 ### Explore Service
 
@@ -536,7 +540,7 @@ See [Brainztableinator README](../brainztableinator/README.md) for details.
 - `API_BASE_URL`: URL of the API service to proxy graph query requests (default: `http://api:8004`)
 - `CORS_ORIGINS`: Optional comma-separated list of allowed CORS origins
 
-See [Explore README](../explore/README.md) for details.
+See [Explore README](https://github.com/groovemap-music/graph-explorer) for details.
 
 ### Dashboard
 
@@ -565,7 +569,7 @@ See [Explore README](../explore/README.md) for details.
 - RabbitMQ management API access
 - `API_HOST` / `API_PORT` — API service connection for admin proxy
 
-See [Dashboard README](../dashboard/README.md) for details.
+See [Dashboard README](https://github.com/groovemap-music/operations-console) for details.
 
 ### Insights
 
@@ -593,7 +597,7 @@ See [Dashboard README](../dashboard/README.md) for details.
 - `REDIS_HOST`: Redis hostname for result caching
 - `INSIGHTS_MILESTONE_YEARS`: Configurable anniversary years to highlight
 
-See [Insights README](../insights/README.md) for details.
+See [Insights README](https://github.com/groovemap-music/analytics-engine) for details.
 
 ### API
 
@@ -638,7 +642,7 @@ See [Insights README](../insights/README.md) for details.
 - `REDIS_HOST`: Redis connection for OAuth state
 - `DISCOGS_USER_AGENT`: User-Agent header for Discogs API calls
 
-See [API README](../api/README.md) for details.
+See [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md) for details.
 
 ## Message Queue Architecture
 
@@ -654,10 +658,10 @@ graph LR
 
     subgraph RabbitMQ
         subgraph Fanout Exchanges
-            AX[discogsography-discogs-artists]
-            LX[discogsography-discogs-labels]
-            RX[discogsography-discogs-releases]
-            MX[discogsography-discogs-masters]
+            AX[groovemap-discogs-artists]
+            LX[groovemap-discogs-labels]
+            RX[groovemap-discogs-releases]
+            MX[groovemap-discogs-masters]
         end
 
         subgraph Graphinator Queues
@@ -705,10 +709,10 @@ graph LR
 
     subgraph RabbitMQ
         subgraph MB Fanout Exchanges
-            MAQ[discogsography-musicbrainz-artists]
-            MLQ[discogsography-musicbrainz-labels]
-            MRGQ[discogsography-musicbrainz-release-groups]
-            MRQ[discogsography-musicbrainz-releases]
+            MAQ[groovemap-musicbrainz-artists]
+            MLQ[groovemap-musicbrainz-labels]
+            MRGQ[groovemap-musicbrainz-release-groups]
+            MRQ[groovemap-musicbrainz-releases]
         end
 
         subgraph Brainzgraphinator Queues
@@ -762,7 +766,7 @@ graph LR
 1. **Periodic Checking**: Check queues every hour for new messages
 1. **Auto-Reconnection**: Restart consumers when new data arrives
 
-See [Consumer Cancellation](consumer-cancellation.md) for details.
+See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enricher/blob/main/docs/consumer-cancellation.md) for details.
 
 ## Database Architecture
 
@@ -806,7 +810,7 @@ See [Consumer Cancellation](consumer-cancellation.md) for details.
 - SUBGROUP_OF (subgroup → parent)
 - RENAMED_TO (old → new)
 
-See [Database Schema](database-schema.md) for details.
+See [Database Schema](https://github.com/groovemap-music/database-schema) for details.
 
 ### PostgreSQL Database
 
@@ -842,7 +846,7 @@ See [Database Schema](database-schema.md) for details.
 - Full-text search indexes
 - Filtered indexes on Discogs ID columns for MusicBrainz cross-reference lookups
 
-See [Database Schema](database-schema.md) for details.
+See [Database Schema](https://github.com/groovemap-music/database-schema) for details.
 
 ### Redis Cache
 
@@ -928,7 +932,7 @@ curl http://localhost:8011/health  # Brainzgraphinator
 - Service-specific log files
 - Centralized log aggregation ready
 
-See [Logging Guide](logging-guide.md) for details.
+See [Logging Guide](https://github.com/groovemap-music/catalog-api/blob/main/docs/logging-guide.md) for details.
 
 ### Metrics
 
@@ -946,9 +950,9 @@ See [Monitoring](monitoring.md) for details.
 
 |                   Data Type                    | Record Count | XML Size | Initial Load | Update Run |
 | :--------------------------------------------: | :----------: | :------: | :----------: | :--------: |
-| [📀](emoji-guide.md#music-domain) **Releases** | ~19 million  |  ~11GB   |  ~40 hours   | ~26 hours  |
-| [🎤](emoji-guide.md#music-domain) **Artists**  | ~10 million  |  ~461MB  |  ~21 hours   | ~14 hours  |
-| [🎵](emoji-guide.md#music-domain) **Masters**  | ~2.5 million |  ~575MB  |  ~4.5 hours  |  ~4 hours  |
+| [📀](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#music-domain) **Releases** | ~19 million  |  ~11GB   |  ~40 hours   | ~26 hours  |
+| [🎤](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#music-domain) **Artists**  | ~10 million  |  ~461MB  |  ~21 hours   | ~14 hours  |
+| [🎵](https://github.com/groovemap-music/.github/blob/main/docs/emoji-guide.md#music-domain) **Masters**  | ~2.5 million |  ~575MB  |  ~4.5 hours  |  ~4 hours  |
 |                 🏢 **Labels**                  | ~2.3 million |  ~84MB   |   ~4 hours   |  ~3 hours  |
 
 **📊 Total: ~34 million records • ~11.3GB compressed • ~76GB on disk (28GB Neo4j + 48GB PostgreSQL)**
@@ -1020,14 +1024,14 @@ See [Monitoring](monitoring.md) for details.
 - Pre-computed aggregate properties on graph nodes
 - Neo4j Cypher query plan optimization (CALL {} barriers, pattern comprehension)
 
-See [Performance Guide](performance-guide.md) for general strategies and [Query Performance Optimizations](query-performance-optimizations.md) for the detailed Cypher optimization report (249x overall improvement).
+See [Performance Guide](performance-guide.md) for general strategies and [Query Performance Optimizations](https://github.com/groovemap-music/catalog-api/blob/main/docs/query-performance-optimizations.md) for the detailed Cypher optimization report (249x overall improvement).
 
 ## Deployment Options
 
 ### Docker Compose (Development)
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 **Pros**:
@@ -1062,7 +1066,7 @@ docker-compose up -d
 
 - [Quick Start Guide](quick-start.md) - Get started quickly
 - [Configuration Guide](configuration.md) - Environment variables and settings
-- [Database Schema](database-schema.md) - Detailed schema documentation
+- [Database Schema](https://github.com/groovemap-music/database-schema) - Detailed schema documentation
 - [Performance Guide](performance-guide.md) - Optimization strategies
 - [Monitoring Guide](monitoring.md) - Observability and debugging
 

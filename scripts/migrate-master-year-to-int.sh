@@ -11,13 +11,13 @@ case "${1:-}" in
 *) echo "usage: $0 [--apply]" >&2; exit 2 ;;
 esac
 
-NEO4J_CONTAINER="${NEO4J_CONTAINER:-discogsography-neo4j}"
+NEO4J_CONTAINER="${NEO4J_CONTAINER:-groovemap-neo4j}"
 NEO4J_USER="${NEO4J_USER:-neo4j}"
 if [[ -n "${NEO4J_PASSWORD_FILE:-}" ]]; then
   [[ -f "$NEO4J_PASSWORD_FILE" ]] || { echo "NEO4J_PASSWORD_FILE is not readable" >&2; exit 2; }
   IFS= read -r NEO4J_PASSWORD <"$NEO4J_PASSWORD_FILE"
 else
-  NEO4J_PASSWORD="${NEO4J_PASSWORD:-discogsography}"
+  NEO4J_PASSWORD="${NEO4J_PASSWORD:-groovemap}"
 fi
 export NEO4J_USER NEO4J_PASSWORD
 trap 'unset NEO4J_PASSWORD' EXIT

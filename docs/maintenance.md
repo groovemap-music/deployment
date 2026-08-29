@@ -1,719 +1,128 @@
-# 🔧 Maintenance Guide
+# Maintenance guide
 
-<div align="center">
+Maintenance in this repository means promoting immutable service images,
+updating Compose topology and pinned infrastructure images, rotating runtime
+configuration, and preserving recoverability. Service source and Dockerfiles
+remain in their owning repositories.
 
-**Keeping GrooveMap up-to-date and running smoothly**
+## Routine repository maintenance
 
-[🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [👨‍💻 Development Guide](development.md)
-
-</div>
-
-## Overview
-
-Regular maintenance keeps GrooveMap secure, performant, and up-to-date. This guide covers dependency management, database maintenance, and system health monitoring.
-
-## 📦 Dependency Management
-
-### Package Upgrades
-
-Keep dependencies up-to-date with the provided upgrade script:
+Before review, run the credential-free gate:
 
 ```bash
-# Safely upgrade all dependencies (minor/patch versions)
-./scripts/update-project.sh
-
-# Preview what would be upgraded (dry run)
-./scripts/update-project.sh --dry-run
-
-# Include major version upgrades
-./scripts/update-project.sh --major
+mise install
+just setup
+just check
 ```
 
-### Upgrade Script Features
+Dependabot proposes dependency and workflow updates. Review lockfile changes,
+upstream release notes, license changes, and the complete Compose render before
+merging.
 
-The `update-project.sh` script provides:
+## Promote a service release
 
-#### Safety Features
+1. Confirm that the owning source repository released the intended `v*` tag.
+2. Resolve its GHCR manifest digest for the target platform.
+3. Update the corresponding image value in the environment's untracked `.env`.
+4. Run `just config` and, for production, `just config-prod`.
+5. Review the rendered diff and rollback digest.
+6. Obtain approval for the target environment.
+7. Apply the reviewed Compose change and verify health.
 
-- 🔒 **Automatic backups** before upgrades
-- ✅ **Git safety checks** (requires clean working directory)
-- 🧪 **Automatic testing** after upgrades
-- 🔄 **Rollback support** if upgrades fail
-- 📦 **Comprehensive coverage** across all services
+Never replace a digest with `latest` or a tag-only reference. Do not add a
+sibling build context to this repository.
 
-#### What Gets Upgraded
+## Update an infrastructure image
 
-**Python Packages**:
+PostgreSQL, Neo4j, RabbitMQ, and Redis images are declared directly in
+`docker-compose.yml` with a readable tag and immutable digest. An update should
+include:
 
-- Root `pyproject.toml` dependencies
-- Service-specific dependencies
-- Development dependencies
-- Optional dependencies
+- upstream release-note and compatibility review;
+- backup and restore validation appropriate to the data store;
+- updated tag and matching manifest digest;
+- `just check` results;
+- a documented rollback image digest;
+- an approved maintenance window for the live change.
 
-**Rust Packages** (if Extractor is used):
+Major database upgrades may require a purpose-built migration plan. A passing
+Compose render does not prove on-disk compatibility.
 
-- `Cargo.toml` dependencies
-- Cargo.lock updates
+## Secrets
 
-**Docker Images**:
+`just secrets-bootstrap` creates missing local files but deliberately does not
+overwrite existing values. Rotation is an operator procedure:
 
-- Base images in Dockerfiles
-- Service images in docker-compose.yml
+1. inventory every producer and consumer of the secret;
+2. confirm whether dual-key overlap is supported;
+3. back up the current approved secret store;
+4. generate and stage the replacement without printing it;
+5. obtain approval for the exact environment;
+6. roll dependent services in a safe order;
+7. verify behavior and revoke the old credential;
+8. remove temporary local material.
 
-#### Upgrade Process
+Never commit `.env`, `secrets/`, Docker authentication, or copied production
+configuration.
 
-1. **Pre-flight checks**:
+## Backups and restore drills
 
-   ```bash
-   # Check git status
-   # Verify no uncommitted changes
-   # Ensure on main branch (recommended)
-   ```
+Backups are environment-specific and must be tested, not merely scheduled.
+Record:
 
-1. **Backup current state**:
+| Item | Evidence |
+| --- | --- |
+| PostgreSQL backup | Tool/version, timestamp, size, checksum, retention location |
+| Neo4j backup | Tool/version, timestamp, size, checksum, retention location |
+| Restore drill | Isolated target, duration, integrity checks, operator |
+| Recovery objectives | Measured RPO and RTO against the agreed targets |
 
-   ```bash
-   # Create backup of pyproject.toml files
-   # Create backup of Cargo.toml files
-   # Create git tag for rollback
-   ```
+Do not store backup archives in this repository. See
+[Database resilience](database-resilience.md) for failure-mode planning.
 
-1. **Upgrade packages**:
+## One-time data migrations
 
-   ```bash
-   # Update Python dependencies
-   uv lock --upgrade-package <package>
-
-   # Update Rust dependencies (if applicable)
-   cargo update
-   ```
-
-1. **Test upgrades**:
-
-   ```bash
-   # Run full test suite
-   uv run pytest
-
-   # Run linting
-   uv run ruff check .
-
-   # Run type checking
-   uv run mypy .
-   ```
-
-1. **Commit changes** (if tests pass):
-
-   ```bash
-   git add pyproject.toml uv.lock
-   git commit -m "chore: upgrade dependencies"
-   ```
-
-### Manual Dependency Updates
-
-#### Update Specific Package
+The retained scripts default to read-only counts and require `--apply` to
+mutate data:
 
 ```bash
-# Python package
-uv add "package-name>=new.version"
-
-# Or update to latest
-uv lock --upgrade-package package-name
-
-# Rust package (in extractor/)
-cargo update -p package-name
+scripts/cleanup-implausible-years.sh
+scripts/compute-label-stats.sh
+scripts/migrate-master-year-to-int.sh
 ```
 
-#### Check for Outdated Packages
-
-```bash
-# Python packages (list outdated)
-uv pip list --outdated
-
-# Rust packages
-cargo outdated
-```
-
-### Security Updates
-
-#### Vulnerability Scanning
-
-```bash
-# Scan for known vulnerabilities
-just security
-
-# Or directly with bandit
-uv run bandit -r . -c pyproject.toml
-
-# Scan dependencies
-uv run pip-audit
-```
-
-#### Immediate Security Updates
-
-For critical security vulnerabilities:
-
-```bash
-# 1. Update the vulnerable package
-uv add "vulnerable-package>=fixed.version"
-
-# 2. Test immediately
-just test
-
-# 3. Deploy ASAP
-docker-compose build
-docker-compose up -d
-```
-
-## 🗄️ Database Maintenance
-
-### Neo4j Maintenance
-
-#### Regular Tasks
-
-```cypher
--- Check database stats
-CALL dbms.queryJmx('org.neo4j:*') YIELD name, attributes;
-
--- Check store sizes
-CALL apoc.meta.stats() YIELD nodeCount, relCount, labelCount, relTypeCount;
-
--- List all indexes
-SHOW INDEXES;
-
--- List all constraints
-SHOW CONSTRAINTS;
-```
-
-#### Index Maintenance
-
-```cypher
--- Rebuild index (if performance degrades)
-DROP INDEX index_name IF EXISTS;
-CREATE INDEX index_name FOR (n:NodeType) ON (n.property);
-
--- Check index usage
-CALL db.index.fulltext.queryNodes('index_name', 'search term')
-YIELD node, score;
-```
-
-#### Database Cleanup
-
-```cypher
--- Remove orphaned nodes (if any)
-MATCH (n) WHERE NOT (n)--() DELETE n;
-
--- Find duplicate nodes (by ID)
-MATCH (n:Artist)
-WITH n.id as id, collect(n) as nodes
-WHERE size(nodes) > 1
-RETURN id, size(nodes) as count
-ORDER BY count DESC;
-```
-
-See [Neo4j Indexing Guide](neo4j-indexing.md) for advanced maintenance.
-
-### PostgreSQL Maintenance
-
-#### Regular Tasks
-
-```sql
--- Analyze tables (update statistics) — public schema
-ANALYZE artists;
-ANALYZE labels;
-ANALYZE masters;
-ANALYZE releases;
-
--- Analyze tables — musicbrainz schema
-ANALYZE musicbrainz.artists;
-ANALYZE musicbrainz.labels;
-ANALYZE musicbrainz.release_groups;
-ANALYZE musicbrainz.releases;
-
--- Or analyze all tables in both schemas
-ANALYZE;
-
--- Vacuum tables (reclaim storage) — public schema
-VACUUM ANALYZE artists;
-VACUUM ANALYZE labels;
-VACUUM ANALYZE masters;
-VACUUM ANALYZE releases;
-
--- Vacuum tables — musicbrainz schema
-VACUUM ANALYZE musicbrainz.artists;
-VACUUM ANALYZE musicbrainz.labels;
-VACUUM ANALYZE musicbrainz.release_groups;
-VACUUM ANALYZE musicbrainz.releases;
-```
-
-#### Index Maintenance
-
-```sql
--- Check index usage
-SELECT
-    schemaname,
-    tablename,
-    indexname,
-    idx_scan as scans,
-    idx_tup_read as tuples_read,
-    idx_tup_fetch as tuples_fetched
-FROM pg_stat_user_indexes
-ORDER BY idx_scan DESC;
-
--- Rebuild index (if needed)
-REINDEX INDEX idx_releases_title;
-
--- Rebuild all indexes on table
-REINDEX TABLE releases;
-```
-
-#### Table Maintenance
-
-```sql
--- Check table bloat
-SELECT
-    schemaname,
-    tablename,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS total_size,
-    pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) AS table_size,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename) -
-                   pg_relation_size(schemaname||'.'||tablename)) AS index_size
-FROM pg_tables
-WHERE schemaname IN ('public', 'musicbrainz')
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-
--- Check for dead tuples
-SELECT
-    schemaname,
-    relname,
-    n_live_tup as live_tuples,
-    n_dead_tup as dead_tuples,
-    round(n_dead_tup * 100.0 / NULLIF(n_live_tup + n_dead_tup, 0), 2) as dead_pct
-FROM pg_stat_user_tables
-ORDER BY dead_pct DESC;
-```
-
-#### Performance Optimization
-
-```sql
--- Check slow queries (requires pg_stat_statements extension)
-SELECT
-    query,
-    calls,
-    total_exec_time,
-    mean_exec_time,
-    max_exec_time
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 10;
-
--- Check cache hit ratio (should be >90%)
-SELECT
-    sum(heap_blks_read) as heap_read,
-    sum(heap_blks_hit) as heap_hit,
-    round(sum(heap_blks_hit) * 100.0 / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0), 2) as cache_hit_ratio
-FROM pg_statio_user_tables;
-```
-
-### RabbitMQ Maintenance
-
-#### Queue Management
-
-```bash
-# List all queues
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/queues
-
-# Purge a queue (if needed)
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  -X DELETE \
-  http://localhost:15672/api/queues/%2F/queue_name/contents
-
-# Delete a queue
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  -X DELETE \
-  http://localhost:15672/api/queues/%2F/queue_name
-```
-
-#### Connection Management
-
-```bash
-# List connections
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/connections
-
-# Close a connection
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  -X DELETE \
-  http://localhost:15672/api/connections/connection_name
-```
-
-### Redis Maintenance
-
-```bash
-# Connect to Redis
-docker-compose exec redis redis-cli
-
-# Check memory usage
-INFO memory
-
-# Check key statistics
-INFO keyspace
-
-# Clear cache (if needed)
-FLUSHDB
-
-# Clear all databases
-FLUSHALL
-
-# Check specific key
-```
-
-## 🐋 Docker Maintenance
-
-### Image Cleanup
-
-```bash
-# Remove unused images
-docker image prune -a
-
-# Remove all stopped containers
-docker container prune
-
-# Remove all unused volumes
-docker volume prune
-
-# Remove all unused networks
-docker network prune
-
-# Remove everything unused
-docker system prune -a --volumes
-```
-
-### Rebuild Images
-
-```bash
-# Rebuild all images
-docker-compose build --no-cache
-
-# Rebuild specific service
-docker-compose build --no-cache dashboard
-
-# Rebuild and restart
-docker-compose up -d --build
-```
-
-### Volume Management
-
-```bash
-# List volumes
-docker volume ls
-
-# Inspect volume
-docker volume inspect discogsography_neo4j_data
-
-# Backup volume
-docker run --rm \
-  -v discogsography_neo4j_data:/data \
-  -v $(pwd)/backups:/backup \
-  alpine tar czf /backup/neo4j-backup-$(date +%Y%m%d).tar.gz /data
-
-# Restore volume
-docker run --rm \
-  -v discogsography_neo4j_data:/data \
-  -v $(pwd)/backups:/backup \
-  alpine tar xzf /backup/neo4j-backup-20250115.tar.gz -C /
-```
-
-## 📊 Log Management
-
-### Log Rotation
-
-Configure log rotation in `/etc/logrotate.d/discogsography`:
-
-```
-/var/log/discogsography/*.log {
-    daily
-    rotate 7
-    compress
-    delaycompress
-    notifempty
-    create 0644 discogsography discogsography
-    sharedscripts
-    postrotate
-        docker-compose restart
-    endscript
-}
-```
-
-### Log Cleanup
-
-```bash
-# Clean old logs (older than 7 days)
-find /var/log/discogsography -name "*.log" -mtime +7 -delete
-
-# Or with Docker
-docker-compose logs --tail=1000 > recent-logs.txt
-docker-compose logs --since 24h > last-24h.txt
-```
-
-### Log Analysis
-
-```bash
-# Check for errors
-just check-errors
-
-# View recent errors
-docker-compose logs --since 1h | grep "ERROR"
-
-# Count errors by service
-docker-compose logs | grep "ERROR" | cut -d' ' -f2 | sort | uniq -c
-```
-
-## 🔍 Health Monitoring
-
-### Automated Health Checks
-
-Create a monitoring script `scripts/health-check.sh`:
-
-```bash
-#!/bin/bash
-
-services=(
-  "Extractor:8000"
-  "Graphinator:8001"
-  "Tableinator:8002"
-  "Dashboard:8003"
-  "API:8005"
-  "Explore:8007"
-  "Insights:8009"
-  "Brainztableinator:8010"
-  "Brainzgraphinator:8011"
-)
-
-all_healthy=true
-
-for service in "${services[@]}"; do
-  name="${service%%:*}"
-  port="${service##*:}"
-
-  response=$(curl -s http://localhost:$port/health)
-  if [[ $response == *"healthy"* ]]; then
-    echo "✅ $name is healthy"
-  else
-    echo "❌ $name is unhealthy"
-    all_healthy=false
-  fi
-done
-
-if $all_healthy; then
-  echo "✅ All services healthy"
-  exit 0
-else
-  echo "❌ Some services unhealthy"
-  exit 1
-fi
-```
-
-### Cron Jobs
-
-Schedule regular maintenance:
-
-```bash
-# Edit crontab
-crontab -e
-
-# Add maintenance jobs
-# Health check every 5 minutes
-*/5 * * * * /path/to/scripts/health-check.sh
-
-# Vacuum PostgreSQL daily at 2 AM
-0 2 * * * docker-compose exec postgres vacuumdb -z -d discogsography
-
-# Backup databases weekly on Sunday at 3 AM
-0 3 * * 0 /path/to/scripts/backup-databases.sh
-
-# Clean old logs weekly on Sunday at 4 AM
-0 4 * * 0 find /var/log/discogsography -name "*.log" -mtime +7 -delete
-```
-
-## 🔄 Backup and Restore
-
-### Database Backups
-
-#### Neo4j Backup
-
-```bash
-# Backup Neo4j database
-docker-compose exec neo4j neo4j-admin backup \
-  --backup-dir=/backups \
-  --name=neo4j-$(date +%Y%m%d)
-
-# Or backup the volume
-docker run --rm \
-  -v discogsography_neo4j_data:/data \
-  -v $(pwd)/backups:/backup \
-  alpine tar czf /backup/neo4j-$(date +%Y%m%d).tar.gz /data
-```
-
-#### PostgreSQL Backup
-
-```bash
-# Backup PostgreSQL database
-PGPASSWORD=discogsography pg_dump \
-  -h localhost -p 5433 -U discogsography \
-  discogsography > backups/postgres-$(date +%Y%m%d).sql
-
-# Or use Docker
-docker-compose exec postgres pg_dump \
-  -U discogsography discogsography \
-  > backups/postgres-$(date +%Y%m%d).sql
-```
-
-### Restore Databases
-
-#### Neo4j Restore
-
-```bash
-# Restore from backup
-docker-compose exec neo4j neo4j-admin restore \
-  --from=/backups/neo4j-20250115 \
-  --database=neo4j
-```
-
-#### PostgreSQL Restore
-
-```bash
-# Restore from backup
-PGPASSWORD=discogsography psql \
-  -h localhost -p 5433 -U discogsography \
-  discogsography < backups/postgres-20250115.sql
-
-# Or with Docker
-docker-compose exec -T postgres psql \
-  -U discogsography discogsography \
-  < backups/postgres-20250115.sql
-```
-
-## 📈 Performance Monitoring
-
-### System Resources
-
-```bash
-# Monitor Docker resource usage
-docker stats
-
-# Continuous monitoring
-watch -n 1 docker stats
-
-# Monitor specific service
-docker stats discogsography-dashboard-1
-```
-
-### Application Metrics
-
-```bash
-# Queue monitoring
-just monitor
-
-# System monitoring
-just system-monitor
-
-# Check processing rates
-docker-compose logs -f | grep "📊"
-```
-
-## 🔐 Security Maintenance
-
-### Regular Security Tasks
-
-```bash
-# Scan for vulnerabilities
-just security
-
-# Scan dependencies
-uv run pip-audit
-
-# Update security-sensitive packages
-uv add "package-name>=secure.version"
-
-# Review Docker images
-docker scout cves discogsography-dashboard
-```
-
-### Access Control Review
-
-```bash
-# Review database users
-# Neo4j
-curl -u neo4j:password http://localhost:7474/user/neo4j/
-
-# PostgreSQL
-PGPASSWORD=discogsography psql -h localhost -p 5433 \
-  -U discogsography -d discogsography -c "\du"
-
-# RabbitMQ
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/users
-```
-
-## 📚 Documentation Maintenance
-
-### Keep Docs Updated
-
-- Update version numbers
-- Refresh screenshots
-- Update code examples
-- Add new features to guides
-- Remove deprecated information
-
-### Documentation Checklist
-
-- [ ] README.md reflects current features
-- [ ] Configuration guide has all env vars
-- [ ] Architecture diagrams are current
-- [ ] Quick start guide works
-- [ ] All code examples run
-- [ ] Links are not broken
-- [ ] "Last Updated" dates are current
-
-## 🔄 Upgrade Procedures
-
-### Major Version Upgrades
-
-When upgrading to a new major version:
-
-1. **Review changelog** for breaking changes
-1. **Backup all databases**
-1. **Test in development** environment first
-1. **Update documentation**
-1. **Notify users** of changes
-1. **Deploy to production**
-1. **Monitor for issues**
-
-### Python Version Upgrades
-
-```bash
-# Update Python version in pyproject.toml
-requires-python = ">=3.14"
-
-# Update Dockerfiles
-FROM python:3.14-slim
-
-# Update CI/CD
-# Edit .github/workflows/*.yml
-
-# Test thoroughly
-just test
-just test-e2e
-```
-
-## Related Documentation
-
-- [Development Guide](development.md) - Development setup
-- [Performance Guide](performance-guide.md) - Performance optimization
-- [Database Resilience](database-resilience.md) - Connection patterns
-- [Troubleshooting Guide](troubleshooting.md) - Common issues
-
-______________________________________________________________________
-
-**Last Updated**: 2026-03-07
+Before approval, review the script, target, backup, affected-record count,
+expected duration, validation query, and rollback. CI never invokes mutation.
+
+## Promoted extraction rules
+
+`catalog-ingestion` owns the editable extraction rules. Deployment carries the
+runtime copy and `config/provenance.json`, which records the producer commit and
+source/promoted hashes. Update them together from a reviewed producer commit;
+`scripts/check-images.py` rejects a mismatched promoted hash.
+
+## Environment changes
+
+The following operations require explicit approval because they change live
+state:
+
+- `just smoke`, `just smoke-infra`, or `just down`;
+- `docker compose up`, `restart`, `stop`, `down`, or `scale`;
+- database restore, vacuum policy changes, queue deletion, or cache flush;
+- data migration with `--apply`;
+- secret rotation;
+- performance testing.
+
+Capture a pre-change snapshot, exact commands, image digests, validation
+results, and rollback outcome in the maintenance record.
+
+## Review checklist
+
+- [ ] Repository gate passes.
+- [ ] Every internal image uses its owning repository name and a manifest digest.
+- [ ] Infrastructure images remain digest-pinned.
+- [ ] Base and production Compose renders were reviewed.
+- [ ] No secret, `.env`, auth, volume, backup, or performance artifact is staged.
+- [ ] Backup and rollback evidence exists for stateful changes.
+- [ ] The operator approved the exact target and action.
+- [ ] Post-change health and application behavior were verified.

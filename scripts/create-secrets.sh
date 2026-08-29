@@ -45,11 +45,11 @@ write_secret "resend_api_key.txt" "${RESEND_API_KEY:-}"
 write_secret "nlq_api_key.txt" "${NLQ_API_KEY:-}"
 
 # PostgreSQL credentials
-write_secret "postgres_username.txt" "discogsography"
+write_secret "postgres_username.txt" "groovemap"
 write_secret "postgres_password.txt" "$(openssl rand -base64 24)"
 
 # RabbitMQ credentials
-write_secret "rabbitmq_username.txt" "discogsography"
+write_secret "rabbitmq_username.txt" "groovemap"
 write_secret "rabbitmq_password.txt" "$(openssl rand -base64 24)"
 
 # Neo4j password

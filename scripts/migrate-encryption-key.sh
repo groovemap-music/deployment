@@ -9,7 +9,7 @@
 # Usage:
 #   ./scripts/migrate-encryption-key.sh <options> <api-container>
 #
-# The <api-container> must be the API service container (e.g. discogsography-api),
+# The <api-container> must be the API service container (e.g. groovemap-api),
 # which has Python, psycopg, and cryptography installed.  Do NOT use the postgres
 # container — it lacks the required Python packages.
 #
@@ -20,12 +20,12 @@
 # Examples:
 #   # Old key as literal:
 #   ./scripts/migrate-encryption-key.sh --old-key "$OLD_KEY" \
-#       --new-key-file secrets/encryption_master_key.txt discogsography-api
+#       --new-key-file secrets/encryption_master_key.txt groovemap-api
 #
 #   # Old key from secret file:
 #   ./scripts/migrate-encryption-key.sh \
 #       --old-key secrets/oauth_encryption_key.txt \
-#       --new-key-file secrets/encryption_master_key.txt discogsography-api
+#       --new-key-file secrets/encryption_master_key.txt groovemap-api
 
 set -euo pipefail
 
@@ -70,7 +70,7 @@ if [ $# -lt 1 ] || [ -z "${OLD_KEY}" ] || [ -z "${NEW_KEY_FILE}" ]; then
   echo "  --old-key <key|path>     Old OAuth encryption key — literal value or path to secret file"
   echo "  --new-key-file <path>    Write the generated master key to a file"
   echo ""
-  echo "The <api-container> must be the API service container (e.g. discogsography-api)."
+  echo "The <api-container> must be the API service container (e.g. groovemap-api)."
   echo "Do NOT use the postgres container — it lacks the required Python packages."
   echo "PostgreSQL credentials are read from the container's environment automatically."
   echo ""
@@ -132,7 +132,7 @@ import sys; print('Key derivation validated', file=sys.stderr)
 pg_user = get_secret('POSTGRES_USERNAME')
 pg_pass = get_secret('POSTGRES_PASSWORD')
 pg_host = os.environ.get('POSTGRES_HOST', 'postgres')
-pg_db = os.environ.get('POSTGRES_DATABASE', 'discogsography')
+pg_db = os.environ.get('POSTGRES_DATABASE', 'groovemap')
 
 conn = psycopg.connect(host=pg_host, dbname=pg_db, user=pg_user, password=pg_pass)
 cur = conn.cursor()

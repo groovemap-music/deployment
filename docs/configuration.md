@@ -34,8 +34,8 @@ Export variables in your shell:
 
 ```bash
 export RABBITMQ_HOST="localhost"
-export RABBITMQ_USERNAME="discogsography"
-export RABBITMQ_PASSWORD="discogsography"
+export RABBITMQ_USERNAME="groovemap"
+export RABBITMQ_PASSWORD="groovemap"
 export NEO4J_HOST="localhost"
 # ... other variables
 ```
@@ -49,7 +49,7 @@ In production, credentials are mounted as in-memory tmpfs files via `docker-comp
 bash scripts/create-secrets.sh
 
 # Start with production overlay
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 See [Production Secrets](#production-secrets) below and [Docker Security](docker-security.md) for full details.
@@ -76,8 +76,8 @@ RabbitMQ connections are configured using individual component variables.
 | ------------------- | ------------------ | ---------------- | -------- |
 | `RABBITMQ_HOST`     | RabbitMQ hostname  | `rabbitmq`       | No       |
 | `RABBITMQ_PORT`     | RabbitMQ AMQP port | `5672`           | No       |
-| `RABBITMQ_USERNAME` | RabbitMQ username  | `discogsography` | No       |
-| `RABBITMQ_PASSWORD` | RabbitMQ password  | `discogsography` | No       |
+| `RABBITMQ_USERNAME` | RabbitMQ username  | `groovemap` | No       |
+| `RABBITMQ_PASSWORD` | RabbitMQ password  | `groovemap` | No       |
 
 **Used By**: Extractor, Graphinator, Tableinator, Brainzgraphinator, Brainztableinator, Dashboard
 
@@ -88,8 +88,8 @@ RabbitMQ connections are configured using individual component variables.
 ```bash
 # Local development
 RABBITMQ_HOST=localhost
-RABBITMQ_USERNAME=discogsography
-RABBITMQ_PASSWORD=discogsography
+RABBITMQ_USERNAME=groovemap
+RABBITMQ_PASSWORD=groovemap
 
 # Docker Compose (internal network — these are the defaults)
 RABBITMQ_HOST=rabbitmq
@@ -122,23 +122,14 @@ RABBITMQ_PASSWORD=mypassword
 - Requires ~76GB free space for full dataset
 - Contains downloaded XML files and metadata cache
 
-**Directory Structure**:
+**Directory layout**:
 
-```
-/discogs-data/
-├── artists/
-│   ├── discogs_20250115_artists.xml.gz
-│   └── .metadata_artists.json
-├── labels/
-│   ├── discogs_20250115_labels.xml.gz
-│   └── .metadata_labels.json
-├── releases/
-│   ├── discogs_20250115_releases.xml.gz
-│   └── .metadata_releases.json
-└── masters/
-    ├── discogs_20250115_masters.xml.gz
-    └── .metadata_masters.json
-```
+| Directory | Dataset example | Metadata file |
+| --- | --- | --- |
+| `/discogs-data/artists/` | `discogs_20250115_artists.xml.gz` | `.metadata_artists.json` |
+| `/discogs-data/labels/` | `discogs_20250115_labels.xml.gz` | `.metadata_labels.json` |
+| `/discogs-data/releases/` | `discogs_20250115_releases.xml.gz` | `.metadata_releases.json` |
+| `/discogs-data/masters/` | `discogs_20250115_masters.xml.gz` | `.metadata_masters.json` |
 
 **PERIODIC_CHECK_DAYS**:
 
@@ -179,7 +170,7 @@ NEO4J_PASSWORD="password"
 # Docker Compose
 NEO4J_HOST="neo4j"
 NEO4J_USERNAME="neo4j"
-NEO4J_PASSWORD="discogsography"
+NEO4J_PASSWORD="groovemap"
 
 # Neo4j Aura (cloud) — NEO4J_HOST accepts a full "scheme://host" URI, passed
 # through unchanged (Aura requires the neo4j+s:// routing+TLS scheme; do not
@@ -233,7 +224,7 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 | `POSTGRES_PORT`     | PostgreSQL port (used when not in host)       | `5432`           | No       |
 | `POSTGRES_USERNAME` | PostgreSQL username                          | (none)           | Yes      |
 | `POSTGRES_PASSWORD` | PostgreSQL password                          | (none)           | Yes      |
-| `POSTGRES_DATABASE` | Database name                                | `discogsography` | Yes      |
+| `POSTGRES_DATABASE` | Database name                                | `groovemap` | Yes      |
 | `POSTGRES_POOL_MIN_SIZE` | Override the connection-pool minimum for **all** pooled services | per-service default | No |
 | `POSTGRES_POOL_MAX_SIZE` | Override the connection-pool maximum for **all** pooled services | per-service default | No |
 
@@ -251,7 +242,7 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 > appropriate default (api 2/8, tableinator 2/12, brainztableinator 2/12, insights 1/4;
 > dashboard uses a single connection). The two `POSTGRES_POOL_*` overrides clamp the whole
 > fleet uniformly without a code change. See
-> [postgres-pool-exhaustion-analysis.md](postgres-pool-exhaustion-analysis.md) for the
+> [PostgreSQL pool exhaustion analysis](https://github.com/groovemap-music/discogs-sql-loader/blob/main/docs/postgres-pool-exhaustion-analysis.md) for the
 > rationale.
 
 **Connection Details**:
@@ -267,27 +258,27 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 ```bash
 # Local development
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # Docker Compose
 POSTGRES_HOST="postgres"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # Remote server
 POSTGRES_HOST="db.example.com"
 POSTGRES_USERNAME="app_user"
 POSTGRES_PASSWORD="secure-password"
-POSTGRES_DATABASE="discogsography_prod"
+POSTGRES_DATABASE="groovemap_prod"
 
 # Through a connection pooler (port embedded in host)
 POSTGRES_HOST="pgbouncer:6432"
 POSTGRES_USERNAME="app_user"
 POSTGRES_PASSWORD="secure-password"
-POSTGRES_DATABASE="discogsography_prod"
+POSTGRES_DATABASE="groovemap_prod"
 ```
 
 **Performance Tuning**:
@@ -436,7 +427,7 @@ LOG_LEVEL=WARNING
 - Cache hit/miss statistics
 - Internal state transitions
 
-See [Logging Guide](logging-guide.md) for detailed logging information.
+See [Logging Guide](https://github.com/groovemap-music/catalog-api/blob/main/docs/logging-guide.md) for detailed logging information.
 
 ## Consumer Management
 
@@ -482,7 +473,7 @@ CONSUMER_CANCEL_DELAY=3600   # 1 hour
 QUEUE_CHECK_INTERVAL=300     # 5 minutes (doesn't matter if rarely triggered)
 ```
 
-See [Consumer Cancellation](consumer-cancellation.md) for details.
+See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enricher/blob/main/docs/consumer-cancellation.md) for details.
 
 ## Batch Processing Configuration
 
@@ -558,8 +549,8 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 
 | Variable                | Description                                  | Default           | Required |
 | ------------------------ | --------------------------------------------- | ----------------- | -------- |
-| `RABBITMQ_USERNAME`     | RabbitMQ management API username (shared with the core RabbitMQ credentials) | `discogsography`  | No       |
-| `RABBITMQ_PASSWORD`     | RabbitMQ management API password (shared with the core RabbitMQ credentials) | `discogsography`  | No       |
+| `RABBITMQ_USERNAME`     | RabbitMQ management API username (shared with the core RabbitMQ credentials) | `groovemap`  | No       |
+| `RABBITMQ_PASSWORD`     | RabbitMQ management API password (shared with the core RabbitMQ credentials) | `groovemap`  | No       |
 | `CORS_ORIGINS`                 | Comma-separated list of allowed CORS origins | (none — disabled) | No       |
 | `CACHE_WARMING_ENABLED`        | Pre-warm cache on startup                    | `true`            | No       |
 | `CACHE_WEBHOOK_SECRET`         | Secret for cache invalidation webhooks       | (none — disabled) | No       |
@@ -598,9 +589,9 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 ```bash
 # Required
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 REDIS_HOST="localhost"
 JWT_SECRET_KEY="your-secret-key-here"
 DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
@@ -652,7 +643,7 @@ docker exec <api-container> discogs-setup \
 docker exec <api-container> discogs-setup --show
 ```
 
-See the [API README](../api/README.md#operator-setup) for full setup instructions.
+See the [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md) for full setup instructions.
 
 ### Schema-Init
 
@@ -660,11 +651,11 @@ See the [API README](../api/README.md#operator-setup) for full setup instruction
 # Required
 NEO4J_HOST="localhost"
 NEO4J_USERNAME="neo4j"
-NEO4J_PASSWORD="discogsography"
+NEO4J_PASSWORD="groovemap"
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # Optional
 LOG_LEVEL=INFO
@@ -685,8 +676,8 @@ MUSICBRAINZ_ROOT="/musicbrainz-data"
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional
 PERIODIC_CHECK_DAYS=5            # Days between update checks (code default: 15, docker-compose: 5 Discogs / 3 MusicBrainz)
@@ -704,12 +695,12 @@ Health check: http://localhost:8000/health (each extractor container exposes por
 # Required
 NEO4J_HOST="localhost"
 NEO4J_USERNAME="neo4j"
-NEO4J_PASSWORD="discogsography"
+NEO4J_PASSWORD="groovemap"
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional - Consumer Management
 CONSUMER_CANCEL_DELAY=300
@@ -735,14 +726,14 @@ Health check: http://localhost:8001/health
 ```bash
 # Required
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional - Consumer Management
 CONSUMER_CANCEL_DELAY=300
@@ -782,17 +773,17 @@ Health check: http://localhost:8007/health
 # Required
 NEO4J_HOST="localhost"
 NEO4J_USERNAME="neo4j"
-NEO4J_PASSWORD="discogsography"
+NEO4J_PASSWORD="groovemap"
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 REDIS_HOST="localhost"
 
 # RabbitMQ (also used to authenticate against the RabbitMQ management API)
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional - CORS
 CORS_ORIGINS="http://localhost:8003,http://localhost:8006"  # comma-separated origins
@@ -813,9 +804,9 @@ Health check: http://localhost:8003/health
 # Required
 API_BASE_URL="http://api:8004"       # URL of the API service (fetches raw query data over HTTP)
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # Optional - Redis Caching
 REDIS_HOST="localhost"                        # Redis hostname for result caching (default: localhost)
@@ -851,12 +842,12 @@ Health check: http://localhost:8009/health
 # Required
 NEO4J_HOST="localhost"
 NEO4J_USERNAME="neo4j"
-NEO4J_PASSWORD="discogsography"
+NEO4J_PASSWORD="groovemap"
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional - Consumer Management
 CONSUMER_CANCEL_DELAY=300
@@ -883,14 +874,14 @@ Health check: http://localhost:8011/health
 ```bash
 # Required
 POSTGRES_HOST="localhost"
-POSTGRES_USERNAME="discogsography"
-POSTGRES_PASSWORD="discogsography"
-POSTGRES_DATABASE="discogsography"
+POSTGRES_USERNAME="groovemap"
+POSTGRES_PASSWORD="groovemap"
+POSTGRES_DATABASE="groovemap"
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=discogsography # default: discogsography
-RABBITMQ_PASSWORD=discogsography # default: discogsography
+RABBITMQ_USERNAME=groovemap # default: groovemap
+RABBITMQ_PASSWORD=groovemap # default: groovemap
 
 # Optional - Consumer Management
 CONSUMER_CANCEL_DELAY=300
@@ -927,8 +918,8 @@ API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API
 ```bash
 # RabbitMQ (built from components)
 RABBITMQ_HOST=localhost
-RABBITMQ_USERNAME=discogsography
-RABBITMQ_PASSWORD=discogsography
+RABBITMQ_USERNAME=groovemap
+RABBITMQ_PASSWORD=groovemap
 
 # Neo4j
 NEO4J_HOST=localhost
@@ -939,7 +930,7 @@ NEO4J_PASSWORD=development
 POSTGRES_HOST=localhost
 POSTGRES_USERNAME=postgres
 POSTGRES_PASSWORD=development
-POSTGRES_DATABASE=discogsography_dev
+POSTGRES_DATABASE=groovemap_dev
 
 # Redis
 REDIS_HOST=localhost
@@ -973,20 +964,19 @@ bash scripts/create-secrets.sh
 
 This creates `secrets/` with these files (all `chmod 600`, directory `chmod 700`):
 
-```
-secrets/
-├── resend_api_key.txt        # Optional — Resend API key
-├── nlq_api_key.txt           # Optional — NLQ provider API key (empty unless NLQ_ENABLED)
-├── encryption_master_key.txt # base64(urandom(32))
-├── jwt_secret_key.txt        # openssl rand -hex 32
-├── neo4j_password.txt        # openssl rand -base64 24
-├── postgres_password.txt     # openssl rand -base64 24
-├── postgres_username.txt         # discogsography
-├── rabbitmq_password.txt     # openssl rand -base64 24
-├── rabbitmq_username.txt         # discogsography
-├── redis_password.txt        # openssl rand -base64 24
-└── insights_internal_secret.txt  # openssl rand -hex 32 (shared by api + insights)
-```
+| File | Value or generation method |
+| --- | --- |
+| `resend_api_key.txt` | Optional Resend API key |
+| `nlq_api_key.txt` | Optional NLQ provider API key; empty unless enabled |
+| `encryption_master_key.txt` | URL-safe base64 of 32 random bytes |
+| `jwt_secret_key.txt` | `openssl rand -hex 32` |
+| `neo4j_password.txt` | `openssl rand -base64 24` |
+| `postgres_password.txt` | `openssl rand -base64 24` |
+| `postgres_username.txt` | `groovemap` |
+| `rabbitmq_password.txt` | `openssl rand -base64 24` |
+| `rabbitmq_username.txt` | `groovemap` |
+| `redis_password.txt` | `openssl rand -base64 24` |
+| `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 
 See `secrets.example/` for reference placeholders and generation commands.
 
@@ -1001,7 +991,7 @@ NEO4J_HOST=neo4j.prod.internal
 
 # PostgreSQL
 POSTGRES_HOST=postgres.prod.internal
-POSTGRES_DATABASE=discogsography
+POSTGRES_DATABASE=groovemap
 
 # Redis
 REDIS_HOST=redis
@@ -1025,7 +1015,7 @@ QUEUE_CHECK_INTERVAL=3600
 **Step 3 — Start with the production overlay**:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 Credentials are mounted at `/run/secrets/<name>` inside each container and read automatically. See [Docker Security](docker-security.md) for the full secrets table and Neo4j entrypoint details.
@@ -1079,8 +1069,8 @@ NEO4J_USERNAME=admin
 POSTGRES_USERNAME=postgres
 
 # ✅ GOOD - dedicated service accounts
-NEO4J_USERNAME=discogsography_app
-POSTGRES_USERNAME=discogsography_app
+NEO4J_USERNAME=groovemap_app
+POSTGRES_USERNAME=groovemap_app
 ```
 
 ## Validation and Testing
@@ -1146,7 +1136,7 @@ See [Troubleshooting Guide](troubleshooting.md) for more solutions.
 - [Docker Security](docker-security.md) - Runtime secrets, container hardening, and production setup
 - [Architecture Overview](architecture.md) - Understand service dependencies
 - [Database Resilience](database-resilience.md) - Connection patterns
-- [Logging Guide](logging-guide.md) - Logging configuration details
+- [Logging Guide](https://github.com/groovemap-music/catalog-api/blob/main/docs/logging-guide.md) - Logging configuration details
 - [Performance Guide](performance-guide.md) - Performance tuning settings
 
 ______________________________________________________________________

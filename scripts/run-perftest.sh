@@ -2,7 +2,7 @@
 set -euo pipefail
 
 image="${PERFTEST_IMAGE:-}"
-network="${PERFTEST_NETWORK:-deployment_discogsography}"
+network="${PERFTEST_NETWORK:-deployment_groovemap}"
 config="${PERFTEST_CONFIG:-tests/perftest/config.yaml}"
 results="${PERFTEST_RESULTS:-perftest-results}"
 

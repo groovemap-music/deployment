@@ -1,7 +1,7 @@
 """Regression tests for discogsography-p386.
 
 The base neo4j healthcheck authenticates with the literal dev password
-(``cypher-shell -u neo4j -p discogsography``), and docker-compose.prod.yml
+(``cypher-shell -u neo4j -p groovemap``), and docker-compose.prod.yml
 overrode the entrypoint, memory, and JVM settings but never the healthcheck.
 In prod the real password is random — ``scripts/create-secrets.sh`` writes
 ``openssl rand -base64 24`` and ``scripts/neo4j-entrypoint.sh`` exports
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.deploy.test_docker_compose_prod import _load_compose
+
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 BASE_COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -70,7 +71,7 @@ def test_prod_neo4j_healthcheck_has_no_hardcoded_password() -> None:
     neo4j = _compose(PROD_COMPOSE)["services"]["neo4j"]
     text = _healthcheck_text(neo4j)
 
-    assert "discogsography" not in text, f"prod neo4j healthcheck must not hardcode a password — prod auth uses a random secret: {text!r}"
+    assert "groovemap" not in text, f"prod neo4j healthcheck must not hardcode a password — prod auth uses a random secret: {text!r}"
 
 
 def test_prod_neo4j_mounts_the_password_secret_it_probes_with() -> None:
@@ -85,9 +86,7 @@ def test_prod_neo4j_mounts_the_password_secret_it_probes_with() -> None:
 
 def test_no_prod_healthcheck_hardcodes_a_credential() -> None:
     """Sweep: no prod service may embed the dev-default credential in a probe."""
-    offenders = [
-        name for name, service in (_compose(PROD_COMPOSE).get("services") or {}).items() if "discogsography" in _healthcheck_text(service or {})
-    ]
+    offenders = [name for name, service in (_compose(PROD_COMPOSE).get("services") or {}).items() if "groovemap" in _healthcheck_text(service or {})]
 
     assert not offenders, f"prod healthchecks must source credentials from secrets, not literals: {offenders}"
 

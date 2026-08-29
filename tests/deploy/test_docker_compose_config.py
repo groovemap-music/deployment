@@ -12,8 +12,8 @@ Covers:
   process forwarding signals, a stop/restart landing in that window is silently
   ignored until Docker's SIGKILL grace period. ``init: true`` (tini as PID 1) fixes
   this uniformly for every affected service.
-- discogsography-wa1x: ``just configure-discogs``'s default container name must match
-  the compose ``container_name:`` the api service actually runs under.
+- discogsography-wa1x: operator helpers that invoke the API container must match the
+  Compose ``container_name:`` the API service actually runs under.
 
 These tests parse the compose YAML directly (no ``docker`` binary required), mirroring
 the pattern in test_docker_compose_prod.py.
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,3 +100,13 @@ class TestRepositoryBoundary:
     def test_no_service_uses_a_sibling_build_context(self) -> None:
         compose = _base_compose()
         assert all("build" not in service for service in compose["services"].values())
+
+
+class TestApiContainerNameContract:
+    """Historical issue discogsography-wa1x: helpers and Compose must not drift."""
+
+    def test_reset_password_fallback_matches_compose_api_container(self) -> None:
+        expected = _base_compose()["services"]["api"]["container_name"]
+        script = (REPO_ROOT / "scripts" / "reset-password.sh").read_text()
+        assert expected == "groovemap-api"
+        assert expected in script

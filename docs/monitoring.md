@@ -1,781 +1,134 @@
-# 📊 Monitoring & Operations
+# Monitoring guide
 
-<div align="center">
+This guide covers observation of a running GrooveMap Compose environment. The
+deployment repository defines health checks and topology; application metrics,
+alerts, and logging behavior are owned by the corresponding source repository.
 
-**Real-time monitoring, debugging, and operational guides**
+## Safe first checks
 
-[🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [🏛️ Architecture](architecture.md)
-
-</div>
-
-## Overview
-
-GrooveMap provides comprehensive monitoring and observability features to track system health, performance, and processing progress. This guide covers dashboards, debugging tools, metrics, and operational procedures.
-
-## 📊 Dashboard
-
-The web-based dashboard provides real-time monitoring of all system components through a WebSocket-powered interface.
-
-### Accessing the Dashboard
+The following commands are read-only against the running environment:
 
 ```bash
-# Start all services
-docker-compose up -d
-
-# Access dashboard
-open http://localhost:8003
+docker compose ps
+docker compose config --services
+docker compose logs --tail=100
+docker compose logs --tail=100 api
 ```
 
-### Dashboard Features
-
-#### Service Health Panel
-
-- **Real-time status** of all microservices
-- **Health check** endpoints (✅ healthy, ❌ unhealthy)
-- **Uptime tracking** for each service
-- **Auto-refresh** via WebSocket updates
-
-**Pipeline Services Monitored by Dashboard**:
-
-Discogs pipeline:
-
-- Extractor (http://extractor-discogs:8000/health)
-- Graphinator (http://graphinator:8001/health)
-- Tableinator (http://tableinator:8002/health)
-
-MusicBrainz pipeline (auto-hidden when not deployed):
-
-- Extractor MusicBrainz (http://extractor-musicbrainz:8000/health — separate container, each extractor listens on port 8000 inside its own container)
-- Brainzgraphinator (http://brainzgraphinator:8011/health)
-- Brainztableinator (http://brainztableinator:8010/health)
-
-**Other service health endpoints** (not monitored by Dashboard, available for manual checks):
-
-- Dashboard (http://localhost:8003/health)
-- API (http://localhost:8004/health or http://localhost:8005/health)
-- Explore (http://localhost:8007/health)
-- Insights (http://localhost:8009/health — internal only in Docker Compose, not exposed to host)
-
-#### Queue Metrics Panel
-
-- **Message counts** per queue (artists, labels, releases, masters)
-- **Consumer counts** - active consumers per queue
-- **Message rates** - messages/second throughput
-- **Queue depth trends** - historical visualization
-- **Stall detection** - alerts when queues stop processing
-
-#### Database Statistics Panel
-
-**Neo4j Metrics**:
-
-- Node counts by type (Artist, Label, Release, Master, Genre, Style)
-- Relationship counts
-- Database size
-- Connection pool status
-
-**PostgreSQL Metrics**:
-
-- Record counts per table
-- Table sizes and index sizes
-- Connection pool status
-- Query performance stats
-
-#### Activity Log Panel
-
-- **Recent events** from all services
-- **Processing updates** with timestamps
-- **Error notifications** with severity levels
-- **Filterable by service** and log level
-- **Auto-scroll** for live updates
-
-### Admin Panel
-
-The dashboard includes a login-gated admin panel at `/admin` for managing extractions and dead-letter queues. The monitoring dashboard at `/` remains public.
-
-#### Accessing the Admin Panel
+Add timestamps when correlating events:
 
 ```bash
-# Create an admin account (one-time setup) — prompts for the password
-# interactively; never pass it as a CLI argument (see docs/admin-guide.md).
-docker exec -it discogsography-api admin-setup --email admin@example.com
-
-# Access admin panel
-open http://localhost:8003/admin
+docker compose logs --timestamps --since=30m
 ```
 
-See [Admin Guide](admin-guide.md) for full details.
-
-#### Admin Features
-
-- **Extraction Control** — Trigger a full reprocessing of Discogs data (`POST /admin/api/extractions/trigger`). Manual triggers always force reprocessing regardless of existing state markers.
-- **MusicBrainz Extraction Control** — Trigger a full reprocessing of MusicBrainz data (`POST /admin/api/extractions/trigger-musicbrainz`). Only shown when the MusicBrainz pipeline is deployed.
-- **Extraction History** — View past extractions with status, duration, record counts, and error messages. Auto-refreshes every 30 seconds.
-- **DLQ Management** — Purge dead-letter queues when messages are known-bad or after fixing the root cause of processing failures.
-
-#### Architecture
-
-The admin panel frontend (`/admin`) is served from the dashboard service. Admin API calls are proxied through the dashboard to the API service — the dashboard's `admin_proxy` router forwards requests with the JWT Authorization header and returns responses unchanged. Authentication and authorization are handled entirely by the API service.
-
-### WebSocket API
-
-The dashboard uses WebSocket for real-time updates:
-
-```javascript
-// Connect to WebSocket
-const ws = new WebSocket('ws://localhost:8003/ws');
-
-// Receive updates
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log(data);
-};
-```
-
-**Update Types**:
-
-- `service_health`: Service status changes
-- `queue_metrics`: Queue depth and consumer updates
-- `database_stats`: Database record counts
-- `activity_log`: New log entries
-
-## 🔍 Debug Utilities
-
-### Command-Line Monitoring Tools
-
-#### Check Service Errors
+Interactive log following is useful during an incident, but it remains attached
+until interrupted:
 
 ```bash
-# Check for errors in all service logs
-just check-errors
-
-# Or directly with Python
-uv run python utilities/check_errors.py
+docker compose logs --follow --timestamps api
 ```
 
-**Output**:
+## Health endpoints
 
-- Counts errors by service
-- Shows recent error messages
-- Groups similar errors
-- Highlights critical issues
+The base configuration publishes these probes:
 
-#### Monitor RabbitMQ Queues
+| Service | Endpoint |
+| --- | --- |
+| Operations console | <http://localhost:8003/health> |
+| Catalog API | <http://localhost:8005/health> |
+| Graph explorer | <http://localhost:8007/health> |
+| Neo4j HTTP | <http://localhost:7474> |
+| RabbitMQ management | <http://localhost:15672> |
+
+Compose also evaluates container-native checks for PostgreSQL, Neo4j,
+RabbitMQ, Redis, the schema initializer, and every long-running application.
+Use `docker compose ps` as the canonical summary of those checks.
+
+## Dependency inspection
+
+Only run `exec` probes when the target environment and credentials are
+approved. These examples do not intentionally mutate data:
 
 ```bash
-# Real-time queue monitoring
-just monitor
-
-# Or directly with Python
-uv run python utilities/monitor_queues.py
+docker compose exec postgres pg_isready -U groovemap -d groovemap
+docker compose exec neo4j cypher-shell -u neo4j -p "$NEO4J_PASSWORD" "RETURN 1"
+docker compose exec rabbitmq rabbitmq-diagnostics -q ping
+docker compose exec redis redis-cli ping
 ```
 
-**Output**:
+In production, obtain credentials through the environment's approved secret
+access process. Do not print file-backed secrets or place them on a shared
+command line.
 
-```
-╔════════════════════════════════════════════════════════════╗
-║           RabbitMQ Queue Monitor                           ║
-╚════════════════════════════════════════════════════════════╝
+## Queue monitoring
 
-Queue: artists_queue
-├─ Messages: 1,234
-├─ Consumers: 2
-├─ Rate: 45.2 msg/s
-└─ Status: ✅ Processing
+RabbitMQ's management interface at <http://localhost:15672> shows queue depth,
+consumer count, publish rate, and acknowledgement rate. A useful incident
+snapshot records:
 
-Queue: releases_queue
-├─ Messages: 5,678
-├─ Consumers: 2
-├─ Rate: 123.4 msg/s
-└─ Status: ✅ Processing
+| Queue | Messages | Consumers | Publish rate | Ack rate | Observation time |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Example queue | 1,234 | 2 | 45.2/s | 45.1/s | ISO-8601 timestamp |
 
-...
-```
+A growing queue with no consumers is usually a consumer health or dependency
+problem. A growing queue with active consumers may instead indicate throughput
+pressure. Correlate queue state with the relevant service logs before taking
+action.
 
-#### System Monitor Dashboard
+## Database observation
+
+For PostgreSQL, monitor connection count, long-running queries, lock waits,
+storage, WAL growth, and checkpoint behavior. For Neo4j, monitor heap,
+page-cache pressure, transaction duration, query latency, and storage. Keep
+queries read-only unless a separately reviewed runbook authorizes mutation.
+
+The source repositories own query-specific diagnostics:
+
+- [`catalog-api`](https://github.com/groovemap-music/catalog-api) for API query
+  and authentication behavior;
+- [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher)
+  and [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher)
+  for Neo4j consumers;
+- [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader)
+  and [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader)
+  for PostgreSQL consumers.
+
+## Operations console and analytics
+
+The operations console is published at <http://localhost:8003> in the base
+configuration. Its implementation and alert behavior belong to
+[`operations-console`](https://github.com/groovemap-music/operations-console).
+Precomputed analytics behavior belongs to
+[`analytics-engine`](https://github.com/groovemap-music/analytics-engine).
+
+## Incident snapshot
+
+Before restarting or stopping anything, capture:
 
 ```bash
-# Comprehensive system monitoring
-just system-monitor
-
-# Or directly with Python
-uv run python utilities/system_monitor.py
+docker compose ps > compose-ps.txt
+docker compose logs --timestamps --since=1h > compose-last-hour.log
+docker compose config > compose-rendered.yaml
 ```
 
-**Features**:
-
-- CPU and memory usage per service
-- Disk I/O statistics
-- Network throughput
-- Database connection counts
-- Processing rates and bottlenecks
-
-### Service Logs
-
-#### View All Logs
-
-```bash
-# All services
-just logs
-
-# Or with docker-compose
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f extractor-discogs extractor-musicbrainz
-docker-compose logs -f graphinator
-docker-compose logs -f tableinator
-docker-compose logs -f dashboard
-```
-
-#### Filter Logs by Level
-
-```bash
-# Errors only
-docker-compose logs | grep "ERROR"
-docker-compose logs | grep "❌"
-
-# Warnings and errors
-docker-compose logs | grep -E "(WARNING|ERROR)"
-docker-compose logs | grep -E "(⚠️|❌)"
-
-# Success messages
-docker-compose logs | grep "✅"
-
-# Database queries (DEBUG level only)
-docker-compose logs dashboard | grep "🔍 Executing"
-```
-
-## 📈 Metrics
-
-### Processing Metrics
-
-Each service tracks and logs processing statistics:
-
-#### Extractor Metrics
-
-```
-🚀 Starting Extractor
-📥 Downloading artists data dump
-📊 Processed 10,000 artists (1,234 msg/s)
-📊 Processed 50,000 artists (1,456 msg/s)
-✅ Completed artists processing: 100,000 total
-```
-
-**Key Metrics**:
-
-- Records/second processing rate
-- Total records processed
-- Skipped records (duplicates)
-- Failed records
-- Download speed (MB/s)
-
-#### Graphinator Metrics
-
-```
-🔗 Connected to Neo4j
-🐰 Connected to RabbitMQ
-🔄 Processing artists queue
-📊 Created 1,000 Artist nodes (234 nodes/s)
-💾 Updated 50 existing Artist nodes
-✅ Completed processing
-```
-
-**Key Metrics**:
-
-- Nodes created/updated per second
-- Relationships created per second
-- Transaction batch sizes
-- Queue processing rates
-- Deduplication hits
-
-#### Tableinator Metrics
-
-```
-🐘 Connected to PostgreSQL
-🐰 Connected to RabbitMQ
-🔄 Processing releases queue
-📊 Inserted 5,000 releases (567 records/s)
-⏩ Skipped 123 duplicates
-✅ Completed processing
-```
-
-**Key Metrics**:
-
-- Records inserted/second
-- Duplicate records skipped
-- Batch insert sizes
-- Index creation time
-- Table sizes
-
-### Database Metrics
-
-#### Neo4j Metrics
-
-```cypher
--- Node counts by type
-MATCH (n)
-RETURN labels(n)[0] as type, count(n) as count
-ORDER BY count DESC;
-
--- Relationship counts
-MATCH ()-[r]->()
-RETURN type(r) as relationship, count(r) as count
-ORDER BY count DESC;
-
--- Database size
-CALL apoc.meta.stats() YIELD labels, relTypesCount, nodeCount, relCount;
-```
-
-#### PostgreSQL Metrics
-
-```sql
--- Record counts
-SELECT 'artists' as table_name, COUNT(*) FROM artists
-UNION ALL SELECT 'labels', COUNT(*) FROM labels
-UNION ALL SELECT 'releases', COUNT(*) FROM releases
-UNION ALL SELECT 'masters', COUNT(*) FROM masters;
-
--- Table sizes
-SELECT
-    schemaname,
-    tablename,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
-FROM pg_tables
-WHERE schemaname = 'public'
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-
--- Active connections
-SELECT count(*) FROM pg_stat_activity
-WHERE datname = 'discogsography';
-```
-
-### RabbitMQ Metrics
-
-Access RabbitMQ Management UI:
-
-```bash
-open http://localhost:15672
-```
-
-Login: `discogsography` / `discogsography`
-
-**Available Metrics**:
-
-- Queue depth (messages ready)
-- Consumer count per queue
-- Message rates (publish/deliver)
-- Connection counts
-- Channel counts
-- Memory usage
-
-**API Access**:
-
-```bash
-# Queue overview
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/queues
-
-# Specific queue
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/queues/%2F/artists_queue
-```
-
-### Insights Service Metrics
-
-The Insights service runs scheduled batch analytics and exposes results via the API proxy. Monitor its operation through:
-
-**Health Check** (internal only — port 8009 is not exposed to the host in Docker Compose):
-
-```bash
-# From within the Docker network:
-docker exec discogsography-insights curl -s http://localhost:8009/health
-# Response: {"status": "healthy"}
-```
-
-**Computation Status**:
-
-```bash
-# Check latest computation run via API proxy
-curl http://localhost:8004/api/insights/status
-```
-
-**Key Metrics**:
-
-- Computation run timestamps and duration
-- Result counts per insight type (top-artists, genre-trends, label-longevity, this-month, data-completeness)
-- Redis cache hit/miss rates (when `REDIS_HOST` is configured)
-- Schedule interval (`INSIGHTS_SCHEDULE_HOURS`, default: 24h)
-
-**Log Monitoring**:
-
-```bash
-# Watch Insights service logs
-docker-compose logs -f insights
-
-# Check for computation completions
-docker-compose logs insights | grep "Computation"
-```
-
-______________________________________________________________________
-
-### Redis Metrics
-
-```bash
-# Connect to Redis
-docker-compose exec redis redis-cli
-
-# Get info
-INFO stats
-INFO memory
-INFO keyspace
-
-# Monitor commands
-MONITOR
-
-# Get key count
-DBSIZE
-
-# Check specific keys
-KEYS dashboard:*
-TTL dashboard:service_health
-```
-
-## 🔧 Health Checks
-
-### Service Health Endpoints
-
-All services expose HTTP health check endpoints:
-
-```bash
-# Extractor
-curl http://localhost:8000/health
-# Response: {"status": "healthy"}
-
-# Graphinator
-curl http://localhost:8001/health
-# Response: {"status": "healthy"}
-
-# Tableinator
-curl http://localhost:8002/health
-# Response: {"status": "healthy"}
-
-# Dashboard
-curl http://localhost:8003/health
-# Response: {"status": "healthy"}
-
-# API (health check port)
-curl http://localhost:8005/health
-# Response: {"status": "healthy", "service": "api", ...}
-
-# Explore
-curl http://localhost:8007/health
-# Response: {"status": "healthy"}
-
-# Brainztableinator
-curl http://localhost:8010/health
-# Response: {"status": "healthy"}
-
-# Brainzgraphinator
-curl http://localhost:8011/health
-# Response: {"status": "healthy"}
-
-```
-
-### Automated Health Monitoring
-
-```bash
-#!/bin/bash
-# check-all-health.sh
-
-services=(
-  "Extractor:8000"
-  "Graphinator:8001"
-  "Tableinator:8002"
-  "Dashboard:8003"
-  "API:8005"
-  "Explore:8007"
-  "Brainztableinator:8010"
-  "Brainzgraphinator:8011"
-)
-
-for service in "${services[@]}"; do
-  name="${service%%:*}"
-  port="${service##*:}"
-
-  response=$(curl -s http://localhost:$port/health)
-  if [[ $response == *"healthy"* ]]; then
-    echo "✅ $name is healthy"
-  else
-    echo "❌ $name is unhealthy"
-  fi
-done
-```
-
-### Database Health Checks
-
-**Neo4j**:
-
-```bash
-# Check connectivity
-curl http://localhost:7474
-
-# Query test
-echo "RETURN 1 as test;" | \
-  cypher-shell -u neo4j -p discogsography
-```
-
-**PostgreSQL**:
-
-```bash
-# Check connectivity
-PGPASSWORD=discogsography psql \
-  -h localhost -p 5433 -U discogsography \
-  -d discogsography -c "SELECT 1;"
-```
-
-**RabbitMQ**:
-
-```bash
-# Check management API
-curl -u "${RABBITMQ_USERNAME}:${RABBITMQ_PASSWORD}" \
-  http://localhost:15672/api/overview
-```
-
-## ⚠️ Alerts and Notifications
-
-### Stall Detection
-
-The dashboard automatically detects when processing stalls:
-
-**Conditions**:
-
-- Queue has messages but no consumption for 5+ minutes
-- Consumer count is 0 but messages exist
-- Message rate drops to 0 unexpectedly
-
-**Actions**:
-
-- Alert displayed on dashboard
-- Log entry with ⚠️ emoji
-- Optional webhook notification (configure in dashboard code)
-
-### Error Tracking
-
-Errors are automatically tracked and reported:
-
-```bash
-# Recent errors across all services
-just check-errors
-
-# Errors by service
-docker-compose logs graphinator | grep "❌"
-
-# Critical errors
-docker-compose logs | grep "CRITICAL"
-```
-
-### Custom Alerts
-
-Extend the dashboard for custom alerts:
-
-```python
-# dashboard/dashboard.py
-
-
-async def check_custom_condition():
-    """Custom alert condition"""
-    if some_metric > threshold:
-        await broadcast_alert({"type": "custom_alert", "severity": "warning", "message": "Custom condition triggered"})
-```
-
-## 🐛 Debugging Guide
-
-### Step 1: Check Service Health
-
-```bash
-# Health check all services individually
-curl http://localhost:8000/health  # Extractor
-curl http://localhost:8001/health  # Graphinator
-curl http://localhost:8002/health  # Tableinator
-curl http://localhost:8003/health  # Dashboard
-curl http://localhost:8005/health  # API (health check port)
-curl http://localhost:8007/health  # Explore (health check port)
-```
-
-### Step 2: Enable Debug Logging
-
-```bash
-# Set LOG_LEVEL environment variable
-export LOG_LEVEL=DEBUG
-
-# Restart services
-docker-compose down
-docker-compose up -d
-
-# Or for specific service
-LOG_LEVEL=DEBUG uv run python dashboard/dashboard.py
-```
-
-**Debug Level Includes**:
-
-- Database query logging with parameters
-- Internal state transitions
-- Cache hits/misses
-- Message processing details
-- Connection lifecycle events
-
-### Step 3: Monitor Real-time Logs
-
-```bash
-# All services
-docker-compose logs -f
-
-# Specific service with timestamp
-docker-compose logs -f --timestamps graphinator
-
-# Filter for errors
-docker-compose logs -f | grep -E "(ERROR|❌)"
-```
-
-### Step 4: Check Queue Status
-
-```bash
-# RabbitMQ management UI
-open http://localhost:15672
-
-# Or use CLI monitoring
-just monitor
-```
-
-**Look for**:
-
-- Messages accumulating (consumers not keeping up)
-- Zero consumers (service not connected)
-- High unacked count (processing errors)
-
-### Step 5: Verify Database Connectivity
-
-```bash
-# Neo4j
-curl http://localhost:7474
-
-# PostgreSQL
-PGPASSWORD=discogsography psql -h localhost -p 5433 \
-  -U discogsography -d discogsography -c "SELECT 1;"
-```
-
-### Step 6: Analyze Performance
-
-```bash
-# System monitoring
-just system-monitor
-
-# Database query performance (Neo4j)
-MATCH (n) RETURN count(n);
-PROFILE MATCH (a:Artist {name: "Pink Floyd"}) RETURN a;
-
-# PostgreSQL query performance
-EXPLAIN ANALYZE
-SELECT data FROM artists WHERE data->>'name' = 'Pink Floyd';
-```
-
-## 📝 Logging Configuration
-
-### Log Levels
-
-Set `LOG_LEVEL` environment variable:
-
-| Level      | Use Case          | Output                      |
-| ---------- | ----------------- | --------------------------- |
-| `DEBUG`    | Development       | All logs + query details    |
-| `INFO`     | Production        | Normal operations (default) |
-| `WARNING`  | Production alerts | Warnings and errors only    |
-| `ERROR`    | Critical only     | Errors only                 |
-| `CRITICAL` | Emergencies       | Critical errors only        |
-
-### Log Format
-
-All services use **structlog** with JSON output. Each log entry is a JSON object containing structured fields:
-
-```json
-{"service": "graphinator", "environment": "production", "event": "🚀 Starting service", "level": "info", "timestamp": "2025-01-15T10:30:45.123456Z"}
-```
-
-Example output:
-
-```json
-{"service": "graphinator", "environment": "production", "event": "🚀 Starting service", "level": "info", "timestamp": "2025-01-15T10:30:45.123456Z"}
-{"service": "graphinator", "environment": "production", "event": "🔗 Connected to Neo4j", "level": "info", "timestamp": "2025-01-15T10:30:46.234567Z"}
-{"service": "graphinator", "environment": "production", "event": "🐰 Connected to RabbitMQ", "level": "info", "timestamp": "2025-01-15T10:30:47.345678Z"}
-```
-
-See [Logging Guide](logging-guide.md) for complete logging documentation.
-
-## 🎯 Performance Monitoring
-
-### Processing Rates
-
-Track records/second for each service:
-
-```bash
-# Watch logs for processing stats
-docker-compose logs -f | grep "📊"
-
-# Expected rates
-# - Extractor: 20,000-400,000+ records/s
-```
-
-### Resource Usage
-
-```bash
-# Docker stats
-docker stats
-
-# Specific service
-docker stats discogsography-graphinator
-
-# System monitor utility
-just system-monitor
-```
-
-### Database Performance
-
-**Neo4j**:
-
-```cypher
--- Query performance profiling
-PROFILE MATCH (a:Artist)-[:BY]-(r:Release)
-WHERE a.name = "Pink Floyd"
-RETURN r.title, r.year;
-
--- Slow query log (check logs)
-docker-compose logs neo4j | grep "slow query"
-```
-
-**PostgreSQL**:
-
-```sql
--- Active queries
-SELECT pid, query, state, query_start
-FROM pg_stat_activity
-WHERE datname = 'discogsography'
-AND state = 'active';
-
--- Slow queries (requires pg_stat_statements extension)
-SELECT query, mean_exec_time, calls
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 10;
-```
-
-## Related Documentation
-
-- [Troubleshooting Guide](troubleshooting.md) - Common issues and solutions
-- [Performance Guide](performance-guide.md) - Performance optimization
-- [Logging Guide](logging-guide.md) - Detailed logging documentation
-- [Architecture Overview](architecture.md) - System architecture
-- [Database Resilience](database-resilience.md) - Connection patterns
-
-______________________________________________________________________
-
-**Last Updated**: 2026-04-03
+Treat the rendered configuration and logs as potentially sensitive. Store and
+share them according to the incident's data-handling requirements, then remove
+local copies when no longer needed.
+
+Record at least:
+
+- observation time and timezone;
+- environment name;
+- exact service image digests;
+- unhealthy or restarting containers;
+- first observed error and correlated dependency errors;
+- queue depth and consumer state;
+- disk and memory pressure;
+- any approved actions and their outcomes.
+
+## Changes require approval
+
+Restarting services, scaling consumers, clearing queues or caches, running
+migrations, changing image digests, and invoking `just smoke`, `just down`, or
+`just performance` all change environment state. Diagnose first, then obtain
+operator approval for the exact action and target.

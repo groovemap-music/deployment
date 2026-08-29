@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "create-secrets.sh"
 _BASH = shutil.which("bash") or "/bin/bash"

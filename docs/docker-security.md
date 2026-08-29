@@ -1,6 +1,6 @@
 # Docker Security Configuration
 
-This document describes the security measures implemented in the discogsography Docker deployment.
+This document describes the security measures implemented in the groovemap Docker deployment.
 
 ## Security Features
 
@@ -74,7 +74,7 @@ Services use a dedicated Docker network:
 
 ```yaml
 networks:
-  discogsography:
+  groovemap:
     driver: bridge
     ipam:
       config:
@@ -112,7 +112,7 @@ These secrets are **never passed as plain environment variables in production**.
 
 The Dashboard's RabbitMQ management-API access reuses the same `RABBITMQ_USERNAME`/`RABBITMQ_PASSWORD` (or `_FILE`) credentials above — there is no separate management-only credential pair.
 
-Plain env vars work in development. The production overlay (`docker-compose.prod.yml`) switches to the `_FILE` convention automatically — application code handles both via `get_secret()` in `common/config.py`.
+Plain env vars work in development. The production overlay (`docker-compose.prod.yml`) switches to the `_FILE` convention automatically. The shared secret-loading implementation is owned by [`python-libraries`](https://github.com/groovemap-music/python-libraries).
 
 ### User Configuration
 
@@ -137,32 +137,31 @@ bash scripts/create-secrets.sh
 
 This creates `secrets/` (mode `700`) with one file per secret (mode `600`):
 
-```
-secrets/
-├── jwt_secret_key.txt          # openssl rand -hex 32
-├── encryption_master_key.txt   # base64-urlsafe 32-byte HKDF master key
-├── resend_api_key.txt          # Resend API key (empty disables email delivery)
-├── nlq_api_key.txt             # NLQ provider API key (empty unless NLQ_ENABLED)
-├── postgres_username.txt       # discogsography
-├── postgres_password.txt       # openssl rand -base64 24
-├── rabbitmq_username.txt       # discogsography
-├── rabbitmq_password.txt       # openssl rand -base64 24
-├── neo4j_password.txt          # openssl rand -base64 24
-├── redis_password.txt          # openssl rand -base64 24
-└── insights_internal_secret.txt # openssl rand -hex 32 (shared by api + insights)
-```
+| File | Value or generation method |
+| --- | --- |
+| `jwt_secret_key.txt` | `openssl rand -hex 32` |
+| `encryption_master_key.txt` | URL-safe base64 of 32 random bytes |
+| `resend_api_key.txt` | Optional Resend API key; empty disables delivery |
+| `nlq_api_key.txt` | Optional NLQ provider API key; empty unless enabled |
+| `postgres_username.txt` | `groovemap` |
+| `postgres_password.txt` | `openssl rand -base64 24` |
+| `rabbitmq_username.txt` | `groovemap` |
+| `rabbitmq_password.txt` | `openssl rand -base64 24` |
+| `neo4j_password.txt` | `openssl rand -base64 24` |
+| `redis_password.txt` | `openssl rand -base64 24` |
+| `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 
 Use `secrets.example/` as a reference for each file's format and generation command.
 
 **Step 2 — Start with production overlay**:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 **Neo4j note**: Neo4j does not natively support the `_FILE` convention. The production overlay overrides Neo4j's entrypoint with `scripts/neo4j-entrypoint.sh`, which reads `/run/secrets/neo4j_password` and sets `NEO4J_AUTH=neo4j/<password>` before delegating to the official Neo4j entrypoint.
 
-**Redis note**: Redis does not natively support the `_FILE` convention either. The production overlay overrides Redis's entrypoint with `scripts/redis-entrypoint.sh`, which reads `/run/secrets/redis_password` and appends `--requirepass <password>` before delegating to the official Redis entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Redis is meant to be reached over the internal `discogsography` docker network by api/dashboard/insights, not from the host's public interfaces.
+**Redis note**: Redis does not natively support the `_FILE` convention either. The production overlay overrides Redis's entrypoint with `scripts/redis-entrypoint.sh`, which reads `/run/secrets/redis_password` and appends `--requirepass <password>` before delegating to the official Redis entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Redis is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces.
 
 ### Running Securely
 
@@ -174,7 +173,7 @@ cp .env.example .env
 # Edit .env to set UID/GID
 
 # Run with security features
-docker-compose up -d
+docker compose up -d
 ```
 
 **Production**:
@@ -184,7 +183,7 @@ docker-compose up -d
 bash scripts/create-secrets.sh
 
 # 2. Start with production overlay (secrets + restart policies)
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## Security Best Practices
@@ -221,17 +220,17 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ```bash
 # Verify user execution (extractor runs as two services)
-docker-compose exec extractor-discogs id
-docker-compose exec extractor-musicbrainz id
+docker compose exec extractor-discogs id
+docker compose exec extractor-musicbrainz id
 
 # Check capabilities
-docker-compose exec extractor-discogs capsh --print
+docker compose exec extractor-discogs capsh --print
 
 # Verify read-only filesystem
-docker-compose exec extractor-discogs touch /test.txt  # Should fail
+docker compose exec extractor-discogs touch /test.txt  # Should fail
 
 # Check security options
-docker inspect discogsography-extractor-discogs | jq '.[0].HostConfig.SecurityOpt'
+docker inspect groovemap-extractor-discogs | jq '.[0].HostConfig.SecurityOpt'
 ```
 
 ### Security Scanning
@@ -239,10 +238,10 @@ docker inspect discogsography-extractor-discogs | jq '.[0].HostConfig.SecurityOp
 ```bash
 # Scan images for vulnerabilities
 # (extractor-discogs and extractor-musicbrainz are two Docker Compose services
-# running the same discogsography/extractor image with different EXTRACTOR_SOURCE
+# running the same groovemap/extractor image with different EXTRACTOR_SOURCE
 # values, so scanning the one image tag covers both)
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy image discogsography/extractor:latest
+  aquasec/trivy image groovemap/extractor:latest
 
 # Check for misconfigurations
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
@@ -259,7 +258,7 @@ If you encounter permission errors:
 
    ```bash
    echo "Host: UID=$(id -u) GID=$(id -g)"
-   docker-compose exec service id
+   docker compose exec service id
    ```
 
 1. Fix volume permissions:

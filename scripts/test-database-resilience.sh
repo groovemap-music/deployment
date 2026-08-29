@@ -11,7 +11,7 @@ echo ""
 echo "This script will simulate database outages to test resilience features."
 echo "Make sure all services are running before starting."
 echo ""
-read -p "Press Enter to continue or Ctrl+C to cancel..."
+read -r -p "Press Enter to continue or Ctrl+C to cancel..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,7 +39,7 @@ check_health() {
 get_queue_depth() {
   local queue=$1
   local depth
-  depth=$(docker exec discogsography-rabbitmq rabbitmqctl list_queues name messages | grep "$queue" | awk '{print $2}' 2>/dev/null || echo "0")
+  depth=$(docker exec groovemap-rabbitmq rabbitmqctl list_queues name messages | grep "$queue" | awk '{print $2}' 2>/dev/null || echo "0")
   echo "$depth"
 }
 
@@ -81,8 +81,8 @@ check_health "API" 8004
 echo -e "\n${BLUE}📊 Initial Queue Depths${NC}"
 echo "======================="
 for data_type in artists labels masters releases; do
-  graphinator_queue="discogsography-discogs-graphinator-${data_type}"
-  tableinator_queue="discogsography-discogs-tableinator-${data_type}"
+  graphinator_queue="groovemap-discogs-graphinator-${data_type}"
+  tableinator_queue="groovemap-discogs-tableinator-${data_type}"
 
   g_depth=$(get_queue_depth "$graphinator_queue")
   t_depth=$(get_queue_depth "$tableinator_queue")
@@ -165,8 +165,8 @@ check_health "API" 8004
 echo -e "\n${BLUE}📊 Final Queue Depths${NC}"
 echo "===================="
 for data_type in artists labels masters releases; do
-  graphinator_queue="discogsography-discogs-graphinator-${data_type}"
-  tableinator_queue="discogsography-discogs-tableinator-${data_type}"
+  graphinator_queue="groovemap-discogs-graphinator-${data_type}"
+  tableinator_queue="groovemap-discogs-tableinator-${data_type}"
 
   g_depth=$(get_queue_depth "$graphinator_queue")
   t_depth=$(get_queue_depth "$tableinator_queue")

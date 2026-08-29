@@ -116,7 +116,7 @@ services:
       - "-c"
       - "autovacuum_vacuum_cost_delay=2ms"
     environment:
-      POSTGRES_DB: discogsography
+      POSTGRES_DB: groovemap
       POSTGRES_USER:  # unset base value so _FILE takes effect
       POSTGRES_USER_FILE: /run/secrets/postgres_username
       POSTGRES_PASSWORD:  # unset base value so _FILE takes effect
@@ -201,7 +201,7 @@ services:
     volumes:
       - ./scripts/redis-entrypoint.sh:/scripts/redis-entrypoint.sh:ro
     # Bind to loopback only — redis is meant to be reached over the internal
-    # discogsography network by api/dashboard/insights, not from the host's
+    # groovemap network by api/dashboard/insights, not from the host's
     # public interfaces. `!override` fully replaces (not merges) the base
     # file's "6379:6379" (0.0.0.0) publish.
     ports: !override
@@ -239,8 +239,8 @@ services:
       ENCRYPTION_MASTER_KEY_FILE: /run/secrets/encryption_master_key
       # Optional — Resend email (when not set, password reset links are logged)
       RESEND_API_KEY_FILE: /run/secrets/resend_api_key
-      RESEND_SENDER_EMAIL: "${RESEND_SENDER_EMAIL:-noreply@discogsography.com}"
-      RESEND_SENDER_NAME: "${RESEND_SENDER_NAME:-Discogsography}"
+      RESEND_SENDER_EMAIL: "${RESEND_SENDER_EMAIL:-noreply@groovemap.music}"
+      RESEND_SENDER_NAME: "${RESEND_SENDER_NAME:-GrooveMap}"
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
       NLQ_API_KEY_FILE: /run/secrets/nlq_api_key

@@ -50,7 +50,7 @@ flowchart TD
 
 > **Note**: ✅ indicates optimizations that are implemented and enabled by default.
 
-> 📖 **For detailed Neo4j Cypher query optimization results**, see the [Query Performance Optimizations](query-performance-optimizations.md) report — documenting 11 optimization rounds that achieved a **249x overall improvement** (10.95s → 0.044s average across 88 endpoints).
+> 📖 **For detailed Neo4j Cypher query optimization results**, see the [Query Performance Optimizations](https://github.com/groovemap-music/catalog-api/blob/main/docs/query-performance-optimizations.md) report — documenting 11 optimization rounds that achieved a **249x overall improvement** (10.95s → 0.044s average across 88 endpoints).
 
 ## 🔍 Profiling & Monitoring
 
@@ -227,7 +227,7 @@ genres, styles, labels, collabs = await asyncio.gather(
 )
 ```
 
-> 📖 See [Query Performance Optimizations](query-performance-optimizations.md) for the complete optimization report with per-endpoint measurements.
+> 📖 See [Query Performance Optimizations](https://github.com/groovemap-music/catalog-api/blob/main/docs/query-performance-optimizations.md) for the complete optimization report with per-endpoint measurements.
 
 ## 🚀 Optimization Strategies
 

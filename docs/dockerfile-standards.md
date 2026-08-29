@@ -1,378 +1,91 @@
-# Dockerfile Standards and Guidelines
+# Container image standards
 
-This document defines the standardized patterns and best practices for all Dockerfiles in the GrooveMap project.
+The deployment repository consumes immutable images. It does not own service
+Dockerfiles, build contexts, package source, or image release workflows.
 
-## 🎯 Overview
+## Ownership boundary
 
-All Dockerfiles must follow these standards to ensure consistency, security, and maintainability across the project.
+Each source repository owns its Dockerfile, tests, OCI metadata, version tag,
+and GHCR publication. Deployment owns the environment variable that promotes a
+released image into the stack.
 
-## 📐 Structure Template
+| Compose service | Source repository | Required variable |
+| --- | --- | --- |
+| `schema-init` | [`database-schema`](https://github.com/groovemap-music/database-schema) | `DATABASE_SCHEMA_IMAGE` |
+| `api` | [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `CATALOG_API_IMAGE` |
+| `extractor-discogs`, `extractor-musicbrainz` | [`catalog-ingestion`](https://github.com/groovemap-music/catalog-ingestion) | `CATALOG_INGESTION_IMAGE` |
+| `graphinator` | [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `DISCOGS_GRAPH_ENRICHER_IMAGE` |
+| `brainzgraphinator` | [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` |
+| `tableinator` | [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `DISCOGS_SQL_LOADER_IMAGE` |
+| `brainztableinator` | [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `MUSICBRAINZ_SQL_LOADER_IMAGE` |
+| `dashboard` | [`operations-console`](https://github.com/groovemap-music/operations-console) | `OPERATIONS_CONSOLE_IMAGE` |
+| `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
+| `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
 
-The standard template uses a two-stage build (builder + final). Services that require a build-time
-asset pipeline add a third stage **before** the builder stage.
+The repository name is also the GHCR image name:
 
-### Optional: CSS Build Stage (dashboard and explore)
-
-Both the dashboard and explore services use a dedicated Node stage to run the Tailwind v4 CLI and
-produce a minified stylesheet at image build time, eliminating any CDN dependency at runtime. The
-example below is the dashboard's; explore's is identical apart from the `explore/` source paths:
-
-```dockerfile
-# ── CSS build stage ────────────────────────────────────────────────────────────
-FROM node:24-slim AS css-builder
-
-WORKDIR /build
-
-# Copy only the files the CLI needs
-COPY dashboard/tailwind.input.css ./
-COPY dashboard/static/index.html ./static/index.html
-
-# Install Tailwind v4 CLI + forms plugin, emit minified stylesheet
-# hadolint ignore=DL3016
-RUN npm install @tailwindcss/cli@^4 @tailwindcss/forms --save-dev && \
-    ./node_modules/.bin/tailwindcss \
-        --input tailwind.input.css \
-        --output tailwind.css \
-        --minify
+```text
+ghcr.io/groovemap-music/<repository>
 ```
 
-The generated `tailwind.css` is copied into the final stage:
+## Promotion requirements
 
-```dockerfile
-COPY --from=css-builder --chown=discogsography:discogsography /build/tailwind.css /app/dashboard/static/tailwind.css
+Internal image values in `.env` must use an approved manifest digest:
+
+```dotenv
+CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:<64-hex-character-digest>
 ```
 
-### Standard Two-Stage Template
+The deployment policy rejects:
 
-```dockerfile
-# syntax=docker/dockerfile:1
+- mutable `latest` references;
+- tag-only references;
+- service images built from sibling directories;
+- image names that do not match the owning repository;
+- missing required image variables.
 
-# Build arguments
-ARG PYTHON_VERSION=3.13
-ARG UID=1000
-ARG GID=1000
+Tags remain useful for locating a release, but the promoted deployment input is
+the resolved manifest digest. This keeps an environment reproducible even if a
+registry tag changes.
 
-# === BUILDER STAGE ===
-FROM python:${PYTHON_VERSION}-slim AS builder
+## Source-repository release requirements
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /bin/uv
+Repositories that publish an image should:
 
-# Set environment for build
-ENV UV_SYSTEM_PYTHON=1 \
-    UV_CACHE_DIR=/tmp/.cache/uv \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+- build only from their own source tree;
+- publish only from an approved `v*` release tag;
+- test the image before publication;
+- publish to `ghcr.io/groovemap-music/<repository>`;
+- include standard OCI source, revision, version, license, title, description,
+  and created-time annotations;
+- run as an unprivileged user where the application permits it;
+- define a health check for long-running services;
+- avoid embedding credentials or environment-specific configuration.
 
-WORKDIR /app
+Implementation details belong in the owning repository so the Dockerfile and
+its documentation evolve together.
 
-# Copy dependency files first for better caching
-COPY pyproject.toml uv.lock README.md ./
-COPY common/pyproject.toml ./common/
-COPY <service>/pyproject.toml ./<service>/
+## Base infrastructure images
 
-# Install dependencies
-RUN --mount=type=cache,target=/tmp/.cache/uv \
-    uv sync --frozen --no-dev --extra <service>
+Images not built by GrooveMap, such as PostgreSQL, Neo4j, RabbitMQ, and Redis,
+are declared directly in `docker-compose.yml` and pinned by digest. Upgrading
+one requires reviewing its release notes, updating both the human-readable tag
+and digest, and rerunning the deployment gate.
 
-# Copy source files
-COPY common/ ./common/
-COPY <service>/ ./<service>/
+## Validation
 
-# === FINAL STAGE ===
-FROM python:${PYTHON_VERSION}-slim
+Run the credential-free image and Compose policy checks with:
 
-# Build arguments for labels
-ARG BUILD_DATE
-ARG BUILD_VERSION
-ARG VCS_REF
-ARG UID=1000
-ARG GID=1000
-
-# OCI Image Spec Annotations
-# [Labels section - see below]
-
-# Install security updates and service-specific packages
-# [Package installation section - see below]
-
-# Create user and directories
-# [User creation section - see below]
-
-WORKDIR /app
-
-# Copy from builder
-COPY --from=builder --chown=discogsography:discogsography /app /app
-
-# Install uv for runtime
-COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /bin/uv
-
-# Create startup script
-# [Startup script section - see below]
-
-# Health check
-# [Health check section - see below]
-
-# UID/GID build arguments resolve to numeric IDs; DL3066 cannot infer their values.
-# hadolint ignore=DL3066
-USER ${UID}:${GID}
-
-# Environment variables
-# [Environment section - see below]
-
-# Expose ports (if applicable)
-# [Port exposure section - see below]
-
-# Declare volumes
-VOLUME ["/logs"]
-
-# Security comment
-# Security: This container should be run with:
-# docker run --cap-drop=ALL --security-opt=no-new-privileges:true ...
-
-CMD ["/app/start.sh"]
+```bash
+uv run python scripts/check-images.py
+bash scripts/check-compose.sh
 ```
 
-## 📋 Section Standards
+The full review gate is:
 
-### 1. Build Arguments
-
-Always define at the top:
-
-```dockerfile
-ARG PYTHON_VERSION=3.13
-ARG UID=1000
-ARG GID=1000
+```bash
+just check
 ```
 
-### 2. OCI Labels
-
-Standardized format with service-specific variations:
-
-```dockerfile
-LABEL org.opencontainers.image.title="GrooveMap <Service>" \
-      org.opencontainers.image.description="<Service description>" \
-      org.opencontainers.image.authors="Robert Wlodarczyk <robert@simplicityguy.com>" \
-      org.opencontainers.image.url="https://github.com/groovemap-music/REPOSITORY" \
-      org.opencontainers.image.documentation="https://github.com/groovemap-music/REPOSITORY/blob/main/README.md" \
-      org.opencontainers.image.source="https://github.com/groovemap-music/REPOSITORY" \
-      org.opencontainers.image.vendor="SimplicityGuy" \
-      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
-      org.opencontainers.image.version="${BUILD_VERSION:-0.1.0}" \
-      org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.base.name="docker.io/library/python:${PYTHON_VERSION}-slim" \
-      com.discogsography.service="<service>" \
-      com.discogsography.dependencies="<comma-separated-list>" \
-      com.discogsography.python.version="${PYTHON_VERSION}"
-```
-
-Additional labels for database services:
-
-- `com.discogsography.database="postgresql"` (tableinator, brainztableinator)
-- `com.discogsography.database="neo4j"` (graphinator, brainzgraphinator)
-
-### 3. Package Installation
-
-Base template:
-
-```dockerfile
-# Install security updates and curl for healthcheck
-# hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-        curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-```
-
-Service-specific additions:
-
-- **tableinator**: Add `libpq5` for PostgreSQL client libraries
-
-### 4. User and Directory Creation
-
-Standard format for all services:
-
-```dockerfile
-# Create user and directories with configurable UID/GID
-RUN groupadd -r -g ${GID} discogsography && \
-    useradd -r -l -u ${UID} -g discogsography -m -s /bin/bash discogsography && \
-    mkdir -p /tmp /app /logs && \
-    chown -R discogsography:discogsography /tmp /app /logs
-```
-
-Additional directories:
-
-- **extractor**: Add `/discogs-data` directory
-
-### 5. Startup Script
-
-Standard format:
-
-```dockerfile
-# Create startup script
-# hadolint ignore=SC2016
-RUN printf '#!/bin/sh\nset -e\nsleep "${STARTUP_DELAY:-0}"\nexec /app/.venv/bin/python -m <service>.<service> "$@"\n' > /app/start.sh && \
-    chmod +x /app/start.sh
-```
-
-### 6. Health Check
-
-HTTP-based (all services, including graphinator, tableinator, brainzgraphinator, and brainztableinator — each runs its own health server on its designated port):
-
-```dockerfile
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD ["curl", "-f", "http://localhost:<port>/health"]
-```
-
-### 7. Environment Variables
-
-Base environment (all services):
-
-```dockerfile
-ENV HOME=/home/discogsography \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_SYSTEM_PYTHON=1 \
-    UV_NO_CACHE=1 \
-    PATH="/app/.venv/bin:$PATH" \
-    RABBITMQ_HOST=""
-```
-
-Only non-sensitive defaults belong in an image's `ENV` instructions. Inject usernames,
-passwords, tokens, and secret keys at runtime through Compose environment values or the
-project's supported `*_FILE` secret variables; do not persist even empty credential
-placeholders in image metadata.
-
-Service-specific additions:
-
-- **dashboard**: Database hosts as image defaults; credentials injected at runtime
-- **extractor**: `DISCOGS_ROOT="/discogs-data"` and `PERIODIC_CHECK_DAYS="15"`
-- **graphinator**: Neo4j host as an image default; credentials injected at runtime
-- **tableinator**: PostgreSQL host/database as image defaults; credentials injected at runtime
-
-### 8. Port Exposure
-
-Only expose ports for services with HTTP endpoints or health checks:
-
-- **api**: `EXPOSE 8004 8005`
-- **dashboard**: `EXPOSE 8003`
-- **explore**: `EXPOSE 8006 8007`
-- **insights**: `EXPOSE 8008 8009`
-- **extractor**: `EXPOSE 8000`
-- **graphinator**: `EXPOSE 8001`
-- **tableinator**: `EXPOSE 8002`
-- **brainztableinator**: `EXPOSE 8010`
-- **brainzgraphinator**: `EXPOSE 8011`
-
-### 9. Volume Declaration
-
-Standard volume:
-
-```dockerfile
-VOLUME ["/logs"]
-```
-
-Additional volumes:
-
-- **extractor**: Add `"/discogs-data"`
-
-## 🔧 Service-Specific Requirements
-
-### Schema-Init
-
-- One-shot init container — no health check port, no `restart: unless-stopped`
-- Docker Compose `restart: "no"` so it exits after completing
-- Non-sensitive Neo4j and PostgreSQL defaults; credentials injected at runtime
-- Read-only filesystem with `/tmp` tmpfs mount
-- `cap_drop: ALL` (no Linux capabilities needed)
-
-### Dashboard
-
-- Three-stage build: `css-builder` (Node) → `builder` (Python) → final
-- `css-builder` stage runs Tailwind v4 CLI to produce `dashboard/static/tailwind.css`
-- Expose port 8003
-- Database hosts/defaults in the image; credentials injected at runtime
-
-### API
-
-- Expose ports 8004 (service) and 8005 (health)
-- Database hosts/defaults in the image; credentials injected at runtime
-
-### Extractor
-
-- Rust-based container using multi-stage build
-- Create `/discogs-data` directory
-- Add `/discogs-data` volume
-- Special environment variables for Discogs configuration
-
-### Graphinator
-
-- HTTP health check on port 8001
-- Neo4j host in the image; credentials injected at runtime
-
-### Tableinator
-
-- Install libpq5 for PostgreSQL
-- PostgreSQL host/database in the image; credentials injected at runtime
-
-### Insights
-
-- Expose ports 8008 (service) and 8009 (health)
-- Fetches data from API internal endpoints over HTTP
-- Uses Redis for caching
-- `API_BASE_URL` and `REDIS_HOST` environment variables
-
-### Brainzgraphinator
-
-- MusicBrainz data enrichment into Neo4j
-- Neo4j and RabbitMQ hosts in the image; credentials injected at runtime
-- Health check on port 8011
-
-### Brainztableinator
-
-- MusicBrainz data into PostgreSQL `musicbrainz` schema
-- Install libpq5 for PostgreSQL
-- PostgreSQL and RabbitMQ hosts in the image; credentials injected at runtime
-- Health check on port 8010
-
-### MCP Server
-
-- Exposes knowledge graph to AI assistants via API (no direct DB access)
-- `API_BASE_URL` environment variable
-
-## ✅ Quality Checklist
-
-Before committing any Dockerfile:
-
-1. **Structure**: Follows the standard template order
-1. **Comments**: Includes all standard comments and hadolint ignores
-1. **Labels**: All OCI labels present with correct values
-1. **Security**: Security comment present at bottom
-1. **Health Check**: Appropriate health check for service type
-1. **Environment**: Non-sensitive defaults defined; credentials injected only at runtime
-1. **Volumes**: /logs volume declared (plus service-specific)
-1. **User**: Runs as discogsography user
-1. **Caching**: Uses BuildKit cache mounts
-1. **Linting**: Passes hadolint validation
-
-## 🛡️ Security Standards
-
-1. **Non-root execution**: All containers use `USER ${UID}:${GID}` (default UID/GID 1000)
-1. **Runtime secrets**: Credentials are injected at runtime, never declared with Dockerfile `ARG` or `ENV`
-1. **Minimal packages**: Only install what's needed
-1. **Security updates**: Always run `apt-get upgrade`
-1. **Clean up**: Remove apt lists after installation
-1. **Capability dropping**: Document in security comment
-1. **Read-only root**: Can be enabled with tmpfs mounts
-
-## 📝 Maintenance
-
-When updating Dockerfiles:
-
-1. Update this document if adding new patterns
-1. Apply changes consistently across all services
-1. Test builds for all services
-1. Update docker-compose.yml if needed
-1. Verify health checks still function
+These commands do not pull or start service images. Live smoke and performance
+checks require separate operator approval and real environment inputs.

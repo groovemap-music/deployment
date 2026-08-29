@@ -1,430 +1,144 @@
-# 🚀 Quick Start Guide
+# Quick start
 
-<div align="center">
+This repository assembles independently released GrooveMap service images. It
+does not provide a source-development environment for those services.
 
-**Get GrooveMap up and running in minutes**
+## Prerequisites
 
-[🏠 Back to Main](../README.md) | [📚 Documentation Index](README.md) | [🏛️ Architecture](architecture.md)
+- Git
+- Docker Engine with Docker Compose v2
+- [mise](https://mise.jdx.dev/) for the repository toolchain
+- enough memory and storage for the selected stack and imported datasets
+- approved manifest digests for every required GrooveMap image
 
-</div>
-
-## Overview
-
-This guide will help you get GrooveMap running quickly, whether you're using Docker Compose for a simple setup or setting up a local development environment.
-
-## ✅ Prerequisites
-
-### System Requirements
-
-| Requirement | Details                                                   |
-| ----------- | --------------------------------------------------------- |
-| **Python**  | 3.13+ — install via [uv](https://github.com/astral-sh/uv) |
-| **Docker**  | 20.10+ with Docker Compose v2                             |
-| **Storage** | 200GB free SSD (~76GB databases + room for growth)        |
-| **Memory**  | 16GB RAM                                                  |
-
-### Required Software
-
-**For Docker Compose Setup**:
-
-- Docker Engine 20.10+
-- Docker Compose v2
-
-**For Local Development**:
-
-- Python 3.13+
-- [uv](https://github.com/astral-sh/uv) package manager
-- [just](https://just.systems/) task runner (optional but recommended)
-- Rust toolchain (only if developing Extractor)
-
-## 🐳 Docker Compose Setup (Recommended)
-
-The fastest way to get started is using Docker Compose, which handles all service dependencies automatically.
-
-### Step 1: Clone the Repository
+## 1. Clone and validate
 
 ```bash
 git clone https://github.com/groovemap-music/deployment.git
-cd discogsography
+cd deployment
+mise install
+just setup
+just check
 ```
 
-### Step 2: Configure Environment (Optional)
+The gate is credential-free and does not start containers. See the
+[deployment validation guide](testing-guide.md) for its exact scope.
 
-The project includes sensible defaults, but you can customize settings:
+## 2. Configure immutable images
+
+Create an untracked environment file:
 
 ```bash
-# Copy the example environment file
 cp .env.example .env
-
-# Edit .env to customize (optional)
-nano .env
 ```
 
-See [Configuration Guide](configuration.md) for all available settings.
+Replace every `REPLACE_WITH_64_HEX_CHARACTERS` placeholder with the manifest
+digest of an approved source-repository release. The required form is:
 
-### Step 3: Start All Services
+```dotenv
+DATABASE_SCHEMA_IMAGE=ghcr.io/groovemap-music/database-schema@sha256:<digest>
+CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:<digest>
+```
+
+Apply the same pattern to all remaining image variables. Tags alone and
+`latest` are rejected. See [Container image standards](dockerfile-standards.md)
+for the complete ownership map.
+
+## 3. Review the rendered configuration
+
+The base stack contains deliberate local-development credentials. Render and
+review it before any start:
 
 ```bash
-# Start all services
-docker-compose up -d
-
-# View logs to monitor progress
-docker-compose logs -f
+just config
 ```
 
-### Step 4: Access the Services
-
-Open your browser and visit:
-
-- **Dashboard**: http://localhost:8003 (System monitoring)
-- **Admin Panel**: http://localhost:8003/admin (Extraction management — requires admin account)
-- **API**: http://localhost:8004 (User auth, graph queries, sync)
-- **Neo4j Browser**: http://localhost:7474 (Graph database UI)
-- **RabbitMQ Management**: http://localhost:15672 (Queue monitoring)
-
-### Service Access Details
-
-| Service           | URL                    | Default Credentials                               | Purpose                               |
-| ----------------- | ---------------------- | ------------------------------------------------- | ------------------------------------- |
-| 🔐 **API**        | http://localhost:8004  | Register via `/api/auth/register`                 | User auth, graph queries, sync, OAuth |
-| 📊 **Dashboard**  | http://localhost:8003  | None (monitoring) / admin-setup CLI (admin panel) | System monitoring + admin panel       |
-| 🐰 **RabbitMQ**   | http://localhost:15672 | `discogsography` / `discogsography`               | Queue management                      |
-| 🔗 **Neo4j**      | http://localhost:7474  | `neo4j` / `discogsography`                        | Graph database UI                     |
-| 🐘 **PostgreSQL** | `localhost:5433`       | `discogsography` / `discogsography`               | Database access                       |
-
-## 💻 Local Development Setup
-
-For development, you'll want to run services locally with hot-reload capabilities.
-
-### Step 1: Install uv Package Manager
-
-uv is 10-100x faster than pip for package management:
+For a production-shaped configuration, first generate untracked secret files:
 
 ```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Verify installation
-uv --version
+just secrets-bootstrap
+just config-prod
 ```
 
-### Step 2: Install just Task Runner (Optional)
+`just secrets-bootstrap` is idempotent, creates `secrets/` with restrictive
+permissions, and never prints secret values. Supply any optional provider keys
+before deploying. See [Configuration](configuration.md) and
+[Docker security](docker-security.md).
 
-just provides convenient task aliases:
+## 4. Start only with operator approval
+
+After reviewing the exact image digests, configuration, backup state, and
+target environment, the approved operator may run:
 
 ```bash
-# macOS
-brew install just
-
-# Linux (with cargo)
-cargo install just
-
-# Or use the installer script
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash
-
-# Verify installation
-just --version
+just smoke
 ```
 
-### Step 3: Install Dependencies
+That command starts the stack and waits for service health. It is intentionally
+excluded from CI and `just check`. Likewise, `just down` changes the live
+environment and requires approval.
+
+For a production overlay, use the reviewed Compose command appropriate to the
+target environment:
 
 ```bash
-# Install all project dependencies
-just install
-
-# Or using uv directly
-uv sync --all-extras
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait
 ```
 
-### Step 4: Initialize Development Environment
+## Service endpoints
+
+The base configuration publishes these local endpoints:
+
+| Component | Endpoint | Development credentials |
+| --- | --- | --- |
+| Operations console | <http://localhost:8003> | Application-specific |
+| Catalog API | <http://localhost:8004> | Register through the API |
+| Catalog API health | <http://localhost:8005/health> | None |
+| Graph explorer | <http://localhost:8006> | None |
+| Graph explorer health | <http://localhost:8007/health> | None |
+| Neo4j Browser | <http://localhost:7474> | `neo4j` / `groovemap` |
+| Neo4j Bolt | `localhost:7687` | `neo4j` / `groovemap` |
+| PostgreSQL | `localhost:5433` | `groovemap` / `groovemap` |
+| RabbitMQ management | <http://localhost:15672> | `groovemap` / `groovemap` |
+| RabbitMQ AMQP | `localhost:5672` | `groovemap` / `groovemap` |
+| Redis | `localhost:6379` | No base-stack password |
+
+These credentials are for local development only. The production overlay uses
+file-backed secrets and restricts exposed ports.
+
+## Observe the stack
+
+Use Compose to inspect status and logs:
 
 ```bash
-# Set up pre-commit hooks
-just init
-
-# Or using uv directly
-uv run pre-commit install
+docker compose ps
+docker compose logs --tail=100
+docker compose logs --tail=100 api
 ```
 
-### Step 5: Start Infrastructure Services
-
-Start the required databases and message queue:
+Follow logs only when interactive streaming is appropriate:
 
 ```bash
-# Start only infrastructure services
-docker-compose up -d neo4j postgres rabbitmq redis
+docker compose logs --follow api
 ```
 
-### Step 6: Set Up Environment Variables
+Operational detail lives in the [Monitoring](monitoring.md),
+[Administration](admin-guide.md), and [Troubleshooting](troubleshooting.md)
+guides. Service-level development instructions live in each source repository.
 
-Create a `.env` file or export variables:
+## Repository map
 
-```bash
-# RabbitMQ settings (AMQP_CONNECTION is built automatically from these)
-export RABBITMQ_HOST="localhost"
-export RABBITMQ_USERNAME="discogsography"
-export RABBITMQ_PASSWORD="discogsography"
+```mermaid
+flowchart TD
+    Sources[Source repositories build and release images]
+    Registry[GHCR stores versioned images]
+    Env[Operator records approved image digests in .env]
+    Deployment[Deployment renders Compose topology]
+    Runtime[Approved environment runs the stack]
 
-# Neo4j settings
-export NEO4J_HOST="localhost"
-export NEO4J_USERNAME="neo4j"
-export NEO4J_PASSWORD="discogsography"
-
-# PostgreSQL settings
-export POSTGRES_HOST="localhost"
-export POSTGRES_USERNAME="discogsography"
-export POSTGRES_PASSWORD="discogsography"
-export POSTGRES_DATABASE="discogsography"
-
-# Redis settings
-export REDIS_HOST="localhost"
-
-# API settings
-export JWT_SECRET_KEY="dev-secret-key-change-in-production"
-export DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
-
-# Optional: Set log level
-export LOG_LEVEL="INFO"  # or DEBUG for detailed output
+    Sources --> Registry --> Env --> Deployment --> Runtime
 ```
 
-### Step 7: Run Individual Services
-
-Run any service using just commands:
-
-```bash
-# Dashboard (monitoring UI)
-just dashboard
-
-# Explore (graph exploration)
-just explore
-
-# Extractor (high-performance ingestion, requires Rust)
-just extractor-run
-
-# Graphinator (Neo4j builder)
-just graphinator
-
-# Tableinator (PostgreSQL builder)
-just tableinator
-
-# Brainzgraphinator (MusicBrainz → Neo4j enrichment)
-just brainzgraphinator
-
-# Brainztableinator (MusicBrainz → PostgreSQL)
-just brainztableinator
-```
-
-Or run services directly with Python:
-
-```bash
-# API (user auth & Discogs OAuth)
-uv run python -m api.api
-
-# Dashboard
-uv run python dashboard/dashboard.py
-
-# Explore
-uv run python explore/explore.py
-
-# Graphinator
-uv run python graphinator/graphinator.py
-
-# Tableinator
-uv run python tableinator/tableinator.py
-```
-
-## 🎯 Verification Steps
-
-### 1. Check Service Health
-
-All services expose health endpoints:
-
-```bash
-# Check each service
-curl http://localhost:8000/health  # Extractor
-curl http://localhost:8001/health  # Graphinator
-curl http://localhost:8002/health  # Tableinator
-curl http://localhost:8003/health  # Dashboard
-curl http://localhost:8005/health  # API
-curl http://localhost:8007/health  # Explore
-curl http://localhost:8010/health  # Brainztableinator
-curl http://localhost:8011/health  # Brainzgraphinator
-```
-
-Expected response:
-
-```json
-{"status": "healthy"}
-```
-
-### 2. Monitor Processing
-
-Watch the logs to see data processing:
-
-```bash
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f extractor-discogs
-docker-compose logs -f extractor-musicbrainz
-docker-compose logs -f graphinator
-docker-compose logs -f tableinator
-```
-
-Look for log messages like:
-
-- 🚀 Service starting messages
-- 📥 Download progress
-- 🔄 Processing progress
-- ✅ Completion messages
-
-### 3. Check RabbitMQ Queues
-
-Visit http://localhost:15672 and verify:
-
-- All 4 Discogs queues are created (artists, labels, releases, masters)
-- Messages are being published and consumed
-- Consumer counts are appropriate
-
-### 4. Verify Data in Databases
-
-**Neo4j**:
-
-```bash
-# Open Neo4j Browser
-open http://localhost:7474
-
-# Run query to count nodes
-MATCH (n) RETURN labels(n)[0] as type, count(n) as count
-```
-
-**PostgreSQL**:
-
-```bash
-# Connect to database
-PGPASSWORD=discogsography psql -h localhost -p 5433 -U discogsography -d discogsography
-
-# Count records
-SELECT 'artists' as table_name, COUNT(*) FROM artists
-UNION ALL SELECT 'labels', COUNT(*) FROM labels
-UNION ALL SELECT 'releases', COUNT(*) FROM releases
-UNION ALL SELECT 'masters', COUNT(*) FROM masters;
-```
-
-## 🔍 Troubleshooting Quick Fixes
-
-### Services Won't Start
-
-```bash
-# Check if ports are already in use
-netstat -an | grep -E "(5672|7474|7687|5433|6379|8003)"
-
-# Stop and restart all services
-docker-compose down
-docker-compose up -d
-```
-
-### Out of Disk Space
-
-```bash
-# Check available space
-df -h
-
-# Clean up Docker resources
-docker system prune -a
-```
-
-### Connection Refused Errors
-
-```bash
-# Wait for services to fully start
-docker-compose ps
-
-# Check service logs
-docker-compose logs [service-name]
-
-# Restart specific service
-docker-compose restart [service-name]
-```
-
-### Extractor Not Downloading Data
-
-```bash
-# Check internet connectivity
-curl -I https://data.discogs.com
-
-# Check extractor logs
-docker-compose logs extractor-discogs
-
-# Verify DISCOGS_ROOT permissions
-ls -la /discogs-data  # or your configured path
-```
-
-For more detailed troubleshooting, see the [Troubleshooting Guide](troubleshooting.md).
-
-## 🎓 Next Steps
-
-Now that you have GrooveMap running:
-
-1. **Explore the Dashboard**: http://localhost:8003
-
-   - Monitor system health
-   - View processing metrics
-   - Track queue depths
-
-1. **Try Some Queries**: See [Usage Examples](usage-examples.md)
-
-   - Neo4j graph queries
-   - PostgreSQL analytics
-   - Full-text search
-
-1. **Use the Explore API**: http://localhost:8004/api/explore
-
-   - Interactive graph exploration
-   - Trend analysis and visualizations
-   - Path finding and relationship queries
-
-1. **Learn the Architecture**: Read [Architecture Guide](architecture.md)
-
-   - Understand component interactions
-   - Learn about data flow
-   - Explore scalability options
-
-1. **Configure for Your Needs**: See [Configuration Guide](configuration.md)
-
-   - Tune performance settings
-   - Adjust logging levels
-   - Customize data paths
-
-## 🛠️ Development Workflow
-
-If you're contributing to the project:
-
-```bash
-# Before making changes
-just lint      # Run linters
-just format    # Format code
-just test      # Run tests
-just security  # Security scan
-
-# Or run everything
-uv run pre-commit run --all-files
-```
-
-See [Development Guide](development.md) and [Contributing Guide](contributing.md) for more information.
-
-## 📚 Additional Resources
-
-- [Configuration Guide](configuration.md) - All environment variables and settings
-- [Architecture Overview](architecture.md) - System design and components
-- [Database Schema](database-schema.md) - Neo4j and PostgreSQL schemas
-- [Monitoring Guide](monitoring.md) - Observability and debugging
-- [Performance Guide](performance-guide.md) - Optimization strategies
-
-______________________________________________________________________
-
-**Last Updated**: 2026-04-03
+The deployment repository is intentionally unversioned. Each source
+repository versions its own artifact; an environment is identified by the full
+set of promoted image digests.

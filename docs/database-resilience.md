@@ -130,14 +130,14 @@ NEO4J_PASSWORD=password
 
 # PostgreSQL
 POSTGRES_HOST=postgres
-POSTGRES_DATABASE=discogsography
+POSTGRES_DATABASE=groovemap
 POSTGRES_USERNAME=postgres
 POSTGRES_PASSWORD=postgres
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq
-RABBITMQ_USERNAME=discogsography
-RABBITMQ_PASSWORD=discogsography
+RABBITMQ_USERNAME=groovemap
+RABBITMQ_PASSWORD=groovemap
 ```
 
 ### Tuning Parameters
@@ -219,13 +219,13 @@ To test the resilience features:
 
 ```bash
 # Stop Neo4j
-docker-compose stop neo4j
+docker compose stop neo4j
 
 # Stop PostgreSQL
-docker-compose stop postgres
+docker compose stop postgres
 
 # Stop RabbitMQ
-docker-compose stop rabbitmq
+docker compose stop rabbitmq
 ```
 
 ### 2. Observe Service Behavior
@@ -233,17 +233,17 @@ docker-compose stop rabbitmq
 Watch the logs to see connection failures and circuit breaker activation:
 
 ```bash
-docker-compose logs -f graphinator
-docker-compose logs -f tableinator
+docker compose logs -f graphinator
+docker compose logs -f tableinator
 ```
 
 ### 3. Restart Database
 
 ```bash
 # Restart the stopped service
-docker-compose start neo4j
-docker-compose start postgres
-docker-compose start rabbitmq
+docker compose start neo4j
+docker compose start postgres
+docker compose start rabbitmq
 ```
 
 ### 4. Verify Recovery
@@ -268,7 +268,7 @@ If services don't recover after database restart:
 
 1. Check circuit breaker state in logs
 1. Verify database is fully started and accepting connections
-1. Restart affected service if needed: `docker-compose restart [service]`
+1. Restart affected service if needed: `docker compose restart [service]`
 
 ### Messages Not Processing
 

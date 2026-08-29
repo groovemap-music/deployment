@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
@@ -39,6 +40,22 @@ def test_env_example_var_names_are_all_read_by_config_or_documented_elsewhere() 
     """The production overlay must deliver the documented key as a file secret."""
     compose_text = (REPO_ROOT / "docker-compose.prod.yml").read_text()
     assert "ENCRYPTION_MASTER_KEY_FILE: /run/secrets/encryption_master_key" in compose_text
+
+
+def test_env_example_uses_canonical_development_identity() -> None:
+    text = _env_example_text()
+    assert "discogsography" not in text
+    assert "RABBITMQ_USERNAME=groovemap" in text
+    assert "RABBITMQ_PASSWORD=groovemap" in text
+    assert "NEO4J_PASSWORD=groovemap" in text
+    assert "POSTGRES_USERNAME=groovemap" in text
+    assert "POSTGRES_PASSWORD=groovemap" in text
+    assert "POSTGRES_DATABASE=groovemap" in text
+
+
+def test_env_example_has_no_duplicate_assignments() -> None:
+    names = re.findall(r"^([A-Z][A-Z0-9_]*)=", _env_example_text(), re.MULTILINE)
+    assert len(names) == len(set(names)), ".env.example must not rely on last-assignment-wins behavior"
 
 
 def test_migrate_encryption_key_script_still_references_old_name() -> None:

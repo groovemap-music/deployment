@@ -16,10 +16,13 @@ source-check:
     gitleaks git --config .gitleaks.toml --redact --no-banner
     gitleaks dir . --config .gitleaks.toml --redact --no-banner
 
-check: source-check test
+check: source-check typecheck test
+
+typecheck:
+    uv run mypy
 
 test:
-    uv run pytest
+    uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml
 
 build:
     bash scripts/check-compose.sh

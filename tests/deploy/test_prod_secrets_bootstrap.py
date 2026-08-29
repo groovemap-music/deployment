@@ -23,6 +23,7 @@ from typing import Any
 
 from tests.deploy.test_docker_compose_prod import _load_compose
 
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 PROD_COMPOSE = REPO_ROOT / "docker-compose.prod.yml"
 CREATE_SECRETS = REPO_ROOT / "scripts" / "create-secrets.sh"

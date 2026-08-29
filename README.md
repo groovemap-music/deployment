@@ -77,5 +77,5 @@ affected-record count, and rollback procedure. `just check` and CI never invoke 
 - CI performs source/Compose validation only. It neither starts the production
   stack nor reads deployment secrets.
 
-See [docs/extraction.md](docs/extraction.md) for retained-history provenance and
-the operations documents in `docs/` for runtime guidance.
+See the [documentation index](docs/README.md) for architecture, configuration,
+operations, testing, and troubleshooting guidance.

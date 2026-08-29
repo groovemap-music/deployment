@@ -11,7 +11,7 @@ x-logging: &default-logging
     max-file: "3"
 
 networks:
-  discogsography:
+  groovemap:
     driver: bridge
     ipam:
       config:
@@ -21,17 +21,17 @@ services:
   # Message broker
   rabbitmq:
     image: rabbitmq:4-management@sha256:45226f38499559b9f56875c752cc6689ff90e8f20796fe80fd9bc28d64723031
-    container_name: discogsography-rabbitmq
+    container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
     environment:
-      RABBITMQ_DEFAULT_PASS: discogsography
+      RABBITMQ_DEFAULT_PASS: groovemap
       # Set default queue type to quorum for RabbitMQ 4.2+
       RABBITMQ_DEFAULT_QUEUE_TYPE: quorum
-      RABBITMQ_DEFAULT_USER: discogsography
+      RABBITMQ_DEFAULT_USER: groovemap
       RABBITMQ_DEFAULT_VHOST: /
       # Enable management stats (disabled by default in RabbitMQ 4.x) so the
       # dashboard can display queue depths, publish rates, and ack rates.
@@ -47,7 +47,7 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
-      discogsography:
+      groovemap:
         aliases:
           - message-broker
           - amqp
@@ -63,7 +63,7 @@ services:
   # PostgreSQL database
   postgres:
     image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
-    container_name: discogsography-postgres
+    container_name: groovemap-postgres
     hostname: postgres
     command:
       - "postgres"
@@ -73,21 +73,21 @@ services:
       - "checkpoint_completion_target=0.9"
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
-      POSTGRES_DB: discogsography
+      POSTGRES_DB: groovemap
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USER: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USER: groovemap
     ports:
       - "5433:5432"  # Changed from 5432 to avoid conflict
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      discogsography:
+      groovemap:
         aliases:
           - postgres-db
           - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U discogsography -d discogsography -h localhost"]
+      test: ["CMD-SHELL", "pg_isready -U groovemap -d groovemap -h localhost"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -100,7 +100,7 @@ services:
   # Neo4j graph database
   neo4j:
     image: neo4j:2026-community@sha256:dbc377fb9cd8fe8dabc19d3041b197d5ca0ef8bae514cea175b8df265e5b7a76
-    container_name: discogsography-neo4j
+    container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
       nofile:
@@ -112,7 +112,7 @@ services:
       NEO4J_apoc_export_file_enabled: 'true'
       NEO4J_apoc_import_file_enabled: 'true'
       NEO4J_apoc_import_file_use__neo4j__config: 'true'
-      NEO4J_AUTH: neo4j/discogsography
+      NEO4J_AUTH: neo4j/groovemap
       NEO4J_db_checkpoint_iops_limit: '2000'
       NEO4J_db_logs_query_enabled: 'INFO'
       NEO4J_db_logs_query_threshold: '10s'
@@ -133,12 +133,12 @@ services:
       - neo4j_import:/var/lib/neo4j/import
       - neo4j_plugins:/plugins
     networks:
-      discogsography:
+      groovemap:
         aliases:
           - graph-db
           - neo4j-db
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "discogsography", "RETURN 1 as health"]
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "groovemap", "RETURN 1 as health"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -151,7 +151,7 @@ services:
   # Redis cache
   redis:
     image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-    container_name: discogsography-redis
+    container_name: groovemap-redis
     hostname: redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
@@ -159,7 +159,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      discogsography:
+      groovemap:
         aliases:
           - cache
           - redis-cache
@@ -179,18 +179,18 @@ services:
   # successfully (service_completed_successfully) before starting dependents.
   schema-init:
     image: "${DATABASE_SCHEMA_IMAGE:?Set DATABASE_SCHEMA_IMAGE to a digest-pinned database-schema image}"
-    container_name: discogsography-schema-init
+    container_name: groovemap-schema-init
     hostname: schema-init
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
-      NEO4J_PASSWORD: discogsography
+      NEO4J_PASSWORD: groovemap
       NEO4J_USERNAME: neo4j
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
     volumes:
       - schema_init_logs:/logs
@@ -200,7 +200,7 @@ services:
       neo4j:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     restart: "no"
     logging: *default-logging
     security_opt:
@@ -214,7 +214,7 @@ services:
   # API service — user accounts, JWT, Discogs OAuth
   api:
     image: "${CATALOG_API_IMAGE:?Set CATALOG_API_IMAGE to a digest-pinned catalog-api image}"
-    container_name: discogsography-api
+    container_name: groovemap-api
     hostname: api
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -227,16 +227,16 @@ services:
       JWT_SECRET_KEY: "dev-secret-change-in-production-use-a-256-bit-random-key"
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
-      NEO4J_PASSWORD: discogsography
+      NEO4J_PASSWORD: groovemap
       NEO4J_USERNAME: neo4j
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       REDIS_HOST: redis
       STARTUP_DELAY: "5"
       DISCOGS_DATA_ROOT: /discogs-data
@@ -248,8 +248,8 @@ services:
       NLQ_MODEL: "${NLQ_MODEL:-claude-sonnet-4-20250514}"
       # Email notifications (optional — when not set, reset links are logged instead)
       # RESEND_API_KEY: "${RESEND_API_KEY:-}"
-      # RESEND_SENDER_EMAIL: "${RESEND_SENDER_EMAIL:-noreply@discogsography.com}"
-      # RESEND_SENDER_NAME: "${RESEND_SENDER_NAME:-Discogsography}"
+      # RESEND_SENDER_EMAIL: "${RESEND_SENDER_EMAIL:-noreply@groovemap.music}"
+      # RESEND_SENDER_NAME: "${RESEND_SENDER_NAME:-GrooveMap}"
       # Encryption master key (optional — required for TOTP 2FA, derives OAuth + TOTP keys via HKDF)
       # ENCRYPTION_MASTER_KEY: "${ENCRYPTION_MASTER_KEY:-}"
       # Shared secret gating the internal /api/internal/insights/* router. MUST match the
@@ -272,7 +272,7 @@ services:
       neo4j:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
@@ -298,7 +298,7 @@ services:
   # Rust-based extractor service for Discogs data
   extractor-discogs:
     image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
-    container_name: discogsography-extractor-discogs
+    container_name: groovemap-extractor-discogs
     hostname: extractor-discogs
     command: ["--source", "discogs"]
     user: "${UID:-1000}:${GID:-1000}"
@@ -308,8 +308,8 @@ services:
       LOG_LEVEL: info
       PERIODIC_CHECK_DAYS: "5"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       DATA_QUALITY_RULES: /config/extraction-rules.yaml
     volumes:
       - discogs_data:/discogs-data
@@ -319,7 +319,7 @@ services:
       rabbitmq:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -336,7 +336,7 @@ services:
   # Rust-based extractor service for MusicBrainz data
   extractor-musicbrainz:
     image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
-    container_name: discogsography-extractor-musicbrainz
+    container_name: groovemap-extractor-musicbrainz
     hostname: extractor-musicbrainz
     command: ["--source", "musicbrainz"]
     user: "${UID:-1000}:${GID:-1000}"
@@ -346,8 +346,8 @@ services:
       MUSICBRAINZ_ROOT: /musicbrainz-data
       PERIODIC_CHECK_DAYS: "3"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
     volumes:
       - musicbrainz_data:/musicbrainz-data
       - extractor_musicbrainz_logs:/logs
@@ -355,7 +355,7 @@ services:
       rabbitmq:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -372,7 +372,7 @@ services:
   # Graphinator service
   graphinator:
     image: "${DISCOGS_GRAPH_ENRICHER_IMAGE:?Set DISCOGS_GRAPH_ENRICHER_IMAGE to a digest-pinned discogs-graph-enricher image}"
-    container_name: discogsography-graphinator
+    container_name: groovemap-graphinator
     hostname: graphinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -382,13 +382,13 @@ services:
       NEO4J_BATCH_MODE: "true"
       NEO4J_BATCH_SIZE: "500"          # Increased from 100 to 500
       NEO4J_HOST: neo4j
-      NEO4J_PASSWORD: discogsography
+      NEO4J_PASSWORD: groovemap
       NEO4J_USERNAME: neo4j
       PYTHONUNBUFFERED: "1"
       QUEUE_CHECK_INTERVAL: "3600"      # 1 hour between queue checks when idle
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "15"
     depends_on:
       schema-init:
@@ -398,7 +398,7 @@ services:
       neo4j:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
       interval: 30s
@@ -421,7 +421,7 @@ services:
   # Brainzgraphinator service — MusicBrainz Neo4j enrichment
   brainzgraphinator:
     image: "${MUSICBRAINZ_GRAPH_ENRICHER_IMAGE:?Set MUSICBRAINZ_GRAPH_ENRICHER_IMAGE to a digest-pinned musicbrainz-graph-enricher image}"
-    container_name: discogsography-brainzgraphinator
+    container_name: groovemap-brainzgraphinator
     hostname: brainzgraphinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -431,13 +431,13 @@ services:
       NEO4J_BATCH_MODE: "true"
       NEO4J_BATCH_SIZE: "500"
       NEO4J_HOST: neo4j
-      NEO4J_PASSWORD: discogsography
+      NEO4J_PASSWORD: groovemap
       NEO4J_USERNAME: neo4j
       PYTHONUNBUFFERED: "1"
       QUEUE_CHECK_INTERVAL: "3600"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
       schema-init:
@@ -447,7 +447,7 @@ services:
       neo4j:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8011/health"]
       interval: 30s
@@ -470,7 +470,7 @@ services:
   # Tableinator service
   tableinator:
     image: "${DISCOGS_SQL_LOADER_IMAGE:?Set DISCOGS_SQL_LOADER_IMAGE to a digest-pinned discogs-sql-loader image}"
-    container_name: discogsography-tableinator
+    container_name: groovemap-tableinator
     hostname: tableinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -479,15 +479,15 @@ services:
       POSTGRES_BATCH_FLUSH_INTERVAL: "2.0"  # Reduced from 5.0 for faster flushing
       POSTGRES_BATCH_MODE: "true"
       POSTGRES_BATCH_SIZE: "500"          # Increased from 100 to 500
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       QUEUE_CHECK_INTERVAL: "3600"      # 1 hour between queue checks when idle
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
       schema-init:
@@ -497,7 +497,7 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
       interval: 30s
@@ -520,7 +520,7 @@ services:
   # Brainztableinator service (MusicBrainz data to PostgreSQL)
   brainztableinator:
     image: "${MUSICBRAINZ_SQL_LOADER_IMAGE:?Set MUSICBRAINZ_SQL_LOADER_IMAGE to a digest-pinned musicbrainz-sql-loader image}"
-    container_name: discogsography-brainztableinator
+    container_name: groovemap-brainztableinator
     hostname: brainztableinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -529,15 +529,15 @@ services:
       POSTGRES_BATCH_FLUSH_INTERVAL: "2.0"  # Reduced from 5.0 for faster flushing
       POSTGRES_BATCH_MODE: "true"
       POSTGRES_BATCH_SIZE: "500"          # Increased from 100 to 500
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       QUEUE_CHECK_INTERVAL: "3600"      # 1 hour between queue checks when idle
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "25"
     depends_on:
       schema-init:
@@ -547,7 +547,7 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8010/health"]
       interval: 30s
@@ -570,22 +570,22 @@ services:
   # Dashboard service
   dashboard:
     image: "${OPERATIONS_CONSOLE_IMAGE:?Set OPERATIONS_CONSOLE_IMAGE to a digest-pinned operations-console image}"
-    container_name: discogsography-dashboard
+    container_name: groovemap-dashboard
     hostname: dashboard
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
-      NEO4J_PASSWORD: discogsography
+      NEO4J_PASSWORD: groovemap
       NEO4J_USERNAME: neo4j
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: discogsography
-      RABBITMQ_USERNAME: discogsography
+      RABBITMQ_PASSWORD: groovemap
+      RABBITMQ_USERNAME: groovemap
       REDIS_HOST: redis
       API_HOST: api
       API_PORT: "8004"
@@ -606,7 +606,7 @@ services:
       api:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -630,7 +630,7 @@ services:
   # Explore service
   explore:
     image: "${GRAPH_EXPLORER_IMAGE:?Set GRAPH_EXPLORER_IMAGE to a digest-pinned graph-explorer image}"
-    container_name: discogsography-explore
+    container_name: groovemap-explore
     hostname: explore
     user: "${UID:-1000}:${GID:-1000}"
     environment:
@@ -643,7 +643,7 @@ services:
       api:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     ports:
       - "8006:8006"
       - "8007:8007"
@@ -669,17 +669,17 @@ services:
   # Insights service — precomputed analytics and music trends
   insights:
     image: "${ANALYTICS_ENGINE_IMAGE:?Set ANALYTICS_ENGINE_IMAGE to a digest-pinned analytics-engine image}"
-    container_name: discogsography-insights
+    container_name: groovemap-insights
     hostname: insights
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       API_BASE_URL: "http://api:8004"
       INSIGHTS_SCHEDULE_HOURS: "24"
       LOG_LEVEL: INFO
-      POSTGRES_DATABASE: discogsography
+      POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD: discogsography
-      POSTGRES_USERNAME: discogsography
+      POSTGRES_PASSWORD: groovemap
+      POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       REDIS_HOST: redis
       STARTUP_DELAY: "10"
@@ -697,7 +697,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - discogsography
+      - groovemap
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8009/health"]
       interval: 30s

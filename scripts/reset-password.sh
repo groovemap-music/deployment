@@ -5,13 +5,13 @@
 #   ./scripts/reset-password.sh <container_name> <postgres_password> <email> <new_password>
 #
 # Example:
-#   ./scripts/reset-password.sh postgres discogsography user@example.com mynewpassword123
+#   ./scripts/reset-password.sh postgres groovemap user@example.com mynewpassword123
 
 set -euo pipefail
 
 if [ $# -lt 4 ]; then
   echo "Usage: $0 <container_name> <postgres_password> <email> <new_password>"
-  echo "Example: $0 postgres discogsography user@example.com mynewpassword123"
+  echo "Example: $0 postgres groovemap user@example.com mynewpassword123"
   exit 1
 fi
 
@@ -38,14 +38,14 @@ print(salt.hex() + ':' + key.hex())
 else
   # Alpine postgres image may not have python3; use the API container instead
   echo "python3 not available in '${CONTAINER}' container, trying API container..."
-  HASHED=$(docker exec -e RESET_PW="${NEW_PASSWORD}" discogsography-api python3 -c "
+  HASHED=$(docker exec -e RESET_PW="${NEW_PASSWORD}" groovemap-api python3 -c "
 import hashlib, os
 password = os.environ['RESET_PW']
 salt = os.urandom(32)
 key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100_000)
 print(salt.hex() + ':' + key.hex())
 ") || {
-    echo "Error: Failed to generate password hash. Ensure either '${CONTAINER}' has python3 or the 'discogsography-api' container is running."
+    echo "Error: Failed to generate password hash. Ensure either '${CONTAINER}' has python3 or the 'groovemap-api' container is running."
     exit 1
   }
 fi
@@ -57,7 +57,7 @@ fi
 
 echo "Updating password for: ${EMAIL}"
 
-RESULT=$(docker exec "${CONTAINER}" env PGPASSWORD="${PG_PASSWORD}" psql -U discogsography -d discogsography -t -A \
+RESULT=$(docker exec "${CONTAINER}" env PGPASSWORD="${PG_PASSWORD}" psql -U groovemap -d groovemap -t -A \
   -v "hashed=${HASHED}" -v "email=${EMAIL}" -c \
   "UPDATE users SET hashed_password = :'hashed', password_changed_at = NOW(), updated_at = NOW() WHERE email = :'email' RETURNING email;")
 
@@ -65,7 +65,7 @@ if [ -z "$RESULT" ]; then
   echo "Error: No user found with email '${EMAIL}'."
   echo ""
   echo "Existing users:"
-  docker exec "${CONTAINER}" env PGPASSWORD="${PG_PASSWORD}" psql -U discogsography -d discogsography -t -A -c \
+  docker exec "${CONTAINER}" env PGPASSWORD="${PG_PASSWORD}" psql -U groovemap -d groovemap -t -A -c \
     "SELECT email FROM users;"
   exit 1
 fi
