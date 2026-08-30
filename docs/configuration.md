@@ -570,7 +570,7 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 
 | Variable         | Description               | Default | Used By       |
 | ---------------- | ------------------------- | ------- | ------------- |
-| `PYTHON_VERSION` | Python version for builds | `3.13`  | Docker, CI/CD |
+| `PYTHON_VERSION` | Python version for builds | `3.14`  | Docker, CI/CD |
 
 **Used By**: Build systems, CI/CD pipelines
 
@@ -578,9 +578,9 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 
 **Notes**:
 
-- Minimum supported version: 3.13
-- All services tested on Python 3.13+
-- Older versions not supported
+- Supported version line: Python 3.14
+- Managed runtime pins use Python 3.14.5
+- Older and newer minor versions are not supported
 
 ## Service-Specific Settings
 
