@@ -6,9 +6,10 @@ build-backend = "hatchling.build"
 name = "groovemap-deployment-validation"
 version = "0.0.0"
 description = "Validation tooling for the unversioned GrooveMap deployment repository"
-requires-python = ">=3.13"
+requires-python = ">=3.14,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
+classifiers = ["Programming Language :: Python :: 3.14"]
 dependencies = ["pyyaml==6.0.3"]
 
 [dependency-groups]
@@ -37,7 +38,7 @@ exclude-newer = "2 days"
 
 [tool.ruff]
 line-length = 150
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]
@@ -52,7 +53,7 @@ lines-after-imports = 2
 "scripts/*.py" = ["S108", "T201"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
