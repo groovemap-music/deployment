@@ -102,11 +102,29 @@ class TestRepositoryBoundary:
         assert all("build" not in service for service in compose["services"].values())
 
 
-class TestApiContainerNameContract:
-    """Operator helpers and the retained Compose API name must not drift."""
+class TestOperatorHelperServiceBoundary:
+    """Operator helpers address Compose services, not fixed container names."""
 
-    def test_reset_password_fallback_matches_compose_api_container(self) -> None:
-        expected = _base_compose()["services"]["api"]["container_name"]
+    def test_reset_password_uses_compose_services(self) -> None:
         script = (REPO_ROOT / "scripts" / "reset-password.sh").read_text()
-        assert expected == "groovemap-api"
-        assert expected in script
+        assert "docker exec" not in script
+        assert 'exec -T -e "RESET_PW=${GM_NEW_PASSWORD}" api python3' in script
+        assert 'exec -T -e "PGPASSWORD=${GM_POSTGRES_PASSWORD}" postgres' in script
+
+
+class TestBatchProcessingDeploymentContract:
+    """Stack defaults retain the proven throughput and drain thresholds."""
+
+    def test_neo4j_consumers_use_optimized_batch_settings(self) -> None:
+        services = _base_compose()["services"]
+        for name in ("graphinator", "brainzgraphinator"):
+            environment = services[name]["environment"]
+            assert int(environment["NEO4J_BATCH_SIZE"]) >= 500
+            assert float(environment["NEO4J_BATCH_FLUSH_INTERVAL"]) <= 2.0
+
+    def test_postgres_consumers_use_optimized_batch_settings(self) -> None:
+        services = _base_compose()["services"]
+        for name in ("tableinator", "brainztableinator"):
+            environment = services[name]["environment"]
+            assert int(environment["POSTGRES_BATCH_SIZE"]) >= 500
+            assert float(environment["POSTGRES_BATCH_FLUSH_INTERVAL"]) <= 2.0

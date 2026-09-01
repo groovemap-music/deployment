@@ -65,10 +65,11 @@ flowchart LR
 
 ## Validation-only image references
 
-`config/validation.env` contains syntactically valid, non-published dummy
-digests. They exist only so Docker Compose can resolve every required variable
-during static configuration validation. They are not deployment inputs and
-must never be copied into an environment `.env` file.
+`config/validation.env` pins the approved database-schema release digest and
+uses syntactically valid, non-published dummy digests for services without an
+approved release. The dummy values exist only so Docker Compose can resolve
+every required variable during static configuration validation. They are not
+deployment inputs and must never be copied into an environment `.env` file.
 
 Real environments must use approved `ghcr.io/groovemap-music/<repository>`
 references pinned with `@sha256:<manifest-digest>`.
@@ -83,11 +84,16 @@ resources:
 | --- | --- |
 | `just smoke` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-infra` | Operator approval to start the infrastructure smoke stack |
+| `just smoke-released` | Operator approval and a reviewed `GM_RELEASED_STACK_ENV_FILE` containing approved digests for every internal image |
 | `just performance` | Operator approval, a running target environment, and an approved performance-runner image |
 | `just down` | Operator approval because it changes the current environment |
 
 Do not use these commands as substitutes for the static gate. Record the exact
 environment, image digests, and outcome when an operator approves a live test.
+`just smoke-released` rejects mutable tags and validation-only digests before
+starting containers, runs the schema initializer twice before applications,
+waits for service health, exercises graceful consumer shutdown, and retains
+service status and logs on failure.
 
 ## Coverage
 
