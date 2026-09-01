@@ -106,7 +106,7 @@ source/promoted hashes. Update them together from a reviewed producer commit;
 The following operations require explicit approval because they change live
 state:
 
-- `just smoke`, `just smoke-infra`, or `just down`;
+- `just smoke`, `just smoke-infra`, `just smoke-released`, or `just down`;
 - `docker compose up`, `restart`, `stop`, `down`, or `scale`;
 - database restore, vacuum policy changes, queue deletion, or cache flush;
 - data migration with `--apply`;

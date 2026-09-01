@@ -50,5 +50,10 @@ smoke:
 smoke-infra:
     bash scripts/smoke-infra.sh
 
+# Requires a reviewed env file containing approved immutable digests for every
+# repository-owned image. Runs only a disposable, non-published stack.
+smoke-released:
+    bash scripts/smoke-released-stack.sh
+
 down:
     docker compose down
