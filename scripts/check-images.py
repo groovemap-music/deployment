@@ -24,6 +24,9 @@ INTERNAL_IMAGES = {
     "explore": ("GRAPH_EXPLORER_IMAGE", "graph-explorer"),
     "insights": ("ANALYTICS_ENGINE_IMAGE", "analytics-engine"),
 }
+RELEASED_IMAGE_DIGESTS = {
+    "DATABASE_SCHEMA_IMAGE": "6831fa563e5a1b2dccb54fe2a86b64c084bb8d320d57fdd8ff65ace5b65eafa3",
+}
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -54,8 +57,12 @@ validation_env = read_env(ROOT / "config/validation.env")
 example_env = read_env(ROOT / ".env.example")
 for variable, repository in sorted(set(INTERNAL_IMAGES.values())):
     prefix = f"{REGISTRY}/{repository}@sha256:"
-    assert validation_env[variable] == prefix + "1" * 64, f"{variable} validation image must be named {repository}"
-    assert example_env[variable] == prefix + "REPLACE_WITH_64_HEX_CHARACTERS", f"{variable} example image must be named {repository}"
+    if digest := RELEASED_IMAGE_DIGESTS.get(variable):
+        assert validation_env[variable] == prefix + digest, f"{variable} validation image must pin its approved release"
+        assert example_env[variable] == prefix + digest, f"{variable} example image must pin its approved release"
+    else:
+        assert validation_env[variable] == prefix + "1" * 64, f"{variable} validation image must be named {repository}"
+        assert example_env[variable] == prefix + "REPLACE_WITH_64_HEX_CHARACTERS", f"{variable} example image must be named {repository}"
 
 provenance = json.loads((ROOT / "config/provenance.json").read_text())["extraction-rules.yaml"]
 promoted = ROOT / "config/extraction-rules.yaml"
