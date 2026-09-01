@@ -36,7 +36,7 @@ Replace every `REPLACE_WITH_64_HEX_CHARACTERS` placeholder with the manifest
 digest of an approved source-repository release. The required form is:
 
 ```dotenv
-DATABASE_SCHEMA_IMAGE=ghcr.io/groovemap-music/database-schema@sha256:<digest>
+DATABASE_SCHEMA_IMAGE=ghcr.io/groovemap-music/database-schema@sha256:6831fa563e5a1b2dccb54fe2a86b64c084bb8d320d57fdd8ff65ace5b65eafa3
 CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:<digest>
 ```
 

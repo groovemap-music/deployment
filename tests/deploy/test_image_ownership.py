@@ -22,6 +22,9 @@ SERVICE_IMAGES = {
     "explore": ("GRAPH_EXPLORER_IMAGE", "graph-explorer"),
     "insights": ("ANALYTICS_ENGINE_IMAGE", "analytics-engine"),
 }
+RELEASED_IMAGE_DIGESTS = {
+    "DATABASE_SCHEMA_IMAGE": "6831fa563e5a1b2dccb54fe2a86b64c084bb8d320d57fdd8ff65ace5b65eafa3",
+}
 
 
 def _env(path: Path) -> dict[str, str]:
@@ -52,8 +55,12 @@ def test_primary_images_use_owning_repository_names() -> None:
     example = _env(ROOT / ".env.example")
     for variable, repository in set(SERVICE_IMAGES.values()):
         prefix = f"{REGISTRY}/{repository}@sha256:"
-        assert validation[variable] == prefix + "1" * 64
-        assert example[variable] == prefix + "REPLACE_WITH_64_HEX_CHARACTERS"
+        if digest := RELEASED_IMAGE_DIGESTS.get(variable):
+            assert validation[variable] == prefix + digest
+            assert example[variable] == prefix + digest
+        else:
+            assert validation[variable] == prefix + "1" * 64
+            assert example[variable] == prefix + "REPLACE_WITH_64_HEX_CHARACTERS"
 
 
 def test_compose_has_no_mutable_latest_tag() -> None:
