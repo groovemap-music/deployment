@@ -274,7 +274,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -400,7 +400,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -449,7 +449,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8011/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -499,7 +499,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -549,7 +549,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8010/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -608,7 +608,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -648,7 +648,7 @@ services:
       - "8006:8006"
       - "8007:8007"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -699,7 +699,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8009/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

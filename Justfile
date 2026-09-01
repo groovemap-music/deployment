@@ -24,7 +24,24 @@ typecheck:
 test:
     uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml
 
+coverage:
+    uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml
+
+audit:
+    uv run pip-audit
+
+license-check:
+    uv run python scripts/check-licenses.py
+    uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"
+
+secret-scan:
+    gitleaks git --config .gitleaks.toml --redact --no-banner
+    gitleaks dir . --config .gitleaks.toml --redact --no-banner
+
 build:
+    bash scripts/check-compose.sh
+
+install-check:
     bash scripts/check-compose.sh
 
 # Requires an approved, published catalog-api performance image and a running environment.
