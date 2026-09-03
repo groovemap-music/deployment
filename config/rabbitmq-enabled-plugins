@@ -1,0 +1,12 @@
+%% RabbitMQ plugin list, mounted read-only at /etc/rabbitmq/enabled_plugins.
+%%
+%% rabbitmq_management  — the management UI and HTTP API on 15672 (the
+%%                        operations console reads queue stats from it).
+%% rabbitmq_prometheus  — the Prometheus scrape endpoint on 15692, which
+%%                        otel-collector scrapes. RabbitMQ speaks no OTLP, so
+%%                        this is the only path for broker metrics.
+%%
+%% The rabbitmq:*-management image happens to enable both today. Owning the
+%% file here makes the contract explicit and survives an image bump that
+%% changes the baked-in defaults.
+[rabbitmq_management,rabbitmq_prometheus].

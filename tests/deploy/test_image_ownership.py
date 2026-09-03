@@ -20,6 +20,8 @@ THIRD_PARTY_SERVICES = (
     "otel-collector",
     "prometheus",
     "grafana",
+    "postgres-exporter",
+    "redis-exporter",
 )
 
 

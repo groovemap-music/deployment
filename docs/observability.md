@@ -82,6 +82,73 @@ endpoint. The operator-facing liveness probe is
 `http://otel-collector:13133/`, reachable from any other container on the
 `groovemap` network.
 
+### Service environment
+
+Every internal-image service is handed the same three variables. Two are shared
+through the `x-otel-env` anchor in `docker-compose.yml`; `OTEL_SERVICE_NAME`
+differs per service and is set on the service itself.
+
+| Variable | Value |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` |
+| `OTEL_SERVICE_NAME` | the service's own compose key |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=groovemap,deployment.environment.name=dev` (`prod` in the production overlay) |
+
+These eleven services are wired:
+
+| Service | `OTEL_SERVICE_NAME` |
+| --- | --- |
+| `schema-init` | `schema-init` |
+| `api` | `api` |
+| `extractor-discogs` | `extractor-discogs` |
+| `extractor-musicbrainz` | `extractor-musicbrainz` |
+| `graphinator` | `graphinator` |
+| `brainzgraphinator` | `brainzgraphinator` |
+| `tableinator` | `tableinator` |
+| `brainztableinator` | `brainztableinator` |
+| `dashboard` | `dashboard` |
+| `explore` | `explore` |
+| `insights` | `insights` |
+
+Each of them also declares `depends_on: otel-collector` with condition
+`service_started` — never `service_healthy`. Telemetry must not be able to hold
+an application down. A service that starts before the collector is ready loses
+at most its first export interval.
+
+`OTEL_METRICS_EXPORTER` and `OTEL_METRIC_EXPORT_INTERVAL` are left at their SDK
+defaults (`otlp`, 15000 ms). Setting `OTEL_METRICS_EXPORTER=none` on a single
+service is the supported way to mute it without touching its code.
+
+### Infrastructure exporters
+
+RabbitMQ, PostgreSQL, and Redis speak no OTLP, so the collector's Prometheus
+receiver scrapes them. None of these ports is published to the host: exporters
+expose server internals and have no authentication of their own.
+
+| Scrape job | Target | Source |
+| --- | --- | --- |
+| `rabbitmq` | `rabbitmq:15692` | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
+| `postgres-exporter` | `postgres-exporter:9187` | `prometheuscommunity/postgres-exporter` |
+| `redis-exporter` | `redis-exporter:9121` | `oliver006/redis_exporter` |
+| `otel-collector` | `otel-collector:8888` | the collector's own telemetry |
+
+Job names deliberately match the docker-compose service keys, which is what the
+dashboards filter on.
+
+Both exporters take their credentials the same way the application services do:
+literal values in development, and `_FILE`-backed Docker secrets
+(`postgres_username`, `postgres_password`, `redis_password`) in production.
+They reuse the existing secrets — no new credential is introduced.
+
+`redis-exporter` has no container healthcheck. Its image is distroless and
+ships neither a shell nor an HTTP client, so no probe can run inside it; a
+failed exporter surfaces as a stale `redis-exporter` job on the infrastructure
+dashboard.
+
+Neo4j Community Edition has no Prometheus endpoint, so there is no Neo4j
+exporter. Neo4j is observed through the application-side
+`db.client.operation.duration` series and its container healthcheck.
+
 ### Grafana access
 
 Development enables anonymous `Viewer` access so the dashboards open without a
