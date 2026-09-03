@@ -161,6 +161,12 @@ class TestRabbitMqPrometheusPlugin:
         volumes = _base_compose()["services"]["rabbitmq"]["volumes"]
         assert "./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro" in volumes
 
+    def test_per_object_metrics_are_enabled(self) -> None:
+        """Without this the plugin emits node aggregates only, and the per-queue
+        depth and consumer-count panels have nothing to plot."""
+        erl_args = _base_compose()["services"]["rabbitmq"]["environment"]["RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS"]
+        assert "-rabbitmq_prometheus return_per_object_metrics true" in erl_args
+
     def test_prometheus_port_is_not_published(self) -> None:
         ports = [str(port) for port in _base_compose()["services"]["rabbitmq"]["ports"]]
         assert not any("15692" in port for port in ports), "15692 is scraped internally, not exposed"

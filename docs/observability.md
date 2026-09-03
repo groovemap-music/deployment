@@ -273,6 +273,61 @@ Neo4j Community Edition has no Prometheus endpoint. There is no Neo4j exporter
 in this stack, and Neo4j health is observed through the application-side
 `db.client.operation.duration` series and the container healthcheck.
 
+## Dashboards
+
+Dashboards are code. They live in `config/grafana/dashboards`, Grafana loads
+them read-only from a bind mount, and nothing is ever edited in the Grafana UI —
+an edit there is not saved back to the repository and is reverted on the next
+restart.
+
+| Dashboard | uid | Covers |
+| --- | --- | --- |
+| Pipeline overview | `groovemap-pipeline-overview` | Extractor publish rate, per-queue depth and consumers, per-service processed and failed rates, end-to-end lag proxy |
+| Ingestion | `groovemap-ingestion` | Download bytes, file progress, records per second per entity, publish confirm p50/p95, reconnects, errors by stage |
+| Consumers | `groovemap-consumers` | Messages per second by entity and outcome, message duration p95, batch size and flush latency by store, database operation duration, circuit breaker state, active consumers |
+| API services | `groovemap-api-services` | RED per service and route, sync duration, cache hit ratio, NLQ outcomes, insights computation duration and staleness |
+| Infrastructure | `groovemap-infrastructure` | RabbitMQ, PostgreSQL, and Redis exporter panels, plus collector points received, exported, and dropped |
+
+The uids are stable and part of the contract: links and bookmarks depend on
+them, so rename a title freely but never a uid.
+
+### Provisioning
+
+| File | Role |
+| --- | --- |
+| `config/grafana/provisioning/datasources/prometheus.yaml` | The Prometheus datasource, uid `prometheus`, not editable in the UI |
+| `config/grafana/provisioning/dashboards/groovemap.yaml` | Loads `/var/lib/grafana/dashboards` into the `GrooveMap` folder |
+
+Every panel resolves its datasource through the `${DS_PROMETHEUS}` template
+variable rather than naming a uid. A dashboard that pins a literal uid works on
+the machine it was exported from and nowhere else, so the checker rejects one.
+
+### Adding a dashboard
+
+1. Add a JSON file to `config/grafana/dashboards`. Give it a `uid` that starts
+   with `groovemap-`, a unique `title`, and a `schemaVersion`.
+2. Define a `DS_PROMETHEUS` datasource template variable, and set every panel's
+   and every target's datasource to `{"type": "prometheus", "uid": "${DS_PROMETHEUS}"}`.
+3. Add a `service`, `source`, or `queue` template variable so the dashboard can
+   be narrowed to one thing.
+4. Write PromQL against the **Prometheus** names in the catalog above, not the
+   OTEL dot-names. Prefer `rate()` and `histogram_quantile()` over recording
+   rules; this stack has no recording or alerting rules.
+5. Run `uv run python scripts/check-dashboards.py`. It is part of
+   `just source-check`, so `just check` runs it too.
+
+The checker fails the build when a dashboard does not parse, is missing a `uid`,
+`title`, or `schemaVersion`, duplicates another dashboard's uid or title, pins a
+datasource uid instead of using the variable, has no queries, or references a
+metric that is in neither the catalog above nor its exporter/collector
+allowlist. Adding a metric to a service means adding it to the catalog first —
+that is the ordering the gate enforces.
+
+If a panel needs a new exporter or collector metric, add the exact name to
+`EXPORTER_METRICS` in `scripts/check-dashboards.py`. The allowlist is explicit
+rather than prefix-matched so a typo in `rabbitmq_queue_messages_ready` still
+fails.
+
 ## Rollout
 
 The program rolls out in three stages, which are cross-hive and therefore not
