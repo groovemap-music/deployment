@@ -33,6 +33,10 @@ secrets:
   # isn't set — see discogsography-q31w.
   insights_internal_secret:
     file: ./secrets/insights_internal_secret.txt
+  # Grafana admin login. Anonymous access is disabled in prod, so this is the
+  # only way into the dashboards.
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
 
 services:
   rabbitmq:
@@ -216,6 +220,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # The base file publishes 9090 on 0.0.0.0 for local PromQL work. Prometheus
+  # has no authentication of its own and its API can delete series, so in prod
+  # it is bound to loopback and reached through Grafana (or an SSH tunnel).
+  # `!override` fully replaces (not merges) the base publish.
+  prometheus:
+    restart: always
+    ports: !override
+      - "127.0.0.1:9090:9090"
+
+  otel-collector:
+    restart: always
+
+  grafana:
+    restart: always
+    environment:
+      # Anonymous Viewer access is a dev-only convenience.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD:  # unset base value so __FILE takes effect
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+    secrets:
+      - grafana_admin_password
 
   schema-init:
     environment:

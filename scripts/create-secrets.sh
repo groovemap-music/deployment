@@ -62,6 +62,11 @@ write_secret "redis_password.txt" "$(openssl rand -base64 24)"
 # insights (both read the same secrets/insights_internal_secret.txt file).
 write_secret "insights_internal_secret.txt" "$(openssl rand -hex 32)"
 
+# Grafana admin password. docker-compose.prod.yml disables anonymous access and
+# reads this file via GF_SECURITY_ADMIN_PASSWORD__FILE, so without it the
+# dashboards have no reachable login.
+write_secret "grafana_admin_password.txt" "$(openssl rand -base64 24)"
+
 echo ""
 echo "✅ secrets/ is ready. Files are owner-read-only (chmod 600)."
 echo "   Never commit secrets/ to version control."

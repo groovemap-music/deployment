@@ -1,0 +1,18 @@
+---
+
+# Prometheus configuration for the GrooveMap stack.
+#
+# Prometheus is a pure remote-write RECEIVER here: every series arrives from
+# otel-collector over `--web.enable-remote-write-receiver`, including the
+# infrastructure exporters, which the collector scrapes on Prometheus' behalf
+# (see config/otel-collector.yaml). Prometheus therefore scrapes nothing
+# itself, and `scrape_configs` is intentionally empty — add scrape jobs to the
+# collector, not here, so one component owns collection.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: groovemap
+
+scrape_configs: []

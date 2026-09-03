@@ -93,6 +93,14 @@ The source repositories own query-specific diagnostics:
   and [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader)
   for PostgreSQL consumers.
 
+## Metrics, dashboards, and the OpenTelemetry backend
+
+Application and infrastructure metrics are collected by an OpenTelemetry
+collector, stored in Prometheus, and visualised in Grafana at
+<http://localhost:3000>. The pipeline, the port map, the instrumentation
+conventions, and the canonical metric catalog live in
+[Observability](observability.md).
+
 ## Operations console and analytics
 
 The operations console is published at <http://localhost:8003> in the base
