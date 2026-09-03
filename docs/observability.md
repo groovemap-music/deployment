@@ -484,8 +484,9 @@ pipeline before concluding a panel is broken.
 
 ### 6. Confirm Grafana has the five dashboards
 
-Development enables anonymous `Viewer` access, so the search API answers without
-credentials:
+Development enables anonymous `Viewer` access, so `http://localhost:3000` opens
+the dashboards in a browser without a login. The search API is the scriptable
+form of the same check:
 
 ```bash
 curl -s 'http://localhost:3000/api/search?type=dash-db' \
@@ -494,19 +495,25 @@ curl -s 'http://localhost:3000/api/search?type=dash-db' \
 
 Expect exactly five rows, one per uid: `groovemap-pipeline-overview`,
 `groovemap-ingestion`, `groovemap-consumers`, `groovemap-api-services`,
-`groovemap-infrastructure`. `http://localhost:3000` opens the same dashboards in
-a browser, also without a login.
+`groovemap-infrastructure`.
 
-On the production overlay anonymous access is off, so authenticate from the
-environment rather than putting a credential on the command line:
+An `Unauthorized` body instead of that list means anonymous access is not in
+effect — always on the production overlay, which disables it, and also on a
+development stack whose Grafana cannot read its own database. Authenticate from
+the environment rather than putting a credential on the command line:
 
 ```bash
 GRAFANA_AUTH="admin:$(cat secrets/grafana_admin_password)"
 curl -s --user "${GRAFANA_AUTH}" 'http://localhost:3000/api/search?type=dash-db'
 ```
 
-A dashboard missing here that exists in `config/grafana/dashboards` means the
-provisioning mount or the provider file is wrong, not the dashboard.
+If that is `Unauthorized` too, the problem is Grafana's own state rather than
+the credential; check `docker compose logs grafana` and the `grafana_data`
+volume before suspecting the provisioning.
+
+A dashboard missing from an otherwise good listing, when the file does exist in
+`config/grafana/dashboards`, means the provisioning mount or the provider file
+is wrong, not the dashboard.
 
 ### 7. Tear the stack down
 
