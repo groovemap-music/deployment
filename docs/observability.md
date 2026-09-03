@@ -259,6 +259,7 @@ closed.
 | `groovemap.api.sync.duration` | `groovemap_api_sync_duration_seconds` | histogram (s) | `outcome` |
 | `groovemap.api.cache` | `groovemap_api_cache_total` | counter | `outcome` (`hit`\|`miss`), `cache` |
 | `groovemap.api.nlq.requests` | `groovemap_api_nlq_requests_total` | counter | `outcome` |
+| `groovemap.explore.proxy.duration` | `groovemap_explore_proxy_duration_seconds` | histogram (s) | `http.route`, `outcome` |
 | `groovemap.insights.computation.duration` | `groovemap_insights_computation_duration_seconds` | histogram (s) | `computation`, `outcome` |
 | `groovemap.insights.last_success` | `groovemap_insights_last_success_seconds` | gauge (unix s) | `computation` |
 | `groovemap.schema_init.duration` | `groovemap_schema_init_duration_seconds` | histogram (s) | `store`, `outcome` |
@@ -266,6 +267,16 @@ closed.
 | `groovemap.console.poll.duration` | `groovemap_console_poll_duration_seconds` | histogram (s) | `target`, `outcome` |
 | `groovemap.mcp.tool.calls` | `groovemap_mcp_tool_calls_total` | counter | `tool`, `outcome` |
 | `groovemap.mcp.tool.duration` | `groovemap_mcp_tool_duration_seconds` | histogram (s) | `tool` |
+
+`groovemap.explore.proxy.duration` overlaps `http.client.request.duration` on
+purpose. `graph-explorer` proxies `/api/*` to `catalog-api` with
+`client.send(req, stream=True)`, so the semantic-convention client metric stops
+at the response headers and says nothing about the time spent draining a
+streamed SSE body. The domain metric times the whole proxied request, which is
+what an operator watching a slow stream needs. `http.route` carries the
+templated `/api/{path:path}`, matching what the FastAPI instrumentation reports
+for the same request, and `outcome` is one of `success`, `timeout`, or
+`upstream_error`.
 
 ### Metrics that are deliberately absent
 
@@ -327,6 +338,191 @@ If a panel needs a new exporter or collector metric, add the exact name to
 `EXPORTER_METRICS` in `scripts/check-dashboards.py`. The allowlist is explicit
 rather than prefix-matched so a typo in `rabbitmq_queue_messages_ready` still
 fails.
+
+## Verification
+
+Provisioning a dashboard proves nothing on its own: a panel whose metric never
+arrives renders an empty graph, not an error. This runbook is the end-to-end
+check that real service images push metrics that land on the provisioned
+dashboards. Run it against the local Docker Compose stack. Never run it against
+a live environment without operator approval.
+
+The whole run takes a few minutes. Every command below is copy-pasteable from
+the repository root.
+
+### 1. Point `.env` at images that carry the telemetry work
+
+`docker-compose.yml` requires a digest-pinned reference for each of the eleven
+internal services, and `scripts/check-images.py` enforces that for every value
+committed to the repository. `.env` is not committed, so fill it from
+`.env.example` with the released digests you want to exercise:
+
+```bash
+cp .env.example .env
+# Resolve each approved release tag to its registry digest, then paste it in.
+docker buildx imagetools inspect ghcr.io/groovemap-music/catalog-api:<tag> \
+  --format '{{ .Manifest.Digest }}'
+```
+
+Only images built after their repository adopted `common.telemetry` (Python) or
+the `telemetry` module (Rust) export anything. An older image starts fine and
+stays silent, which is exactly the failure this runbook is designed to catch.
+
+### 2. Bring the stack up
+
+```bash
+just smoke
+```
+
+`just smoke` is `docker compose up -d --wait` followed by `docker compose ps`.
+It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the two exporters, the
+collector, Prometheus, Grafana, and every application service.
+
+`--wait` blocks on container health. The Python service images ship no `curl`,
+while the compose healthchecks for those services invoke `curl`, so on a stack
+built from those images `--wait` never converges even though every service is
+running and exporting. When that happens, start without the gate and read the
+image's own healthcheck instead:
+
+```bash
+docker compose up -d
+docker compose ps --format '{{.Service}}\t{{.State}}\t{{.Status}}'
+```
+
+### 3. Confirm the collector is receiving data points
+
+The collector's self-metrics on `:8888` are the first place a break shows.
+`accepted` climbing means services are pushing; `refused` climbing means the
+collector is rejecting them. The port is not published, so read it from another
+container on the `groovemap` network:
+
+```bash
+docker compose exec prometheus \
+  wget -qO- http://otel-collector:8888/metrics | grep -E '^otelcol_(receiver|exporter)_'
+```
+
+Expect non-zero `otelcol_receiver_accepted_metric_points_total` for both the
+`otlp` receiver (the application push path) and the `prometheus` receiver (the
+infrastructure scrape path), a matching
+`otelcol_exporter_sent_metric_points_total` for `prometheusremotewrite`, and
+zero on the `refused` and `send_failed` counters.
+
+The collector's liveness endpoint answers on the same network:
+
+```bash
+docker compose exec prometheus wget -qO- http://otel-collector:13133/
+```
+
+### 4. Confirm every expected service reached Prometheus
+
+`service.name` is promoted to the `service_name` Prometheus label by the
+collector's `resource_to_telemetry_conversion`, so the label's values are the
+roll call of everything that exported:
+
+```bash
+curl -s 'http://localhost:9090/api/v1/label/service_name/values'
+```
+
+Expect the eleven compose service keys — `api`, `extractor-discogs`,
+`extractor-musicbrainz`, `graphinator`, `brainzgraphinator`, `tableinator`,
+`brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
+four values that come from the scrape jobs rather than from a push:
+`rabbitmq`, `postgres-exporter`, `redis-exporter`, and `otelcol-contrib`.
+
+Two details are easy to misread. `schema-init` runs once and exits, so it
+appears only because the one-shot bootstrap flushes on shutdown; its absence
+means the flush regressed. And the collector's own scrape job is labelled
+`otelcol-contrib`, not `otel-collector`, because `service.name` from the
+collector's own telemetry wins over the job name — the three exporter jobs do
+match their compose service keys.
+
+A service that is missing here is either running an image without the telemetry
+work, or failing its telemetry bootstrap. The bootstrap never raises, so check
+the logs for the warning rather than for a crash:
+
+```bash
+docker compose logs <service> | grep -i 'OpenTelemetry'
+```
+
+### 5. Query one metric per dashboard
+
+Each of these is a real panel query from the dashboard named above it, with the
+template variables resolved. A `result` array with at least one entry means the
+panel has data.
+
+```bash
+# Pipeline overview — queue depth from the RabbitMQ scrape job
+curl -sG 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=sum by (queue) (rabbitmq_queue_messages_ready)'
+
+# Ingestion — bytes pulled by the extractors
+curl -sG 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=sum by (source) (groovemap_extraction_download_bytes_total)'
+
+# Consumers — database call latency from the consumer services
+curl -sG 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.95, sum by (le, db_system_name) (rate(db_client_operation_duration_seconds_bucket[5m])))'
+
+# API services — request rate per service
+curl -sG 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (rate(http_server_request_duration_seconds_count[5m]))'
+
+# Infrastructure — every scrape target reporting up
+curl -sG 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=up'
+```
+
+`tests/deploy/test_observability_runbook.py` pins these queries against the
+catalog above, so a metric renamed in the catalog fails the build here rather
+than silently emptying a panel.
+
+Panels stay empty when the workload that feeds them has not run, and that is
+not a fault. A stack that has only just started, with no dump files to extract
+and no messages in flight, leaves the pipeline and extraction panels blank
+while the infrastructure, API, and schema panels fill immediately. Drive the
+pipeline before concluding a panel is broken.
+
+### 6. Confirm Grafana has the five dashboards
+
+Development enables anonymous `Viewer` access, so `http://localhost:3000` opens
+the dashboards in a browser without a login. The search API is the scriptable
+form of the same check:
+
+```bash
+curl -s 'http://localhost:3000/api/search?type=dash-db' \
+  | python3 -c 'import json,sys; [print(d["uid"], "|", d["title"]) for d in json.load(sys.stdin)]'
+```
+
+Expect exactly five rows, one per uid: `groovemap-pipeline-overview`,
+`groovemap-ingestion`, `groovemap-consumers`, `groovemap-api-services`,
+`groovemap-infrastructure`.
+
+An `Unauthorized` body instead of that list means anonymous access is not in
+effect — always on the production overlay, which disables it, and also on a
+development stack whose Grafana cannot read its own database. Authenticate from
+the environment rather than putting a credential on the command line:
+
+```bash
+GRAFANA_AUTH="admin:$(cat secrets/grafana_admin_password)"
+curl -s --user "${GRAFANA_AUTH}" 'http://localhost:3000/api/search?type=dash-db'
+```
+
+If that is `Unauthorized` too, the problem is Grafana's own state rather than
+the credential; check `docker compose logs grafana` and the `grafana_data`
+volume before suspecting the provisioning.
+
+A dashboard missing from an otherwise good listing, when the file does exist in
+`config/grafana/dashboards`, means the provisioning mount or the provider file
+is wrong, not the dashboard.
+
+### 7. Tear the stack down
+
+```bash
+docker compose down -v
+```
+
+`-v` removes the volumes this run created, including `prometheus_data` and
+`grafana_data`. Leave it off to keep the collected series for a second look.
 
 ## Rollout
 

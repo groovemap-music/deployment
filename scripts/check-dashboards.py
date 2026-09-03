@@ -5,7 +5,7 @@ them read-only, and nobody edits them in the UI. Nothing else notices when one
 rots — a panel that references a renamed metric renders an empty graph, not an
 error — so this gate runs in ``just source-check``.
 
-It enforces four things:
+It enforces five things:
 
 1. every dashboard parses, carries a ``schemaVersion``, and has a ``uid`` and a
    ``title`` unique across the folder;
@@ -14,7 +14,10 @@ It enforces four things:
 3. every metric named in a PromQL ``expr`` is either in the catalog in
    ``docs/observability.md`` or in the exporter/collector allowlist below;
 4. the provisioning files that make the variable resolvable still exist and
-   still point at the mounted dashboard directory.
+   still point at the mounted dashboard directory;
+5. every PromQL query in the Verification runbook in ``docs/observability.md``
+   names catalogued metrics too — the runbook is how an operator proves the
+   dashboards have data, so a query that can never match is worse than useless.
 
 Run directly (``uv run python scripts/check-dashboards.py``) or import
 ``main()``.
@@ -125,6 +128,9 @@ _LABEL_MATCHER = re.compile(r"\{[^{}]*\}")
 _OFFSET_CLAUSE = re.compile(r"\boffset\s+[\w.]+")
 _IDENTIFIER = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 _CATALOG_NAME = re.compile(r"^`([a-z_][a-z0-9_]*)`$")
+# The runbook issues each query as `curl -sG ... --data-urlencode 'query=<promql>'`,
+# so the PromQL is exactly what sits between the single quotes.
+_RUNBOOK_QUERY = re.compile(r"--data-urlencode\s+'query=([^']*)'")
 
 
 def _display(path: Path) -> str:
@@ -185,6 +191,31 @@ def load_catalog(catalog_file: Path | None = None) -> set[str]:
 
     derived = {name + suffix for name in names for suffix in DERIVED_SUFFIXES}
     return names | derived
+
+
+def load_runbook_queries(catalog_file: Path | None = None) -> list[str]:
+    """Return the PromQL expressions the Verification runbook tells an operator to run.
+
+    They are the ``--data-urlencode 'query=…'`` arguments of the ``curl`` calls in
+    the runbook's fenced shell blocks. Order is preserved so a failure can name
+    the offending query by position as well as by text.
+    """
+    path = catalog_file if catalog_file is not None else CATALOG_FILE
+    return [match.group(1).strip() for match in _RUNBOOK_QUERY.finditer(path.read_text(encoding="utf-8"))]
+
+
+def check_runbook(allowed_metrics: set[str], catalog_file: Path | None = None) -> list[str]:
+    """Validate the runbook's queries against the same metric names a dashboard may use."""
+    queries = load_runbook_queries(catalog_file)
+    if not queries:
+        return ["docs/observability.md: the Verification runbook names no PromQL queries"]
+
+    problems: list[str] = []
+    for query in queries:
+        for metric in sorted(extract_metric_names(query)):
+            if metric not in allowed_metrics:
+                problems.append(f"runbook: metric {metric!r} is not in the catalog or the exporter allowlist ({query})")
+    return problems
 
 
 def _walk(node: Any) -> Any:
@@ -272,6 +303,7 @@ def main() -> int:
         problems.append(f"no dashboards found in {_display(DASHBOARD_DIR)}")
 
     allowed_metrics = load_catalog() | EXPORTER_METRICS
+    problems.extend(check_runbook(allowed_metrics))
 
     seen_uids: dict[str, str] = {}
     seen_titles: dict[str, str] = {}
@@ -302,7 +334,10 @@ def main() -> int:
             print(f"  - {problem}")
         return 1
 
-    print(f"Dashboard check passed: {len(dashboard_files)} dashboards, {len(allowed_metrics)} allowed metric names.")
+    print(
+        f"Dashboard check passed: {len(dashboard_files)} dashboards, "
+        f"{len(load_runbook_queries())} runbook queries, {len(allowed_metrics)} allowed metric names."
+    )
     return 0
 
 
