@@ -33,6 +33,16 @@ secrets:
   # isn't set — see discogsography-q31w.
   insights_internal_secret:
     file: ./secrets/insights_internal_secret.txt
+  # Grafana admin login. Anonymous access is disabled in prod, so this is the
+  # only way into the dashboards.
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+
+# Production telemetry: identical transport, different environment tag. The
+# base file's OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME carry over
+# unchanged; only the resource attributes are re-stamped.
+x-otel-prod-env: &otel-prod-env
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=prod"
 
 services:
   rabbitmq:
@@ -217,8 +227,53 @@ services:
       retries: 5
       start_period: 10s
 
+  # The exporters read the same credentials as the application services, via
+  # the same file-backed secrets. postgres_exporter and redis_exporter both
+  # prefer the *_FILE variant when it is set; the plain values are unset here
+  # anyway so a stale dev credential cannot win.
+  postgres-exporter:
+    restart: always
+    environment:
+      DATA_SOURCE_PASS:  # unset base value so _FILE takes effect
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_password
+      DATA_SOURCE_USER:  # unset base value so _FILE takes effect
+      DATA_SOURCE_USER_FILE: /run/secrets/postgres_username
+    secrets:
+      - postgres_username
+      - postgres_password
+
+  redis-exporter:
+    restart: always
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+    secrets:
+      - redis_password
+
+  # The base file publishes 9090 on 0.0.0.0 for local PromQL work. Prometheus
+  # has no authentication of its own and its API can delete series, so in prod
+  # it is bound to loopback and reached through Grafana (or an SSH tunnel).
+  # `!override` fully replaces (not merges) the base publish.
+  prometheus:
+    restart: always
+    ports: !override
+      - "127.0.0.1:9090:9090"
+
+  otel-collector:
+    restart: always
+
+  grafana:
+    restart: always
+    environment:
+      # Anonymous Viewer access is a dev-only convenience.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD:  # unset base value so __FILE takes effect
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+    secrets:
+      - grafana_admin_password
+
   schema-init:
     environment:
+      <<: *otel-prod-env
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
@@ -230,6 +285,7 @@ services:
   api:
     restart: always
     environment:
+      <<: *otel-prod-env
       # REQUIRED in production: the public origin of the Explore frontend.
       # Password reset emails embed this as an absolute link, so the localhost
       # default would mail every recipient a link to their own machine.
@@ -273,6 +329,7 @@ services:
   extractor-discogs:
     restart: always
     environment:
+      <<: *otel-prod-env
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
       RABBITMQ_USERNAME_FILE: /run/secrets/rabbitmq_username
     secrets:
@@ -288,6 +345,7 @@ services:
   extractor-musicbrainz:
     restart: always
     environment:
+      <<: *otel-prod-env
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
       RABBITMQ_USERNAME_FILE: /run/secrets/rabbitmq_username
     secrets:
@@ -303,6 +361,7 @@ services:
   graphinator:
     restart: always
     environment:
+      <<: *otel-prod-env
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
       RABBITMQ_USERNAME_FILE: /run/secrets/rabbitmq_username
@@ -319,6 +378,7 @@ services:
   tableinator:
     restart: always
     environment:
+      <<: *otel-prod-env
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
@@ -337,6 +397,7 @@ services:
   brainzgraphinator:
     restart: always
     environment:
+      <<: *otel-prod-env
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
       RABBITMQ_USERNAME_FILE: /run/secrets/rabbitmq_username
@@ -353,6 +414,7 @@ services:
   brainztableinator:
     restart: always
     environment:
+      <<: *otel-prod-env
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
       RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
@@ -371,6 +433,7 @@ services:
   dashboard:
     restart: always
     environment:
+      <<: *otel-prod-env
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
@@ -391,6 +454,8 @@ services:
         max_attempts: 3
 
   explore:
+    environment:
+      <<: *otel-prod-env
     restart: always
     deploy:
       restart_policy:
@@ -401,6 +466,7 @@ services:
   insights:
     restart: always
     environment:
+      <<: *otel-prod-env
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
       REDIS_PASSWORD_FILE: /run/secrets/redis_password

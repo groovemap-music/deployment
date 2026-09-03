@@ -12,6 +12,7 @@
 
 - [Maintenance](maintenance.md)
 - [Monitoring](monitoring.md)
+- [Observability](observability.md)
 - [Database resilience](database-resilience.md)
 - [Docker security](docker-security.md)
 - [Dockerfile standards](dockerfile-standards.md)

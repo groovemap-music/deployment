@@ -1,0 +1,24 @@
+---
+
+# Grafana datasource provisioning. The uid is fixed at `prometheus` because
+# dashboards resolve it through the ${DS_PROMETHEUS} variable — a generated uid
+# would break every panel on a rebuild.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    # Datasources are code. Editing this one in the UI would drift from the
+    # repository and be silently reverted on the next restart.
+    editable: false
+    jsonData:
+      httpMethod: POST
+      # Matches the collector's export interval and the infrastructure scrape
+      # interval, so $__rate_interval resolves to something sane by default.
+      timeInterval: 15s
+      manageAlerts: false
