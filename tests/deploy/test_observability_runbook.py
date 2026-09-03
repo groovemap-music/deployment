@@ -214,3 +214,83 @@ class TestRunbookRecordsTheKnownTraps:
     def test_empty_panels_without_workload_are_explained(self) -> None:
         section = _verification_section()
         assert "empty" in section.lower()
+
+
+class TestFirstExecutionRecord:
+    """The dated evidence from the first run, and what that run never proved.
+
+    The point of pinning this is the honesty of the negative list. Partial
+    evidence written down without its gaps reads as a pass, and the next
+    operator inherits a false belief that the pipeline is verified end to end.
+    """
+
+    SECTION_HEADING = "### First execution, 2026-09-03"
+
+    def _record(self) -> str:
+        section = _verification_section()
+        return section[section.index(self.SECTION_HEADING) :]
+
+    def test_the_record_exists_inside_the_verification_section(self) -> None:
+        assert self.SECTION_HEADING in _verification_section()
+
+    def test_every_built_repository_is_recorded_with_a_commit(self) -> None:
+        record = self._record()
+        for repository, commit in (
+            ("database-schema", "c201562"),
+            ("catalog-api", "1b742a4"),
+            ("graph-explorer", "3078603"),
+            ("analytics-engine", "787c836"),
+            ("operations-console", "ca364dc"),
+            ("discogs-sql-loader", "fa52a26"),
+            ("musicbrainz-sql-loader", "8134b8d"),
+            ("musicbrainz-graph-enricher", "d9984ea"),
+            ("discogs-ingestion", "e1ddf7e"),
+            ("musicbrainz-ingestion", "9a0caee"),
+        ):
+            assert f"`{repository}`" in record, f"{repository} is missing from the image table"
+            assert f"`{commit}`" in record, f"{repository} is recorded without commit {commit}"
+
+    def test_the_observed_service_names_are_recorded(self) -> None:
+        record = self._record()
+        for service in (
+            "api",
+            "brainzgraphinator",
+            "brainztableinator",
+            "dashboard",
+            "explore",
+            "extractor-discogs",
+            "extractor-musicbrainz",
+            "insights",
+            "schema-init",
+            "tableinator",
+        ):
+            assert f"`{service}`" in record, f"{service} is missing from the observed roll call"
+
+    def test_the_confirmed_proxy_duration_series_is_recorded(self) -> None:
+        assert "groovemap_explore_proxy_duration_seconds" in self._record()
+
+    def test_the_unverified_list_is_present_and_names_all_four_gaps(self) -> None:
+        record = self._record()
+        assert "Not verified in this run" in record
+        assert "/api/search" in record
+        assert "graphinator" in record
+        assert "mcp-server" in record
+        assert "clean pass" in record
+
+    def test_the_cause_of_the_interruption_is_recorded(self) -> None:
+        """A gap without its cause invites someone to assume it was a flake."""
+        record = self._record()
+        assert "host volume filled" in record
+        assert "ext4" in record
+
+    def test_the_silent_no_op_exporter_failure_is_recorded(self) -> None:
+        """discogs-sql-loader 1f9af11 shipped without the OTEL SDK and exported nothing."""
+        record = self._record()
+        assert "`1f9af11`" in record
+        assert "no-op" in record
+
+    def test_the_record_claims_no_dashboard_it_did_not_check(self) -> None:
+        """Grafana was never confirmed through the API, so the record must not say it was."""
+        record = self._record()
+        assert "Unauthorized" in record
+        assert "never confirmed" in record
