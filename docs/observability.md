@@ -524,6 +524,90 @@ docker compose down -v
 `-v` removes the volumes this run created, including `prometheus_data` and
 `grafana_data`. Leave it off to keep the collected series for a second look.
 
+### First execution, 2026-09-03
+
+The runbook above was executed once against locally built images. This record
+exists so the next operator knows what a good result looks like, and which
+steps have never been executed successfully. Replace it after the first run
+against released, digest-pinned images.
+
+**Images.** Built from each repository's `main` at the commit shown, and fed to
+compose through a local, uncommitted `.env`. No digest, `.env`, or image
+reference from that run is committed here.
+
+| Repository | Commit | Compose service |
+| --- | --- | --- |
+| `database-schema` | `c201562` | `schema-init` |
+| `catalog-api` | `1b742a4` | `api` |
+| `graph-explorer` | `3078603` | `explore` |
+| `analytics-engine` | `787c836` | `insights` |
+| `operations-console` | `ca364dc` | `dashboard` |
+| `discogs-sql-loader` | `fa52a26` | `tableinator` |
+| `musicbrainz-sql-loader` | `8134b8d` | `brainztableinator` |
+| `musicbrainz-graph-enricher` | `d9984ea` | `brainzgraphinator` |
+| `discogs-ingestion` | `e1ddf7e` | `extractor-discogs` |
+| `musicbrainz-ingestion` | `9a0caee` | `extractor-musicbrainz` |
+
+`discogs-sql-loader` is pinned at `fa52a26` deliberately. Its previous `main`,
+`1f9af11`, installed the runtime wheel as `[postgres,rabbitmq]` and shipped an
+image with no OTEL SDK at all. That image started normally, logged one warning,
+installed the no-op `MeterProvider`, and exported nothing — the exact silent
+failure step 4 is designed to catch, and a good argument for reading the
+`service_name` roll call rather than trusting a green `docker compose ps`.
+
+Both extractors ran their own repository's image with the compose `--source`
+argument removed; neither binary accepts it any more.
+
+**`service_name` values observed.** Fourteen, from step 4. Pushed by services:
+`api`, `brainzgraphinator`, `brainztableinator`, `dashboard`, `explore`,
+`extractor-discogs`, `extractor-musicbrainz`, `insights`, `schema-init`,
+`tableinator`. From the scrape jobs: `otelcol-contrib`, `postgres-exporter`,
+`rabbitmq`, `redis-exporter`. Ten of the eleven wired services exported.
+`schema-init` appearing at all is the evidence that the one-shot flush on exit
+works.
+
+`groovemap.explore.proxy.duration` arrived as
+`groovemap_explore_proxy_duration_seconds` with its `_bucket`, `_sum`, and
+`_count` series, which is what the new API-services panel charts.
+
+**Panels with data**, from running every panel's first query over the run
+window:
+
+| Dashboard | Panels returning series |
+| --- | ---: |
+| Infrastructure | 16 of 20 |
+| API services | 9 of 15 |
+| Consumers | 4 of 10 |
+| Pipeline overview | 4 of 10 |
+| Ingestion | 1 of 8 |
+
+**Why each panel was empty.** Every one is missing workload, not a wrong metric
+name. No dump file was processed and no message crossed the broker, which
+accounts for all six consumer panels, seven of the eight ingestion panels, and
+the six pipeline-overview panels that count processed, failed, or published
+records. On API services, the sync, NLQ, and websocket panels need API calls
+nobody made, the error-rate panel needs a 5xx nobody provoked, and the two MCP
+panels can never fill from this stack because `mcp-server` is not a compose
+service. On infrastructure, the three PostgreSQL rate panels and the RabbitMQ
+publish rate were empty only because those exporters had fewer than two samples
+in the window — the underlying counters were present.
+
+**Not verified in this run.** The host volume filled during the run, which
+damaged the Docker VM's data filesystem: ext4 aborted its journal, reads began
+returning `EIO`, and `docker images`, `docker logs`, `docker exec`, and
+container removal all stopped working. These four items were never completed
+and must not be read as passing.
+
+| Item | Why |
+| --- | --- |
+| Step 6, the Grafana `/api/search` listing | Grafana could not read its own database on the damaged volume and returned `Unauthorized` to both anonymous and credentialed requests. The five dashboards were never confirmed present through the API. |
+| One clean pass of steps 1 through 7 | The run was interrupted partway. The evidence above is real but was assembled across a degraded stack, and step 7 could stop containers without removing them. |
+| `graphinator` | `discogs-graph-enricher` landed its telemetry at `9cd4303`, after the build set for this run was taken. It was the one wired service with no telemetry at build time and did not export. |
+| `mcp-server` | Not a compose service, so this stack cannot exercise it at all. Its telemetry landed at `511845d`. |
+
+Re-running the whole runbook is the way to close these; there is no shortcut
+that turns the partial evidence into a pass.
+
 ## Rollout
 
 The program rolls out in three stages, which are cross-hive and therefore not
