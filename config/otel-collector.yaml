@@ -1,0 +1,94 @@
+---
+
+# OpenTelemetry Collector (contrib) configuration for the GrooveMap stack.
+#
+# Every GrooveMap service PUSHES metrics here over OTLP; nothing scrapes the
+# application services. HTTP/protobuf on 4318 is the organisation standard
+# (no native gRPC dependency, works for one-shot jobs and stdio processes).
+# The gRPC receiver on 4317 stays enabled for future use.
+#
+# The collector remote-writes every series to Prometheus, which runs purely as
+# a remote-write receiver — see config/prometheus.yml.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Infrastructure has no OTLP support, so the collector scrapes the exporters
+  # on Prometheus' behalf and folds the result into the same pipeline. Job names
+  # match the docker-compose service keys, which is what dashboards filter on.
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: rabbitmq
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["rabbitmq:15692"]
+        - job_name: postgres-exporter
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["postgres-exporter:9187"]
+        - job_name: redis-exporter
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["redis-exporter:9121"]
+        - job_name: otel-collector
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["otel-collector:8888"]
+
+processors:
+  # memory_limiter must be the FIRST processor in the pipeline so back-pressure
+  # is applied before batching allocates.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+  batch:
+    timeout: 10s
+    send_batch_size: 8192
+    send_batch_max_size: 16384
+
+exporters:
+  prometheusremotewrite:
+    http:
+      endpoint: http://prometheus:9090/api/v1/write
+      tls:
+        # Plain HTTP over the internal `groovemap` bridge network. The exporter
+        # enables TLS by default, so this must be set explicitly.
+        insecure: true
+    # Promote OTEL resource attributes (service.name, service.namespace,
+    # deployment.environment.name, service.version) to Prometheus labels.
+    resource_to_telemetry_conversion:
+      enabled: true
+
+extensions:
+  # Liveness endpoint for operators and for `docker compose exec`-free probing
+  # from another container: http://otel-collector:13133/. The container's own
+  # healthcheck cannot use it — the image is distroless and ships no HTTP
+  # client — so the healthcheck re-validates the config instead.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                # Bind to all interfaces: the collector's own prometheus
+                # receiver scrapes this endpoint by its compose hostname.
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]

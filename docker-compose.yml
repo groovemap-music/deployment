@@ -10,6 +10,21 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# Telemetry wiring shared by every internal-image service. Only the standard
+# OTEL SDK variables are used — there are no GrooveMap-specific telemetry knobs.
+# OTEL_SERVICE_NAME is set per service to its compose key and so stays out of
+# this anchor. See docs/observability.md.
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=dev"
+
+# service_started, never service_healthy: telemetry must never be able to block
+# an application from starting. A service that boots before the collector is
+# ready simply drops its first export interval.
+x-otel-depends-on: &otel-depends-on
+  otel-collector:
+    condition: service_started
+
 networks:
   groovemap:
     driver: bridge
@@ -37,15 +52,22 @@ services:
       # dashboard can display queue depths, publish rates, and ack rates.
       # Raise max_message_size to 128 MB (default 16 MB) for large MusicBrainz
       # records such as "Various Artists" that can exceed 50 MB.
+      # return_per_object_metrics exposes per-queue series on :15692. Without it
+      # rabbitmq_prometheus only emits node aggregates, and the per-queue depth
+      # and consumer-count panels have nothing to plot. GrooveMap runs a handful
+      # of queues, so the cardinality this adds is negligible.
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
         -rabbit log_levels [{connection,error},{default,warning}]
         -rabbit max_message_size 134217728
         -rabbitmq_management disable_management_stats false
+        -rabbitmq_prometheus return_per_object_metrics true
     ports:
       - "5672:5672"      # AMQP port
       - "15672:15672"    # Management UI
+      # 15692 (rabbitmq_prometheus) stays internal — otel-collector scrapes it.
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
     networks:
       groovemap:
         aliases:
@@ -174,6 +196,172 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # PostgreSQL metrics exporter. PostgreSQL speaks no OTLP, so otel-collector
+  # scrapes this on :9187. Not published to the host — it exposes server
+  # internals and has no authentication of its own.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    container_name: groovemap-postgres-exporter
+    hostname: postgres-exporter
+    environment:
+      DATA_SOURCE_PASS: groovemap
+      DATA_SOURCE_URI: "postgres:5432/groovemap?sslmode=disable"
+      DATA_SOURCE_USER: groovemap
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - groovemap
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9187/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
+  # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.90.0@sha256:a129504e65b87c54f79bc92f1afc403475e8ff646a3d7512de469904ceddf986
+    container_name: groovemap-redis-exporter
+    hostname: redis-exporter
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - groovemap
+    # No healthcheck: the image is distroless and ships neither a shell nor an
+    # HTTP client, so no probe can run inside it. A failed exporter shows up as
+    # a stale `redis-exporter` scrape job on the infrastructure dashboard.
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
+  # Prometheus — remote-write receiver and the single metrics store. It scrapes
+  # nothing itself; otel-collector owns all collection and remote-writes here.
+  prometheus:
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    container_name: groovemap-prometheus
+    hostname: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      # Accept OTLP-derived series pushed by otel-collector.
+      - "--web.enable-remote-write-receiver"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"    # Prometheus UI and API (loopback-only in prod)
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      groovemap:
+        aliases:
+          - metrics-store
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
+  # OpenTelemetry collector — the single ingest point for application metrics.
+  # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
+    container_name: groovemap-otel-collector
+    hostname: otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # 4317 (gRPC), 4318 (HTTP), 8888 (self-metrics) and 13133 (health) stay on
+    # the internal network — no host publication.
+    volumes:
+      - ./config/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      groovemap:
+        aliases:
+          - otel
+    # The image is distroless (no shell, no HTTP client), so the probe cannot
+    # call the health_check extension on :13133. Re-parsing the mounted config
+    # with the collector's own binary still proves the container is alive and
+    # its configuration is loadable; :13133 is the operator-facing liveness
+    # endpoint, reachable from any other container on the network.
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Grafana — dashboards are provisioned as code from config/grafana and are
+  # never edited in the UI. Dev enables anonymous Viewer access; the production
+  # overlay disables it and sources the admin password from a Docker secret.
+  grafana:
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    container_name: groovemap-grafana
+    hostname: grafana
+    environment:
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_SECURITY_ADMIN_PASSWORD: groovemap
+      GF_SECURITY_ADMIN_USER: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      groovemap:
+        aliases:
+          - dashboards
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
   # Schema initializer — one-shot service that creates all Neo4j and PostgreSQL
   # schema before any other service starts.  Docker Compose waits for it to exit
   # successfully (service_completed_successfully) before starting dependents.
@@ -183,6 +371,8 @@ services:
     hostname: schema-init
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: schema-init
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
       NEO4J_PASSWORD: groovemap
@@ -195,6 +385,7 @@ services:
     volumes:
       - schema_init_logs:/logs
     depends_on:
+      <<: *otel-depends-on
       postgres:
         condition: service_healthy
       neo4j:
@@ -218,6 +409,8 @@ services:
     hostname: api
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: api
       # Public origin of the Explore frontend — used to build absolute links in
       # outbound email. Must be reachable from the recipient's mail client.
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8006}"
@@ -263,6 +456,7 @@ services:
       - discogs_data:/discogs-data:ro
       - musicbrainz_data:/musicbrainz-data:ro
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       postgres:
@@ -303,6 +497,8 @@ services:
     command: ["--source", "discogs"]
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: extractor-discogs
       DISCOGS_ROOT: /discogs-data
       FORCE_REPROCESS: "false"
       LOG_LEVEL: info
@@ -316,6 +512,7 @@ services:
       - extractor_discogs_logs:/logs
       - ./config/extraction-rules.yaml:/config/extraction-rules.yaml:ro
     depends_on:
+      <<: *otel-depends-on
       rabbitmq:
         condition: service_healthy
     networks:
@@ -341,6 +538,8 @@ services:
     command: ["--source", "musicbrainz"]
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: extractor-musicbrainz
       DISCOGS_HEALTH_URL: "http://extractor-discogs:8000/health"
       LOG_LEVEL: info
       MUSICBRAINZ_ROOT: /musicbrainz-data
@@ -352,6 +551,7 @@ services:
       - musicbrainz_data:/musicbrainz-data
       - extractor_musicbrainz_logs:/logs
     depends_on:
+      <<: *otel-depends-on
       rabbitmq:
         condition: service_healthy
     networks:
@@ -376,6 +576,8 @@ services:
     hostname: graphinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: graphinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
       NEO4J_BATCH_FLUSH_INTERVAL: "2.0"  # Reduced from 5.0 for faster flushing
@@ -391,6 +593,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "15"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -425,6 +628,8 @@ services:
     hostname: brainzgraphinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: brainzgraphinator
       CONSUMER_CANCEL_DELAY: "300"
       LOG_LEVEL: INFO
       NEO4J_BATCH_FLUSH_INTERVAL: "2.0"
@@ -440,6 +645,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -474,6 +680,8 @@ services:
     hostname: tableinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: tableinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
       POSTGRES_BATCH_FLUSH_INTERVAL: "2.0"  # Reduced from 5.0 for faster flushing
@@ -490,6 +698,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -524,6 +733,8 @@ services:
     hostname: brainztableinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: brainztableinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
       POSTGRES_BATCH_FLUSH_INTERVAL: "2.0"  # Reduced from 5.0 for faster flushing
@@ -540,6 +751,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "25"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -574,6 +786,8 @@ services:
     hostname: dashboard
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: dashboard
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
       NEO4J_PASSWORD: groovemap
@@ -593,6 +807,7 @@ services:
     ports:
       - "8003:8003"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -634,10 +849,13 @@ services:
     hostname: explore
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: explore
       API_BASE_URL: "http://api:8004"
       LOG_LEVEL: INFO
       PYTHONUNBUFFERED: "1"
     depends_on:
+      <<: *otel-depends-on
       schema-init:
         condition: service_completed_successfully
       api:
@@ -673,6 +891,8 @@ services:
     hostname: insights
     user: "${UID:-1000}:${GID:-1000}"
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: insights
       API_BASE_URL: "http://api:8004"
       INSIGHTS_SCHEDULE_HOURS: "24"
       LOG_LEVEL: INFO
@@ -688,6 +908,7 @@ services:
       INSIGHTS_INTERNAL_SECRET: "${INSIGHTS_INTERNAL_SECRET:-dev-internal-insights-secret-change-in-production}"
       # INSIGHTS_MILESTONE_YEARS: "25,30,40,50,75,100"
     depends_on:
+      <<: *otel-depends-on
       api:
         condition: service_healthy
       schema-init:
@@ -738,3 +959,5 @@ volumes:
   brainztableinator_logs:
   insights_logs:
   musicbrainz_data:
+  prometheus_data:
+  grafana_data:

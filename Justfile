@@ -10,6 +10,7 @@ source-check:
     uvx --from ruff==0.16.4 ruff format --check .
     uvx --from ruff==0.16.4 ruff check .
     uv run python scripts/check-images.py
+    uv run python scripts/check-dashboards.py
     uv run python scripts/check-licenses.py
     uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"
     bash scripts/check-compose.sh

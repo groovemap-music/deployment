@@ -1,0 +1,22 @@
+---
+
+# Dashboard provisioning. Every dashboard in config/grafana/dashboards is
+# loaded into the "GrooveMap" folder from the read-only mount at
+# /var/lib/grafana/dashboards. Dashboards are code: they are authored in the
+# repository, validated by scripts/check-dashboards.py, and never edited in the
+# Grafana UI.
+
+apiVersion: 1
+
+providers:
+  - name: groovemap
+    orgId: 1
+    folder: GrooveMap
+    type: file
+    # Removing a JSON file from the repository must remove the dashboard.
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
