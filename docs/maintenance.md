@@ -156,10 +156,11 @@ expected duration, validation query, and rollback. CI never invokes mutation.
 
 ## Promoted extraction rules
 
-`catalog-ingestion` owns the editable extraction rules. Deployment carries the
-runtime copy and `config/provenance.json`, which records the producer commit and
-source/promoted hashes. Update them together from a reviewed producer commit;
-`scripts/check-images.py` rejects a mismatched promoted hash.
+`discogs-ingestion` owns the editable extraction rules. ADR 0005 assigned this
+ownership to it, retiring the combined `catalog-ingestion` repository. Deployment
+carries the runtime copy and `config/provenance.json`, which records the producer
+commit and source/promoted hashes. Update them together from a reviewed producer
+commit; `scripts/check-images.py` rejects a mismatched promoted hash.
 
 ## Environment changes
 
