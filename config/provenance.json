@@ -5,5 +5,19 @@
     "promoted_sha256": "442ccaffd50ed5572eb8b06e7ec7a9e5e021a4867be4745b478261a0dea330c8",
     "source_path": "extraction-rules.yaml",
     "source_sha256": "165446fe9c017a916655f1de1e0ed1acfb13b329db2c33a88402e54ae67de596"
+  },
+  "media-smoke/discogs-releases.data.json": {
+    "owner": "groovemap-music/discogs-ingestion",
+    "producer_commit": "e0d4d0271738ced4547e1410f86cb71f0228c700",
+    "promoted_sha256": "3778573004542c59ddcf2f47feab4228c34b13b6cdea01b11ef26d49b232928f",
+    "source_path": "contracts/catalog-events/v1/fixtures/discogs-releases.data.json",
+    "source_sha256": "3778573004542c59ddcf2f47feab4228c34b13b6cdea01b11ef26d49b232928f"
+  },
+  "media-smoke/musicbrainz-releases.data.json": {
+    "owner": "groovemap-music/musicbrainz-ingestion",
+    "producer_commit": "080fc14fca925e5c3c2ca4bb6bcf91dd8c047c11",
+    "promoted_sha256": "bb2665d180d83bd02c2cad1cb2d1f29764d18e69de82f616929cc410a45cf240",
+    "source_path": "contracts/catalog-events/v1/fixtures/musicbrainz-releases.data.json",
+    "source_sha256": "bb2665d180d83bd02c2cad1cb2d1f29764d18e69de82f616929cc410a45cf240"
   }
 }

@@ -13,7 +13,8 @@ released image into the stack.
 | --- | --- | --- |
 | `schema-init` | [`database-schema`](https://github.com/groovemap-music/database-schema) | `DATABASE_SCHEMA_IMAGE` |
 | `api` | [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `CATALOG_API_IMAGE` |
-| `extractor-discogs`, `extractor-musicbrainz` | [`catalog-ingestion`](https://github.com/groovemap-music/catalog-ingestion) | `CATALOG_INGESTION_IMAGE` |
+| `extractor-discogs` | [`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) | `DISCOGS_INGESTION_IMAGE` |
+| `extractor-musicbrainz` | [`musicbrainz-ingestion`](https://github.com/groovemap-music/musicbrainz-ingestion) | `MUSICBRAINZ_INGESTION_IMAGE` |
 | `graphinator` | [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `DISCOGS_GRAPH_ENRICHER_IMAGE` |
 | `brainzgraphinator` | [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` |
 | `tableinator` | [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `DISCOGS_SQL_LOADER_IMAGE` |

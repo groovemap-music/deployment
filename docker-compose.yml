@@ -489,12 +489,12 @@ services:
     tmpfs:
       - /tmp
 
-  # Rust-based extractor service for Discogs data
+  # Rust-based extractor service for Discogs data. Source-owned image from the
+  # discogs-ingestion repository (ADR 0005); its entrypoint takes no source flag.
   extractor-discogs:
-    image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
+    image: "${DISCOGS_INGESTION_IMAGE:?Set DISCOGS_INGESTION_IMAGE to a digest-pinned discogs-ingestion image}"
     container_name: groovemap-extractor-discogs
     hostname: extractor-discogs
-    command: ["--source", "discogs"]
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       <<: *otel-env
@@ -530,17 +530,17 @@ services:
     cap_drop:
       - ALL
 
-  # Rust-based extractor service for MusicBrainz data
+  # Rust-based extractor service for MusicBrainz data. Source-owned image from the
+  # musicbrainz-ingestion repository (ADR 0005); its entrypoint takes no source flag.
+  # It ingests concurrently with Discogs: no cross-container health poll or ordering.
   extractor-musicbrainz:
-    image: "${CATALOG_INGESTION_IMAGE:?Set CATALOG_INGESTION_IMAGE to a digest-pinned catalog-ingestion image}"
+    image: "${MUSICBRAINZ_INGESTION_IMAGE:?Set MUSICBRAINZ_INGESTION_IMAGE to a digest-pinned musicbrainz-ingestion image}"
     container_name: groovemap-extractor-musicbrainz
     hostname: extractor-musicbrainz
-    command: ["--source", "musicbrainz"]
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: extractor-musicbrainz
-      DISCOGS_HEALTH_URL: "http://extractor-discogs:8000/health"
       LOG_LEVEL: info
       MUSICBRAINZ_ROOT: /musicbrainz-data
       PERIODIC_CHECK_DAYS: "3"

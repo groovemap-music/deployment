@@ -1,0 +1,53 @@
+{
+  "id": "contract-musicbrainz-releases",
+  "media": {
+    "container": null,
+    "edition": [],
+    "families": [
+      "vinyl"
+    ],
+    "flags": [],
+    "items": [
+      {
+        "appearance": [],
+        "channels": null,
+        "codec": null,
+        "family": "vinyl",
+        "medium": "vinyl_12",
+        "position": 1,
+        "qty": 1,
+        "size_inches": 12,
+        "source": {
+          "descriptions": [],
+          "name": "12\" Vinyl",
+          "provider": "musicbrainz",
+          "text": null
+        },
+        "speed_rpm": null,
+        "track_count": 9,
+        "variants": []
+      }
+    ],
+    "packaging": null,
+    "release_kind": null,
+    "taxonomy_version": "1",
+    "traits": [],
+    "unmapped": {
+      "descriptions": [],
+      "formats": []
+    }
+  },
+  "media_raw": [
+    {
+      "format": "12\" Vinyl",
+      "format_id": null,
+      "position": 1,
+      "title": "",
+      "track_count": 9
+    }
+  ],
+  "name": "Contract Release",
+  "sha256": "",
+  "status": "Official",
+  "type": "data"
+}

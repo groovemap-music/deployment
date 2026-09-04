@@ -1,0 +1,66 @@
+---
+
+# Disposable overlay for the ADR 0007 canonical-media assertion (`just smoke-media`).
+#
+# The run injects the producers' promoted contract fixture events instead of
+# downloading real dumps, so it needs one reachable broker endpoint and nothing
+# else. Everything here exists so the run cannot touch, or be blocked by, an
+# operator's environment: it takes its own Compose project name, its own subnet,
+# Compose's project-scoped container names instead of the fixed ones, and no
+# published port except the RabbitMQ management API on loopback. PostgreSQL and
+# Neo4j stay unpublished; the assertions reach them through `docker compose exec`.
+#
+# The internal images are published for one architecture, so the workstation
+# running the assertion is often not the architecture the services ship for.
+# Naming the platform per service keeps the emulation confined to them and lets
+# the broker and both stores stay native. Set SMOKE_MEDIA_SERVICE_PLATFORM to
+# the architecture an environment actually promotes.
+x-service-platform: &service-platform "${SMOKE_MEDIA_SERVICE_PLATFORM:-linux/amd64}"
+
+services:
+  rabbitmq:
+    container_name: !reset null
+    ports: !override
+      - "127.0.0.1:${SMOKE_MEDIA_RABBITMQ_PORT:-15673}:15672"
+  postgres:
+    container_name: !reset null
+    ports: !override []
+  neo4j:
+    container_name: !reset null
+    ports: !override []
+  redis:
+    container_name: !reset null
+    ports: !override []
+  # The telemetry pair the internal services depend on. Compose starts them with
+  # the stack even though the assertion never reads a metric.
+  prometheus:
+    container_name: !reset null
+    ports: !override []
+  otel-collector:
+    container_name: !reset null
+    ports: !override []
+  schema-init:
+    container_name: !reset null
+    platform: *service-platform
+  tableinator:
+    container_name: !reset null
+    platform: *service-platform
+  brainztableinator:
+    container_name: !reset null
+    platform: *service-platform
+  graphinator:
+    container_name: !reset null
+    platform: *service-platform
+  brainzgraphinator:
+    container_name: !reset null
+    platform: *service-platform
+
+# The base network pins a fixed subnet so operators can reason about container
+# addresses. A smoke run under its own project name would ask for that same
+# subnet and be refused while an operator's stack network still holds it, so the
+# disposable run takes its own range.
+networks:
+  groovemap:
+    ipam: !override
+      config:
+        - subnet: "${SMOKE_MEDIA_SUBNET:-172.31.0.0/16}"

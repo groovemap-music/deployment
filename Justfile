@@ -46,6 +46,12 @@ smoke:
     docker compose up -d --wait
     docker compose ps
 
+# Starts a disposable stack under its own project name, publishes the producers' promoted
+# contract fixtures, and destroys the stack and its volumes on exit.
+# Requires approved, real digest-pinned .env images; asserts the ADR 0007 media block end to end.
+smoke-media:
+    bash scripts/smoke-media.sh
+
 # Credential-free infrastructure smoke; uses validation-only service image
 # values because Compose resolves all variables before selecting services.
 smoke-infra:
