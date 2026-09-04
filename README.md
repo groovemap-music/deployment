@@ -71,8 +71,9 @@ affected-record count, and rollback procedure. `just check` and CI never invoke 
 
 - Internal service images are required, digest-pinned inputs.
 - Database, broker, and cache images are pinned to registry manifest digests.
-- `catalog-ingestion` owns the editable extraction rules; this repository owns
-  the promoted runtime copy and records producer provenance in
+- `discogs-ingestion` owns the editable extraction rules (ADR 0005 assigned
+  ownership to it, retiring the combined `catalog-ingestion` repository); this
+  repository owns the promoted runtime copy and records producer provenance in
   `config/provenance.json`.
 - Runtime secrets, `.env`, Docker authentication, volumes, and performance
   results are untracked.

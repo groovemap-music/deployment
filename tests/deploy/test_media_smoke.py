@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import itertools
 import json
+import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -95,12 +98,42 @@ class FakeStack:
     def __init__(self, sql: dict[str, str] | None = None, cypher: dict[str, str] | None = None) -> None:
         self._sql = sql or {}
         self._cypher = cypher or {}
+        self.cypher_queries: list[str] = []
 
     def psql(self, sql: str) -> str:
         return self._sql.get(sql, "")
 
     def cypher(self, query: str) -> str:
+        self.cypher_queries.append(query)
         return self._cypher.get(query, "")
+
+
+def discogs_smoke_event() -> Any:
+    """Return the Discogs event the smoke publishes, from the promoted fixture."""
+    return smoke_media.discogs_event(smoke_media.load_fixture("discogs-releases.data.json"))
+
+
+def graph_answers(release_id: str = smoke_media.DISCOGS_RELEASE_ID) -> dict[str, str]:
+    """Return the Cypher answers a stack that persisted this run's write would give."""
+    return {
+        f"MATCH (r:Release {{id: '{release_id}'}}) RETURN r.media_families AS value": '["vinyl"]',
+        "MATCH (f:MediaFamily {name: 'vinyl'}) RETURN count(f) AS value": "1",
+        "MATCH (m:Medium {id: 'vinyl_12'}) RETURN count(m) AS value": "1",
+        "MATCH (:Medium {id: 'vinyl_12'})-[:IN_FAMILY]->(f:MediaFamily) RETURN count(f) AS value": "1",
+        f"MATCH (:Release {{id: '{release_id}'}})-[:ISSUED_ON {{source: 'discogs'}}]->(:Medium {{id: 'vinyl_12'}}) RETURN count(*) AS value": "1",
+    }
+
+
+def store_answers(release_id: str = smoke_media.DISCOGS_RELEASE_ID) -> dict[str, str]:
+    """Return the PostgreSQL answers a stack that persisted this run's write would give.
+
+    These are canned dictionary keys matched against what the probes ask for; nothing here
+    reaches a database.
+    """
+    return {
+        f"SELECT media IS NOT NULL FROM releases WHERE data_id = '{release_id}'": "t",  # noqa: S608
+        f"SELECT media->'families' FROM releases WHERE data_id = '{release_id}'": '["vinyl"]',  # noqa: S608
+    }
 
 
 def test_release_inputs_are_promoted_producer_fixtures_with_recorded_provenance() -> None:
@@ -182,6 +215,80 @@ def test_probes_report_a_missing_row_and_a_wrong_family_list_as_failures() -> No
     wrong = smoke_media.discogs_probes(FakeStack(sql={key: '["optical"]'}), event)[1]()
     assert not wrong.passed
     assert '["optical"]' in wrong.detail and '["vinyl"]' in wrong.detail
+
+
+def test_every_graph_probe_is_scoped_to_an_id_the_event_carries() -> None:
+    event = discogs_smoke_event()
+    stack = FakeStack()
+    for probe in smoke_media.discogs_probes(stack, event):
+        probe()
+
+    assert stack.cypher_queries, "the Discogs probes must ask the graph something"
+    # An unscoped count is answered by whatever a reused volume already held, so a run
+    # whose own write never landed would still report a pass.
+    scoping_ids = {str(event["id"]), *smoke_media.media_families(event), *smoke_media.media_medium_ids(event)}
+    for query in stack.cypher_queries:
+        assert "MATCH (m:Medium) RETURN" not in query, f"unscoped Medium count: {query}"
+        assert "MATCH (f:MediaFamily) RETURN" not in query, f"unscoped MediaFamily count: {query}"
+        assert any(f"'{scope}'" in query for scope in scoping_ids), f"a graph probe named no id from the event: {query}"
+
+    assert "MATCH (m:Medium {id: 'vinyl_12'}) RETURN count(m) AS value" in stack.cypher_queries
+    assert "MATCH (f:MediaFamily {name: 'vinyl'}) RETURN count(f) AS value" in stack.cypher_queries
+
+
+def test_a_reused_volume_holding_only_unrelated_media_fails_the_run() -> None:
+    event = discogs_smoke_event()
+    # A previous, unrelated run left a CD medium and its family behind, and this run wrote
+    # nothing. The old unscoped counts were satisfied by exactly this state.
+    leftovers = {
+        "MATCH (m:Medium) RETURN count(m) AS value": "7",
+        "MATCH (f:MediaFamily) RETURN count(f) AS value": "3",
+        "MATCH (m:Medium {id: 'cd'}) RETURN count(m) AS value": "1",
+    }
+    stack = FakeStack(sql=store_answers(), cypher=leftovers)
+    results = [probe() for probe in smoke_media.discogs_probes(stack, event)]
+
+    assert smoke_media.exit_code(results) == 1
+    failed = {result.name for result in results if not result.passed}
+    assert "neo4j Medium vinyl_12 node" in failed
+    assert "neo4j MediaFamily vinyl node" in failed
+    assert "neo4j Release media_families" in failed
+
+
+def test_every_discogs_probe_passes_when_the_run_actually_wrote() -> None:
+    event = discogs_smoke_event()
+    stack = FakeStack(sql=store_answers(), cypher=graph_answers())
+    results = [probe() for probe in smoke_media.discogs_probes(stack, event)]
+
+    assert smoke_media.exit_code(results) == 0, smoke_media.render(results)
+
+
+def test_graph_release_media_families_must_match_the_event() -> None:
+    event = discogs_smoke_event()
+    query = f"MATCH (r:Release {{id: '{smoke_media.DISCOGS_RELEASE_ID}'}}) RETURN r.media_families AS value"
+
+    def graph_families_probe(answer: str) -> Any:
+        stack = FakeStack(sql=store_answers(), cypher=graph_answers() | {query: answer})
+        by_name = {probe().name: probe() for probe in smoke_media.discogs_probes(stack, event)}
+        return by_name["neo4j Release media_families"]
+
+    assert graph_families_probe('["vinyl"]').passed
+
+    wrong = graph_families_probe('["optical"]')
+    assert not wrong.passed
+    assert '["optical"]' in wrong.detail and '["vinyl"]' in wrong.detail
+
+    # The enricher not having written the property at all is a failure, not an absence the
+    # report can shrug at: it is exactly what a no-write run looks like.
+    missing = graph_families_probe("")
+    assert not missing.passed
+    assert "nothing" in missing.detail
+
+    # A value cypher-shell rendered in some other shape is reported verbatim rather than
+    # crashing the probe on a JSON parse.
+    unparseable = graph_families_probe("[vinyl]")
+    assert not unparseable.passed
+    assert "[vinyl]" in unparseable.detail
 
 
 def test_report_names_every_assertion_and_exits_zero_only_when_all_hold() -> None:
@@ -291,6 +398,93 @@ def test_smoke_script_requires_operator_supplied_digest_pinned_images() -> None:
     assert "@sha256:[0-9a-f]{64}$" in script, "every image variable must be digest-pinned"
     assert "trap cleanup EXIT" in script and "down --volumes --remove-orphans" in script, "the run must destroy its own stack"
     assert "/Users/" not in script and "/home/" not in script, "no host-specific path may be committed"
+
+
+DIGEST_PINNED_IMAGE = "GRAPHINATOR_IMAGE=ghcr.io/groovemap-music/discogs-graph-enricher@sha256:" + "a" * 64
+_RUN_COUNTER = itertools.count()
+
+
+def run_env_gate(tmp_path: Path, env_body: str | None) -> subprocess.CompletedProcess[str]:
+    """Run the smoke script far enough to see its .env gate decide, and no further.
+
+    `docker` is stubbed with a binary that logs its arguments and fails, so a run that
+    reaches the stack at all is distinguishable from one the gate stopped, and neither
+    starts a container.
+    """
+    # Each call gets its own directory: a `None` body must mean the file is absent, even
+    # when an earlier call in the same test already wrote one.
+    tmp_path = tmp_path / f"run-{next(_RUN_COUNTER)}"
+    tmp_path.mkdir()
+
+    docker = tmp_path / "docker"
+    docker_log = tmp_path / "docker.log"
+    docker.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"$DOCKER_LOG"\nexit 1\n')
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "smoke.env"
+    if env_body is not None:
+        env_file.write_text(env_body)
+
+    completed = subprocess.run(
+        ["/bin/bash", str(REPO_ROOT / "scripts" / "smoke-media.sh")],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "DOCKER_LOG": str(docker_log),
+            "SMOKE_MEDIA_ENV_FILE": str(env_file),
+        },
+    )
+    completed.stdout = docker_log.read_text() if docker_log.exists() else ""
+    return completed
+
+
+def test_env_gate_refuses_an_env_that_pins_no_image_at_all(tmp_path: Path) -> None:
+    # The gate is a loop over the *_IMAGE lines. With none present the loop body never
+    # runs, so before this the gate passed having inspected nothing and the assertion went
+    # on to prove whatever images happened to be resolvable.
+    result = run_env_gate(tmp_path, "SMOKE_MEDIA_TIMEOUT=300\n# no image is pinned here\n")
+
+    assert result.returncode == 2
+    assert "declares no *_IMAGE assignment" in result.stderr
+    assert result.stdout == "", "the gate must decide before any container command runs"
+
+
+def test_env_gate_refuses_an_empty_and_a_missing_env_file(tmp_path: Path) -> None:
+    empty = run_env_gate(tmp_path, "")
+    assert empty.returncode == 2
+    assert "declares no *_IMAGE assignment" in empty.stderr
+
+    missing = run_env_gate(tmp_path, None)
+    assert missing.returncode == 2
+    assert "is missing" in missing.stderr
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("REPLACE_WITH_DIGEST", "placeholder"),
+        ("ghcr.io/groovemap-music/discogs-graph-enricher@sha256:" + "1" * 64, "validation.env"),
+        ("ghcr.io/groovemap-music/discogs-graph-enricher:v0.2.0", "manifest digest"),
+    ],
+)
+def test_env_gate_refuses_an_image_that_is_not_an_approved_digest(tmp_path: Path, value: str, expected: str) -> None:
+    result = run_env_gate(tmp_path, f"GRAPHINATOR_IMAGE={value}\n")
+
+    assert result.returncode == 2
+    assert expected in result.stderr
+    assert result.stdout == "", "the gate must decide before any container command runs"
+
+
+def test_env_gate_admits_a_digest_pinned_image(tmp_path: Path) -> None:
+    result = run_env_gate(tmp_path, DIGEST_PINNED_IMAGE + "\n")
+
+    # The stub `docker` fails, so the run still ends non-zero — but it ended at the stack,
+    # not at the gate, which is what proves a valid .env is admitted.
+    assert "smoke-media:" not in result.stderr
+    assert "up -d" in result.stdout
 
 
 def test_testing_guide_documents_the_media_assertion() -> None:

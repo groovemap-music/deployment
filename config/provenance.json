@@ -1,6 +1,6 @@
 {
   "extraction-rules.yaml": {
-    "owner": "groovemap-music/catalog-ingestion",
+    "owner": "groovemap-music/discogs-ingestion",
     "producer_commit": "e7038d1492da54e91444bfa990598e8963972ce2",
     "promoted_sha256": "442ccaffd50ed5572eb8b06e7ec7a9e5e021a4867be4745b478261a0dea330c8",
     "source_path": "extraction-rules.yaml",

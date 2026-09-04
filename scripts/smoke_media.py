@@ -14,10 +14,16 @@ asserts the canonical block survived the whole path:
   match the fixture's block;
 - PostgreSQL `musicbrainz.releases.media` is populated for the MusicBrainz fixture and its
   `families` match the fixture's block;
-- Neo4j carries `Medium` and `MediaFamily` nodes joined by `IN_FAMILY`, and the Discogs
-  release is joined to its medium by `ISSUED_ON {source: 'discogs'}`;
+- Neo4j carries the `Medium` and `MediaFamily` nodes the event names, joined by
+  `IN_FAMILY`, and the Discogs release is joined to its medium by
+  `ISSUED_ON {source: 'discogs'}`;
+- the Discogs release node's `media_families` list property matches the event's families;
 - the MusicBrainz enricher's `ISSUED_ON {source: 'musicbrainz'}` edge reaches the same
   release, which is what proves both catalogs' media reconcile onto one release node.
+
+Every graph assertion is scoped to an id the run's own event carries. An unscoped node
+count would be satisfied by whatever a reused volume already held, so a run that wrote
+nothing at all would still report a pass.
 
 Identity fields are the one thing the fixtures cannot supply as published. The stores
 constrain them: `musicbrainz.releases.mbid` is a UUID, `musicbrainz.releases`
@@ -326,6 +332,29 @@ def _counts(stack: Stack, name: str, query: str, description: str) -> Callable[[
     return probe
 
 
+def _graph_families_match(stack: Stack, name: str, release_id: str, expected: list[str]) -> Callable[[], Check]:
+    """Return a probe asserting the release node's `media_families` matches the event's.
+
+    ADR 0007 gives the release node a `media_families` list property alongside the
+    `ISSUED_ON` edges, so a filter can skip the traversal. The enricher writes it from the
+    same canonical block the SQL loader stores, which makes it the graph-side statement of
+    the fact `releases.media->'families'` already asserts in PostgreSQL.
+    """
+
+    def probe() -> Check:
+        value = stack.cypher(f"MATCH (r:Release {{id: {release_id}}}) RETURN r.media_families AS value")
+        try:
+            actual = json.loads(value) if value else None
+        except json.JSONDecodeError:
+            # cypher-shell renders a list of strings as JSON, so anything else is a value
+            # worth reporting verbatim rather than discarding as a parse failure.
+            actual = value
+        rendered = value if value else "nothing"
+        return Check(name, actual == expected, f"(:Release {{id: {release_id}}}).media_families = {rendered}, event asserts {json.dumps(expected)}")
+
+    return probe
+
+
 def discogs_probes(stack: Stack, event: dict[str, Any]) -> list[Callable[[], Check]]:
     """Return every assertion the Discogs fixture alone must satisfy.
 
@@ -337,9 +366,31 @@ def discogs_probes(stack: Stack, event: dict[str, Any]) -> list[Callable[[], Che
     probes = [
         _media_present(stack, "postgres discogs releases.media", "releases", "data_id", release_id),
         _families_match(stack, "postgres discogs media families", "releases", "data_id", release_id, media_families(event)),
-        _counts(stack, "neo4j Medium nodes", "MATCH (m:Medium) RETURN count(m) AS value", "count(:Medium)"),
-        _counts(stack, "neo4j MediaFamily nodes", "MATCH (f:MediaFamily) RETURN count(f) AS value", "count(:MediaFamily)"),
+        _graph_families_match(stack, "neo4j Release media_families", release_id, media_families(event)),
     ]
+    # Every graph probe is scoped to an id this run's own event carries. An unscoped
+    # `count(:Medium)` or `count(:MediaFamily)` is satisfied by any node left behind in a
+    # reused volume, so a run whose writes never landed would still report a pass.
+    for family in media_families(event):
+        literal = quote_literal(family)
+        probes.append(
+            _counts(
+                stack,
+                f"neo4j MediaFamily {family} node",
+                f"MATCH (f:MediaFamily {{name: {literal}}}) RETURN count(f) AS value",
+                f"count(:MediaFamily {{name: {family}}})",
+            )
+        )
+    for medium in media_medium_ids(event):
+        literal = quote_literal(medium)
+        probes.append(
+            _counts(
+                stack,
+                f"neo4j Medium {medium} node",
+                f"MATCH (m:Medium {{id: {literal}}}) RETURN count(m) AS value",
+                f"count(:Medium {{id: {medium}}})",
+            )
+        )
     for medium in media_medium_ids(event):
         literal = quote_literal(medium)
         probes.append(
