@@ -614,12 +614,11 @@ The program rolls out in three stages, which are cross-hive and therefore not
 expressible as bead dependencies:
 
 1. `python-libraries` (`common.telemetry`), this repository (backend and env
-   wiring), `design` (ADR), and `catalog-ingestion` (Rust telemetry module) run
-   in parallel.
+   wiring), `design` (ADR), and `discogs-ingestion` and `musicbrainz-ingestion`
+   (Rust telemetry modules, each source-owned since ADR 0005 retired the
+   combined `catalog-ingestion` repository) run in parallel.
 2. After `python-libraries` merges, every Python service bumps its
    `groovemap-runtime` rev to that commit and adopts `common.telemetry`.
-   `discogs-ingestion` and `musicbrainz-ingestion` port the
-   `catalog-ingestion` module.
 3. Dashboards and end-to-end verification run last, against released images.
 
 Until stage 2 lands, the collector accepts connections but no application series
