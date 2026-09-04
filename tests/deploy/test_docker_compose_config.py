@@ -65,11 +65,14 @@ class TestExtractorStartupDelayRemoved:
             env = compose["services"][name].get("environment", {}) or {}
             assert "STARTUP_DELAY" not in env, f"{name} still sets the dead STARTUP_DELAY knob"
 
-    def test_extractor_services_consume_the_same_released_image(self) -> None:
+    def test_extractor_services_consume_their_source_owned_images(self) -> None:
+        """gm-deployment-989.1: the combined image was split per source (ADR 0005),
+        so the two extractors no longer share one released image."""
         compose = _base_compose()
         images = {compose["services"][name]["image"] for name in EXTRACTOR_SERVICES}
-        assert len(images) == 1
-        assert images.pop().startswith("${CATALOG_INGESTION_IMAGE:?")
+        assert len(images) == 2
+        assert compose["services"]["extractor-discogs"]["image"].startswith("${DISCOGS_INGESTION_IMAGE:?")
+        assert compose["services"]["extractor-musicbrainz"]["image"].startswith("${MUSICBRAINZ_INGESTION_IMAGE:?")
 
 
 class TestPythonServicesForwardSignalsDuringStartupDelay:

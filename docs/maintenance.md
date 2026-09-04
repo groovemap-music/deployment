@@ -32,6 +32,66 @@ merging.
 Never replace a digest with `latest` or a tag-only reference. Do not add a
 sibling build context to this repository.
 
+## Per-source extractor cutover
+
+`extractor-discogs` and `extractor-musicbrainz` consume separate, source-owned
+images. `DISCOGS_INGESTION_IMAGE` promotes `discogs-ingestion` and
+`MUSICBRAINZ_INGESTION_IMAGE` promotes `musicbrainz-ingestion`. The retired
+combined `catalog-ingestion` image and its single `CATALOG_INGESTION_IMAGE`
+variable no longer exist. The per-source entrypoints take no `--source`
+argument, and the MusicBrainz container no longer polls Discogs health: the two
+sources ingest concurrently with no cross-container ordering, lock, or mutual
+exclusion. Compose service names, container names, hostnames, the `8000` health
+port, data volumes, exchanges, queues, and durable state markers are unchanged
+by the split, which is what makes a source-local rollback possible.
+
+The environment `.env` is untracked and is the only place real image values
+live. Every value in it must be an immutable `@sha256:<manifest-digest>`
+reference; a tag, `latest`, or a floating reference is not a deployment input
+and is not a rollback target.
+
+Cut over **one source at a time**, and never run an old and a new producer for
+the same source against production exchanges at once — duplicated data and
+completion events make parity evidence ambiguous and burn retry budgets.
+
+1. Rehearse the new image against an isolated broker with source-matching
+   consumers; compare fixtures, exchange and queue declarations, completion
+   ordering, marker restart, health, trigger, and shutdown behavior.
+2. Stop that source's extractor and confirm it is no longer publishing.
+3. Record the currently deployed digest for that source as the rollback target.
+4. Set only that source's variable in `.env` to the new manifest digest.
+5. Run `just config` and `just config-prod`, and review the rendered diff.
+6. Obtain approval, start the service, and verify health and its consumers.
+7. Only then begin the other source's cutover.
+
+Rollback is source-local. Quiesce the new producer for the affected source,
+retain its data volume and durable state marker, then restore the recorded
+known-good digest for that source alone. A Discogs rollback does not stop
+MusicBrainz, or vice versa, unless an independent incident calls for both.
+
+### Recorded release digests
+
+First per-source producer images (`v0.2.1`):
+
+| Variable | Image | Manifest digest |
+| --- | --- | --- |
+| `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:4a961aab647bb830074414b30e121d927c8287d2a1b2e4d61a34f42a1b50e94b` |
+| `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
+
+Matching consumer and schema images (`v0.2.0`):
+
+| Variable | Image | Manifest digest |
+| --- | --- | --- |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:35e1ef9fbd7506dd67f93f6733dbf689ac5f1bda4f2b7ff24859b8a2115218de` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
+| `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
+| `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
+
+These are records of what was published, not an instruction to deploy. Verify a
+digest against the registry before promoting it, and re-resolve it for any
+platform other than the one the release workflow published.
+
 ## Update an infrastructure image
 
 PostgreSQL, Neo4j, RabbitMQ, and Redis images are declared directly in
