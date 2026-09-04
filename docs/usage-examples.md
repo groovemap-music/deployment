@@ -201,6 +201,51 @@ RETURN country, release_count
 ORDER BY release_count DESC;
 ```
 
+### Media Queries
+
+The canonical media taxonomy (ADR 0007) makes the medium a node rather than a string on the
+release, so media is traversable the same way genre and style already are. Every
+`ISSUED_ON` edge carries the catalog it came from.
+
+#### Browse the media vocabulary in use
+
+```cypher
+MATCH (m:Medium)-[:IN_FAMILY]->(f:MediaFamily)
+RETURN f.name as family, collect(m.id) as mediums
+ORDER BY family;
+```
+
+#### Find releases issued on a medium or a whole family
+
+```cypher
+MATCH (r:Release)-[e:ISSUED_ON]->(:Medium {id: "vinyl_12"})
+RETURN r.title as title, r.year as year, e.source as source, e.qty as qty
+ORDER BY year
+LIMIT 20;
+```
+
+```cypher
+MATCH (r:Release)-[:ISSUED_ON]->(:Medium)-[:IN_FAMILY]->(:MediaFamily {name: "tape"})
+RETURN DISTINCT r.title as title, r.year as year
+ORDER BY year
+LIMIT 20;
+```
+
+#### Compare what each catalog says a release was issued on
+
+```cypher
+MATCH (r:Release {id: "249504"})-[e:ISSUED_ON]->(m:Medium)
+RETURN e.source as source, collect(m.id) as mediums;
+```
+
+#### Count releases per media family
+
+```cypher
+MATCH (:Release)-[e:ISSUED_ON {source: "discogs"}]->(:Medium)-[:IN_FAMILY]->(f:MediaFamily)
+RETURN f.name as family, count(*) as releases
+ORDER BY releases DESC;
+```
+
 ### Advanced Queries
 
 #### Find most prolific artists by release count
@@ -456,6 +501,8 @@ ORDER BY data->>'title';
 
 #### Find releases with specific format
 
+The raw provider fields remain the provenance record, so a query against them still works:
+
 ```sql
 SELECT
     data->>'title' as title,
@@ -465,6 +512,60 @@ FROM releases
 WHERE data->'format' @> '["Vinyl"]'
 AND (data->>'year')::int >= 1960
 ORDER BY (data->>'year')::int
+LIMIT 20;
+```
+
+#### Find releases by canonical media family or medium
+
+The canonical `media` block (ADR 0007) is the media-neutral way to ask the same question,
+and it means the same thing in both catalogs. `media->'families'` is GIN-indexed:
+
+```sql
+-- Releases issued on any vinyl medium
+SELECT
+    data->>'title' as title,
+    data->>'year' as year,
+    media->'families' as families
+FROM releases
+WHERE media->'families' @> '["vinyl"]'
+ORDER BY (data->>'year')::int
+LIMIT 20;
+```
+
+```sql
+-- Releases issued on one specific medium, with the quantity the source asserted
+SELECT
+    data->>'title' as title,
+    item->>'medium' as medium,
+    item->>'qty' as qty
+FROM releases,
+     jsonb_array_elements(media->'items') as item
+WHERE item->>'medium' = 'vinyl_12'
+LIMIT 20;
+```
+
+```sql
+-- Where the two catalogs disagree about a release's media families
+SELECT
+    r.data_id,
+    r.media->'families' as discogs_families,
+    m.media->'families' as musicbrainz_families
+FROM releases r
+JOIN musicbrainz.releases m ON m.discogs_release_id::text = r.data_id
+WHERE m.media IS NOT NULL
+  AND r.media->'families' <> m.media->'families'
+LIMIT 20;
+```
+
+```sql
+-- Raw provider values the vocabulary did not recognise, worth adding to the taxonomy
+SELECT
+    unmapped_format,
+    count(*) as releases
+FROM releases,
+     jsonb_array_elements_text(media->'unmapped'->'formats') as unmapped_format
+GROUP BY unmapped_format
+ORDER BY releases DESC
 LIMIT 20;
 ```
 
@@ -626,7 +727,7 @@ curl "http://localhost:8004/api/path?from_name=Kraftwerk&from_type=artist&to_nam
 curl "http://localhost:8004/api/path?from_name=Techno&from_type=genre&to_name=Warp%20Records&to_type=label"
 ```
 
-### Vinyl Archaeology (Time Travel)
+### Time travel
 
 ```bash
 # Get the year range of all releases in the database

@@ -73,8 +73,24 @@ for env_name in (".env.example", "config/validation.env"):
             f"{env_name}: {variable} must promote {REGISTRY}/{repository} by digest, got {reference}"
         )
 
-provenance = json.loads((ROOT / "config/provenance.json").read_text())["extraction-rules.yaml"]
-promoted = ROOT / "config/extraction-rules.yaml"
-assert hashlib.sha256(promoted.read_bytes()).hexdigest() == provenance["promoted_sha256"]
-assert len(provenance["producer_commit"]) == 40
-assert len(provenance["source_sha256"]) == 64
+# Every promoted upstream artifact under `config/` records where it came from, so drift
+# against the owning repository is a check failure rather than a silent divergence. The
+# promoted extraction rules and the producers' promoted contract fixtures share one record.
+provenance = json.loads((ROOT / "config/provenance.json").read_text())
+assert "extraction-rules.yaml" in provenance, "the promoted extraction rules must stay recorded"
+for relative_path, record in sorted(provenance.items()):
+    promoted = ROOT / "config" / relative_path
+    assert promoted.is_file(), f"config/provenance.json records {relative_path}, which is not a promoted file"
+    assert hashlib.sha256(promoted.read_bytes()).hexdigest() == record["promoted_sha256"], (
+        f"config/{relative_path} drifted from its recorded promoted digest"
+    )
+    assert record["owner"].startswith("groovemap-music/"), f"config/{relative_path} must name its owning repository"
+    assert len(record["producer_commit"]) == 40, f"config/{relative_path} must record a full producer commit"
+    assert len(record["source_sha256"]) == 64, f"config/{relative_path} must record the upstream source digest"
+    assert record["source_path"], f"config/{relative_path} must record its path in the owning repository"
+
+# The promoted contract fixtures are the smoke stack's only release inputs, so they must be
+# byte-identical to the producers' fixtures rather than a locally edited copy.
+for relative_path in ("media-smoke/discogs-releases.data.json", "media-smoke/musicbrainz-releases.data.json"):
+    record = provenance[relative_path]
+    assert record["promoted_sha256"] == record["source_sha256"], f"config/{relative_path} must be promoted verbatim from {record['owner']}"
