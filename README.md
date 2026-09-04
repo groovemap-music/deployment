@@ -38,7 +38,14 @@ used only for syntax validation.
 just config
 just config-prod
 just smoke
+just smoke-media
 ```
+
+`just smoke-media` is the end-to-end proof that ADR 0007's canonical `media` block reaches
+both stores. It starts a disposable stack under its own Compose project, publishes the
+producers' promoted contract fixtures, asserts the block in PostgreSQL and Neo4j, and
+destroys the stack and its volumes. See the
+[deployment validation guide](docs/testing-guide.md).
 
 The development Compose defaults contain deliberately non-production
 credentials. The production overlay replaces credential values with Docker

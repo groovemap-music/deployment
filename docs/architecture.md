@@ -313,7 +313,7 @@ See [MusicBrainz Sync Guide](https://github.com/groovemap-music/musicbrainz-grap
 - Unified full-text search (`/api/search`)
 - Label DNA fingerprinting and comparison (`/api/label/{label_id}/dna`, `/api/label/{label_id}/similar`, `/api/label/dna/compare`)
 - Taste fingerprint analytics (`/api/user/taste/*`)
-- Vinyl Archaeology time-travel filtering (`/api/explore/year-range`, `/api/explore/genre-emergence`, `before_year` parameter on `/api/expand`)
+- Time-travel filtering (`/api/explore/year-range`, `/api/explore/genre-emergence`, `before_year` parameter on `/api/expand`)
 - Collection timeline evolution (`/api/user/collection/timeline`, `/api/user/collection/evolution`)
 - Recommendation engine (`/api/recommend/similar/artist/{artist_id}` — find similar artists via shared genres/styles, `/api/recommend/explore/{entity_type}/{entity_id}` — explore-from-here discovery)
 - Collaborator network (`/api/collaborators/{artist_id}` — artists sharing releases, with temporal breakdown)
@@ -622,7 +622,7 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 - Taste fingerprint endpoints (`/api/user/taste/*`)
 - Unified full-text search (`/api/search`)
 - Collection timeline and evolution (`/api/user/collection/timeline`, `/api/user/collection/evolution`)
-- Vinyl Archaeology endpoints (`/api/explore/year-range`, `/api/explore/genre-emergence`)
+- Time-travel endpoints (`/api/explore/year-range`, `/api/explore/genre-emergence`)
 - Path finder (`/api/path`)
 - Reads Discogs app credentials from `app_config` table (set via `discogs-setup` CLI)
 
@@ -787,6 +787,8 @@ See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enr
 - Style (sub-genres, styles)
 - Person (non-performing release credits, e.g. producer/engineer)
 - User (authenticated Discogs users)
+- Medium (a canonical medium such as `vinyl_12`, unique on `id`, carrying `family` and `label`)
+- MediaFamily (a canonical family such as `vinyl`, unique on `name`)
 
 **Relationship Types**:
 
@@ -802,6 +804,8 @@ See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enr
 - SAME_AS (person → artist, when a credited person is also a performing artist)
 - COLLECTED (user → release)
 - WANTS (user → release)
+- IN_FAMILY (medium → media family)
+- ISSUED_ON (release → medium, carrying `qty` and `source`)
 
 **MusicBrainz-sourced Relationships** (all carry `source: 'musicbrainz'`):
 
@@ -824,7 +828,7 @@ See [Database Schema](https://github.com/groovemap-music/database-schema) for de
 - `artists`: Artist data in JSONB format
 - `labels`: Label data in JSONB format
 - `masters`: Master recording data
-- `releases`: Release data with full-text indexes
+- `releases`: Release data with full-text indexes and the canonical `media` block
 - `insights.artist_centrality`: Top artists by graph centrality
 - `insights.genre_trends`: Genre release counts by decade
 - `insights.label_longevity`: Labels ranked by years active
@@ -838,7 +842,7 @@ See [Database Schema](https://github.com/groovemap-music/database-schema) for de
 
 - `musicbrainz.artists`: MBID, name, type, gender, dates, area, Discogs cross-reference
 - `musicbrainz.labels`: MBID, name, type, label code, dates, Discogs cross-reference
-- `musicbrainz.releases`: MBID, name, barcode, status, Discogs cross-reference
+- `musicbrainz.releases`: MBID, name, barcode, status, Discogs cross-reference, canonical `media` block
 - `musicbrainz.relationships`: Source/target MBIDs, relationship type, direction, attributes
 - `musicbrainz.external_links`: MBID, service name, URL (Wikipedia, Wikidata, AllMusic, etc.)
 
@@ -848,8 +852,40 @@ See [Database Schema](https://github.com/groovemap-music/database-schema) for de
 - GIN indexes on JSONB columns
 - Full-text search indexes
 - Filtered indexes on Discogs ID columns for MusicBrainz cross-reference lookups
+- GIN indexes on the `media->'families'` list of every release-shaped table
 
 See [Database Schema](https://github.com/groovemap-music/database-schema) for details.
+
+### Canonical media
+
+**Purpose**: Describe what a release was issued on once, in one vocabulary, for every
+service — rather than re-deriving it from a bag of provider format strings.
+
+Each producer emits an additive `media` block on every `releases` event alongside the raw
+provider fields, which stay unchanged as the provenance record. The block names the medium
+(`items[].medium`), its family (`items[].family`), the quantity, and the physical facts the
+vocabulary can derive, plus release-level facts such as `release_kind`, `edition`, and
+`packaging`. Values the vocabulary does not recognise are preserved under `unmapped` rather
+than dropped, so coverage is measurable.
+
+**Where it lands**:
+
+| Store | Shape |
+| --- | --- |
+| PostgreSQL `releases.media` | The Discogs block as JSONB, GIN-indexed on `media->'families'` |
+| PostgreSQL `musicbrainz.releases.media` | The MusicBrainz block as JSONB, indexed the same way |
+| Neo4j `Medium` / `MediaFamily` | One node per canonical medium and family, joined by `IN_FAMILY` |
+| Neo4j `(:Release)-[:ISSUED_ON]->(:Medium)` | One edge per release, medium, and source |
+
+A release known to both catalogs carries one `ISSUED_ON` edge per source, so the two
+catalogs' media can be compared rather than silently merged. The MusicBrainz enricher adds
+its `source: 'musicbrainz'` edges only to releases that already have a Discogs match; it
+never creates a release.
+
+`just smoke-media` asserts this path end to end against a disposable stack. See
+[ADR 0007](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md)
+for the vocabulary and storage decision, and the
+[deployment validation guide](testing-guide.md) for how to run the assertion.
 
 ### Redis Cache
 
