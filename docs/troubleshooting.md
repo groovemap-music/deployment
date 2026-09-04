@@ -132,8 +132,9 @@ Correlate the service log with dependency state and its published health probe:
 | `explore` | <http://localhost:8007/health> | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) |
 
 For consumer failures, route source-level diagnosis to the appropriate graph
-enricher, SQL loader, or catalog-ingestion repository. Include the exact image
-digest and relevant redacted logs.
+enricher or SQL loader repository; for extraction failures, route to
+`discogs-ingestion` or `musicbrainz-ingestion`, whichever source is affected.
+Include the exact image digest and relevant redacted logs.
 
 ## Before an approved corrective action
 

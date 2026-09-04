@@ -391,7 +391,10 @@ The `internal` prefix on hop 2 is only a URL path: those routes live on the **sa
 - `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`: RabbitMQ auth credentials
 - `DISCOGS_EXCHANGE_PREFIX`: Exchange name prefix (default: `groovemap-discogs` for Discogs, `groovemap-musicbrainz` for MB)
 
-See [Extractor README](https://github.com/groovemap-music/catalog-ingestion) for details.
+Each source owns its own producer repository and image:
+[`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) and
+[`musicbrainz-ingestion`](https://github.com/groovemap-music/musicbrainz-ingestion).
+See the matching README for details.
 
 ### Database schema initializer
 
