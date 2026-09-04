@@ -7,7 +7,7 @@ off to the official image entrypoint — mirroring scripts/neo4j-entrypoint.sh
 and scripts/rabbitmq-entrypoint.sh.
 
 These tests stub out ``docker-entrypoint.sh`` on PATH (the real one lives
-inside the redis:7-alpine image, not on the host) and assert the wrapper
+inside the redis:8-alpine image, not on the host) and assert the wrapper
 invokes it with the right arguments.
 """
 
