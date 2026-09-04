@@ -31,8 +31,12 @@ compose=(
 }
 
 # A media assertion is only worth its runtime against the images an environment would
-# actually run, so refuse the placeholder and validation-only digests outright.
+# actually run, so refuse the placeholder and validation-only digests outright. An .env
+# that declares no image at all is refused too: the loop below would otherwise never run
+# and the gate would pass without having inspected a single image.
+image_assignments=0
 while IFS= read -r assignment; do
+  image_assignments=$((image_assignments + 1))
   variable="${assignment%%=*}"
   value="${assignment#*=}"
   case "$value" in
@@ -50,6 +54,14 @@ while IFS= read -r assignment; do
     exit 2
   }
 done < <(grep -E '^[A-Z0-9_]+_IMAGE=' "$env_file")
+
+[[ "$image_assignments" -gt 0 ]] || {
+  echo "smoke-media: $env_file declares no *_IMAGE assignment, so no image was checked." >&2
+  echo "             Copy .env.example and set every image variable to an approved" >&2
+  echo "             digest-pinned GHCR reference (docs/maintenance.md records the" >&2
+  echo "             promoted digests)." >&2
+  exit 2
+}
 
 cleanup() {
   "${compose[@]}" down --volumes --remove-orphans

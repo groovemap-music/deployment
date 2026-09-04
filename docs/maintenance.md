@@ -92,6 +92,39 @@ These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
 platform other than the one the release workflow published.
 
+## Media-aware loader upgrade
+
+Promoting the media-aware SQL loader and graph enricher images does not populate
+the ADR 0007 canonical `media` block for data that is already stored. Both
+release upsert paths gate the rewrite on a changed content hash, and a
+re-ingested release that has not changed upstream hashes identically, so
+pre-existing rows keep `media` NULL and their release nodes gain no `Medium`,
+`MediaFamily`, or `ISSUED_ON`. Nothing backfills them on its own.
+
+After promoting the media-aware images, backfill deliberately:
+
+1. Confirm the promoted `discogs-sql-loader` carries the media backfill fix
+   (bead `gm-discogs-sql-loader-3ce.1`). Without it the Discogs path still skips
+   hash-identical releases and their `media` stays NULL no matter how often the
+   extractor republishes them. The MusicBrainz loader's release upsert always
+   writes `media = EXCLUDED.media`, so that source needs no loader change.
+2. Record the current row counts of `releases` and `musicbrainz.releases` with a
+   non-NULL `media`, as the before figure for the backfill.
+3. Obtain approval: a full reprocess republishes every record, so it is a live
+   state change with real broker, loader, and store load.
+4. Trigger a **force_reprocess** extraction on **both** extractors, one source
+   at a time, from the admin panel (see [Admin guide](admin-guide.md)). Forcing
+   the run is what matters: it reprocesses every file regardless of the existing
+   state markers, so the media-aware loaders and enrichers see each pre-existing
+   release again and write its media block.
+5. Verify the backfill: `releases.media` and `musicbrainz.releases.media` are
+   non-NULL for a sample of pre-upgrade releases, the counts from step 2 have
+   risen to the expected totals, and Neo4j carries `Medium`, `MediaFamily`,
+   `IN_FAMILY`, `ISSUED_ON`, and `Release.media_families` for those releases.
+
+Run one source's force_reprocess to completion before starting the other, so a
+failure is attributable and the retry budget is not spent twice at once.
+
 ## Update an infrastructure image
 
 PostgreSQL, Neo4j, RabbitMQ, and Redis images are declared directly in
@@ -167,10 +200,11 @@ commit; `scripts/check-images.py` rejects a mismatched promoted hash.
 The following operations require explicit approval because they change live
 state:
 
-- `just smoke`, `just smoke-infra`, or `just down`;
+- `just smoke`, `just smoke-infra`, `just smoke-media`, or `just down`;
 - `docker compose up`, `restart`, `stop`, `down`, or `scale`;
 - database restore, vacuum policy changes, queue deletion, or cache flush;
 - data migration with `--apply`;
+- a `force_reprocess` extraction trigger, including the media backfill above;
 - secret rotation;
 - performance testing.
 
