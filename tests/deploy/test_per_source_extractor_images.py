@@ -22,6 +22,8 @@ boundary. Deployment consequences this module pins:
 
 from __future__ import annotations
 
+import re
+import runpy
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,8 @@ TRACKED_IMAGE_INPUTS = (
     "config/validation.env",
     "scripts/check-images.py",
     "docs/dockerfile-standards.md",
+    "docs/architecture.md",
+    "docs/troubleshooting.md",
 )
 
 
@@ -75,6 +79,16 @@ def _env_assignments(relative_path: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#"))
 
 
+def _normalize_whitespace(text: str) -> str:
+    """Collapse runs of whitespace so prose-wrapping doesn't break substring checks."""
+    return re.sub(r"\s+", " ", text)
+
+
+def _run_check_images() -> dict[str, Any]:
+    """Execute the validation script in-process and return its module namespace."""
+    return runpy.run_path(str(REPO_ROOT / "scripts" / "check-images.py"), run_name="check_images")
+
+
 class TestRetiredCombinedImage:
     def test_no_tracked_input_still_names_the_combined_variable(self) -> None:
         for relative_path in TRACKED_IMAGE_INPUTS:
@@ -82,7 +96,7 @@ class TestRetiredCombinedImage:
 
     def test_runbook_names_the_combined_variable_only_as_retired(self) -> None:
         runbook = (REPO_ROOT / "docs" / "maintenance.md").read_text()
-        assert f"`{RETIRED_VARIABLE}`\nvariable no longer exist" in runbook
+        assert f"`{RETIRED_VARIABLE}` variable no longer exist" in _normalize_whitespace(runbook)
 
     def test_env_files_declare_one_variable_per_source(self) -> None:
         for relative_path in (".env.example", "config/validation.env"):
@@ -94,10 +108,10 @@ class TestRetiredCombinedImage:
                 )
 
     def test_check_images_requires_each_source_variable(self) -> None:
-        script = (REPO_ROOT / "scripts" / "check-images.py").read_text()
+        namespace = _run_check_images()
         for service, (variable, repository) in PER_SOURCE_EXTRACTORS.items():
-            assert f'"{service}": "{variable}"' in script
-            assert f'"{variable}": "{repository}"' in script
+            assert namespace["INTERNAL_IMAGES"][service] == variable, f"{service} must require {variable}"
+            assert namespace["IMAGE_OWNERS"][variable] == repository, f"{variable} must be owned by {repository}"
 
 
 class TestPerSourceImages:
