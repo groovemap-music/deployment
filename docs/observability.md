@@ -622,6 +622,146 @@ If a panel needs a new exporter or collector metric, add the exact name to
 rather than prefix-matched so a typo in `rabbitmq_queue_messages_ready` still
 fails.
 
+## Alerts
+
+Alert rules are code too. `config/grafana/provisioning/alerting/groovemap.yaml`
+provisions them into the `GrooveMap` folder as the evaluation group `groovemap`,
+evaluated every `1m`, from the same `config/grafana/provisioning` bind mount
+that carries the datasources and the dashboard provider. A rule is a catalogued
+query with a threshold on it, so `scripts/check-dashboards.py` lints every
+expression against the catalog above exactly as it lints a panel, and
+additionally requires each rule to carry a `summary`, a `description` that
+states its threshold, a `severity` label, a unique Grafana-legal `uid`, and a
+`condition` that names one of its own refIds.
+
+Every rule has the same two-node shape: refId `A` is an instant PromQL query
+against the Prometheus datasource, refId `C` is Grafana's built-in `threshold`
+expression on `A`, and `condition: C`. Keeping the threshold in the expression
+node rather than baking it into the PromQL is what lets the table below quote a
+single number per rule.
+
+| Rule | Expression | Threshold | Severity |
+| --- | --- | --- | --- |
+| `ScrapeTargetDown` | `up` | `< 1` for 5m | critical |
+| `CollectorDroppingPoints` | `sum(rate(otelcol_exporter_send_failed_metric_points_total[15m]))` | `> 0` for 10m | critical |
+| `ExtractorErrorRateHigh` | failed share of `groovemap_extraction_files_total` per `source`, 30m | `> 10%` for 15m | warning |
+| `ConsumerFailureRateHigh` | failed share of `groovemap_pipeline_messages_total` per `service_name`/`source`, 15m | `> 5%` for 10m | critical |
+| `CircuitBreakerOpen` | `max by (service_name, system) (groovemap_pipeline_circuit_breaker_state)` | `> 1` (open) for 2m | critical |
+| `QueueBacklogGrowing` | `rabbitmq_queue_messages_ready` per `queue`, only while its 30m `delta` is positive | `> 50000` for 30m | warning |
+| `ConsumersAbsent` | `sum by (source) (groovemap_pipeline_consumers_active)` | `< 1` for 10m | critical |
+| `InsightsStale` | `time() - max by (computation) (groovemap_insights_last_success_seconds)` | `> 86400s` (24h) for 15m | warning |
+| `ApiErrorRateHigh` | 5xx share of `http_server_request_duration_seconds_count` per `service_name`, 10m | `> 5%` for 10m | critical |
+| `ApiLatencyHigh` | p95 of `http_server_request_duration_seconds_bucket` per `service_name`, 10m | `> 2s` for 10m | warning |
+| `PostgresConnectionsNearMax` | `sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)` | `> 80%` for 10m | warning |
+| `RedisMemoryHigh` | `redis_memory_used_bytes / redis_memory_max_bytes` | `> 85%` for 15m | warning |
+| `RabbitMqMemoryAlarm` | `rabbitmq_process_resident_memory_bytes / rabbitmq_resident_memory_limit_bytes` | `> 90%` for 5m | critical |
+| `Neo4jDown` | `min(groovemap_neo4j_up)` | `< 1` for 5m | critical |
+| `EventLoopLagHigh` | p99 of `groovemap_runtime_event_loop_lag_seconds_bucket` per `service_name`, 10m | `> 1s` for 10m | warning |
+| `ContainerMemoryNearLimit` | `container_memory_working_set_bytes / container_spec_memory_limit_bytes` per compose service, limited containers only | `> 90%` for 10m | warning |
+| `HostDiskLow` | `node_filesystem_avail_bytes / node_filesystem_size_bytes`, excluding tmpfs, overlay, and squashfs | `< 10%` free for 15m | warning |
+
+`severity` is `critical` when the pipeline has stopped moving data or is losing
+it, and `warning` when a resource is heading somewhere bad but nothing is lost
+yet.
+
+### Missing telemetry is reported by three canaries
+
+Grafana's default `noDataState` is `NoData`, which raises a `DatasourceNoData`
+alert whenever a rule's query matches nothing. Left on the default, a stack that
+is starting up — or one whose extractors have not run yet — raises one of those
+for nearly every rule at once, and the operator has to read eight alerts to
+learn one fact.
+
+So exactly three rules keep a no-data behaviour, one per source of telemetry:
+
+| Rule | `noDataState` | Speaks for |
+| --- | --- | --- |
+| `ScrapeTargetDown` | `NoData` | The scrape jobs: rabbitmq, postgres, redis, cadvisor, node-exporter, and the collector's own `:8888`. `up` returning nothing means there is no scrape data at all. |
+| `ConsumersAbsent` | `Alerting` | The services that push OTLP. A consumer gauge that stopped arriving is the condition this rule exists to catch, so absence is the alert rather than a separate one. |
+| `Neo4jDown` | `NoData` | The graph probe `operations-console` pushes. It is not a scrape target, so `ScrapeTargetDown` never speaks for it. |
+
+Every other rule is `noDataState: OK`. Each one is a threshold on a series that
+one of those three already covers, so it sees no data only when its canary is
+already firing; staying quiet keeps it from saying the same thing twice. The
+ratio and quantile rules additionally resolve to no data whenever there is no
+traffic, which is a healthy idle stack, not a fire.
+
+Every rule uses `execErrState: Error`, so a query that genuinely fails is
+distinguishable from one that matched nothing.
+
+### Where the alerts go
+
+Nowhere. **No contact point and no notification policy are provisioned**, so a
+firing rule appears in Grafana under **Alerting → Alert rules** and in the alert
+list on the GrooveMap folder, and nothing is emailed, posted, or paged. That is
+deliberate: routing an alert somewhere commits a human to answering it, and this
+stack is a local Compose environment whose owner is already looking at it.
+
+To route them when someone is ready to be woken up, add a
+`config/grafana/provisioning/alerting/contact-points.yaml` with a
+`contactPoints:` block and a `policies:` block naming it as the default
+receiver:
+
+```yaml
+---
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: groovemap-oncall
+    receivers:
+      - uid: groovemap-oncall-slack
+        type: slack
+        settings:
+          url: $SLACK_WEBHOOK_URL
+
+policies:
+  - orgId: 1
+    receiver: groovemap-oncall
+    group_by: [alertname, severity]
+    routes:
+      - receiver: groovemap-oncall
+        matchers:
+          - severity = critical
+```
+
+The secret belongs in a Docker secret or an environment variable Grafana
+expands, never in the file — `gitleaks` runs over this directory in
+`just source-check`. `scripts/check-dashboards.py` asserts today that no contact
+point or notification policy is provisioned, so adding one is a deliberate edit
+to the gate and its test, not an accident.
+
+### Why an alert rule names `prometheus` and a dashboard does not
+
+A dashboard panel must use the `${DS_PROMETHEUS}` template variable: it is
+resolved in the browser against whatever Grafana served the page, so a pinned
+uid works on one machine and nowhere else. An alert rule has no browser and no
+dashboard. The Grafana scheduler evaluates it server-side and resolves
+`datasourceUid` against the provisioned datasource list, where a `${...}` string
+is not a variable but an unresolvable uid. So a rule names `prometheus`
+directly, which is safe precisely because provisioning pins that uid, and the
+lint gate enforces the split: the raw uid is accepted only in the alerting file,
+the template variable is rejected there, and both rules are reversed for
+dashboards.
+
+### Adding an alert rule
+
+1. Add a rule to the `groovemap` group in
+   `config/grafana/provisioning/alerting/groovemap.yaml`. Give it a `uid` that
+   starts with `groovemap-`, at most 40 characters of letters, digits, `-`, and
+   `_`; a `title` in PascalCase matching the rule names above; and a `for`
+   duration long enough that a single scrape gap cannot fire it.
+2. Write refId `A` as an instant query (`instant: true`, `range: false`) whose
+   PromQL uses only catalogued metric names, and refId `C` as a `threshold`
+   expression on `A`. Point `condition` at `C`.
+3. Write a `summary` that names what broke and a `description` that begins
+   `Threshold:` and states the number, because that description is the whole of
+   what an operator sees. Add a `severity` label of `critical` or `warning`.
+4. Add a row to the table above and to `EXPECTED_ALERT_SEVERITIES` in
+   `tests/deploy/test_dashboards.py`; the rule set is closed on both sides.
+5. Run `uv run python scripts/check-dashboards.py`, then `just check`.
+
+
 ## Verification
 
 Provisioning a dashboard proves nothing on its own: a panel whose metric never
