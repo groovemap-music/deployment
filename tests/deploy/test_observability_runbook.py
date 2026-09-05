@@ -489,6 +489,16 @@ class TestSecondExecutionRecord:
         assert "groovemap_neo4j_store_size_bytes" in record
         assert "dbms.queryJmx" in record
 
+    def test_the_store_size_omission_names_jmx_as_the_cause(self) -> None:
+        """Not-available-on-Community was the guess; no JMX agent is the cause.
+
+        The distinction decides what to do about it: the first reads as a
+        limitation to accept, the second as one compose setting away.
+        """
+        record = self._record()
+        assert "zero beans" in record
+        assert "NEO4J_server_jvm_additional" in record
+
     def test_the_trace_spanning_publish_and_process_is_recorded(self) -> None:
         """The acceptance in one object; a record without it proves nothing new."""
         record = self._record()

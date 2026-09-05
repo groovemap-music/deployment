@@ -512,9 +512,11 @@ label or relationship type nobody declared cannot appear as a new series.
   `FOUNDED`, `SUPPORTED`, `SUBGROUP_OF`, `RENAMED_TO`. That document owns the
   list; this one does not restate it as a second source of truth.
 - `store` is the store name `CALL dbms.queryJmx('org.neo4j:instance=kernel#0,name=Store sizes')`
-  reports. That procedure is not available on every Community build; when it
-  does not answer, the series is **omitted** rather than reported as zero, so an
-  empty store-size panel means "not measurable here", not "no data".
+  reports. The procedure exists on Community, but it can only report beans the
+  JVM has registered, and the `neo4j` compose service starts the image with no
+  JMX agent — so on this deployment it returns nothing and the series is
+  **omitted** rather than reported as zero. An empty store-size panel means "not
+  measurable here", not "no data".
 
 Neo4j *latency* is not in this section: it is already covered by
 `db_client_operation_duration_seconds{db_system_name="neo4j"}`, emitted by every
@@ -1021,8 +1023,14 @@ curl -sG 'http://localhost:8428/api/v1/query' \
 ```
 
 `groovemap_neo4j_store_size_bytes` is the one gauge whose absence is not a
-fault: `dbms.queryJmx` does not answer on every Community build, and the
-convention is to omit the series rather than report a zero.
+fault, and on this stack it is always absent. The compose `neo4j` service starts
+the image with no JMX agent — it sets no `-Dcom.sun.management.jmxremote` through
+`NEO4J_server_jvm_additional` — so **no** `org.neo4j` MBean is registered and
+`CALL dbms.queryJmx('org.neo4j:*')` returns zero rows, not merely no Store sizes
+row. Confirmed on `neo4j:2026-community`, kernel 2026.07.1. The convention is to
+omit the series rather than report a zero, so an empty store-size panel here
+means "not measurable on this deployment", and enabling JMX on the `neo4j`
+service is the only thing that would change it.
 
 Span metrics. Nothing emits these — the collector's `spanmetrics` connector
 derives them from arriving spans, so a non-empty result is proof the traces
@@ -1368,8 +1376,12 @@ already noted.
 all arrived from `dashboard` once it ran the wave-2 image. The closed attribute
 sets held: no label or type outside the declared lists appeared.
 `groovemap_neo4j_store_size_bytes` was **absent**, which is the documented
-correct behaviour — `dbms.queryJmx` does not answer on this Neo4j Community
-build, and the series is omitted rather than reported as zero.
+correct behaviour. Probed directly on `neo4j:2026-community` (kernel 2026.07.1):
+`CALL dbms.queryJmx('org.neo4j:*')` returns zero beans, so the cause is not that
+the Store sizes bean is missing but that the compose `neo4j` service registers no
+MBeans at all — it passes no `-Dcom.sun.management.jmxremote` through
+`NEO4J_server_jvm_additional`. The gauge is omitted rather than reported as zero,
+exactly as the convention requires.
 
 **Span metrics and the trace path.** The `spanmetrics` connector produced
 `traces_span_metrics_calls_total` and `traces_span_metrics_duration_seconds` for
@@ -1489,7 +1501,7 @@ prevented; it is now closed.
 | Item | Why |
 | --- | --- |
 | `mcp-server` | Still not a compose service, so this stack cannot exercise it. Its two API-services panels and its `groovemap_mcp_*` series have never been observed anywhere. |
-| `groovemap_neo4j_store_size_bytes` | `dbms.queryJmx('org.neo4j:instance=kernel#0,name=Store sizes')` does not answer on this Neo4j Community build, so the gauge is correctly omitted. The `Store sizes` panel has never been seen with data. |
+| `groovemap_neo4j_store_size_bytes`, and the `Store sizes` panel | The `neo4j` compose service enables no JMX agent, so `CALL dbms.queryJmx('org.neo4j:*')` returns zero beans on `neo4j:2026-community` and the gauge is correctly omitted. Verifying it needs `NEO4J_server_jvm_additional` set on the `neo4j` service, which is outside this bead. The panel has never been seen with data. |
 | A completed extraction | Both extractors were stopped mid-file to protect the Docker VM's disk. Nothing here exercised a file-completion path: `groovemap_extraction_files_total`, `groovemap_extraction_errors_total`, the ingestion file-progress and errors-by-stage panels, and the two pipeline failure panels stayed empty. |
 | The production overlay | Only the development stack was run. The loopback binds and the `0.1` trace sampler in `docker-compose.prod.yml` are covered by tests and `just config-prod`, not by an execution. |
 | Published images | Nothing wave 2 built is on GHCR. This run proves the code, not a release; the digest table in `docs/maintenance.md` is unchanged and still records the wave-1 releases. |
