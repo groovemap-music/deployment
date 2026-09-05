@@ -18,10 +18,13 @@ THIRD_PARTY_SERVICES = (
     "neo4j",
     "redis",
     "otel-collector",
-    "prometheus",
+    "victoria-metrics",
+    "victoria-traces",
     "grafana",
     "postgres-exporter",
     "redis-exporter",
+    "cadvisor",
+    "node-exporter",
 )
 
 

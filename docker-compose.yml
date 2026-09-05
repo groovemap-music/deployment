@@ -17,6 +17,14 @@ x-logging: &default-logging
 x-otel-env: &otel-env
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=dev"
+  # Traces share the metrics endpoint and transport. Dev keeps every span
+  # (arg 1.0) because the volumes are small and a dropped span during
+  # development is a debugging dead end; the production overlay re-stamps the
+  # arg to 0.1. `parentbased_traceidratio` means a sampling decision taken at
+  # the edge of a request is honoured by every downstream service, so a trace
+  # is never half-recorded.
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
 
 # service_started, never service_healthy: telemetry must never be able to block
 # an application from starting. A service that boots before the collector is
@@ -249,31 +257,135 @@ services:
       - ALL
     read_only: true
 
-  # Prometheus — remote-write receiver and the single metrics store. It scrapes
-  # nothing itself; otel-collector owns all collection and remote-writes here.
-  prometheus:
-    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
-    container_name: groovemap-prometheus
-    hostname: prometheus
+  # cAdvisor — per-container CPU, memory, network, and block I/O for every
+  # container on this host, scraped by otel-collector on :8080. Without it a
+  # runaway consumer is invisible until the kernel OOM-kills it.
+  #
+  # The upstream recipe runs this privileged. It does not need to be: measured
+  # against a privileged run on the same engine, `cap_drop: ALL` plus exactly
+  # two capabilities produces an identical series set.
+  #   - DAC_READ_SEARCH lets it walk the per-container directories under
+  #     /var/lib/docker whose modes exclude it; without it the filesystem
+  #     collector logs a permission error on every housekeeping pass.
+  #   - SYSLOG lets it open /dev/kmsg. That is the only source of kernel OOM
+  #     kill messages, and without it cAdvisor logs "Could not configure a
+  #     source for OOM detection, disabling OOM events" and
+  #     `container_oom_events_total` never leaves zero — silently, which for a
+  #     stack whose reason for scraping this is OOM kills is the worst way to
+  #     fail. /dev/kmsg is bound read-only; it exists on every Linux engine,
+  #     including the VM behind Docker Desktop, Colima, and Rancher Desktop.
+  # Every mount is read-only and so is the container's own root filesystem.
+  #
+  # Container labels are NOT stored wholesale (that turns every label on every
+  # image into a Prometheus label). Only the two compose labels are converted,
+  # which is what the Containers & host dashboard filters on.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57
+    container_name: groovemap-cadvisor
+    hostname: cadvisor
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=15d"
-      # Accept OTLP-derived series pushed by otel-collector.
-      - "--web.enable-remote-write-receiver"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
-    ports:
-      - "9090:9090"    # Prometheus UI and API (loopback-only in prod)
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+      - "--store_container_labels=false"
+      - "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service"
+      - "--disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp"
+    # :8080 stays internal. cAdvisor serves an unauthenticated UI that lists
+    # every container on the host, exactly like the other exporters.
     volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg:r
+    networks:
+      - groovemap
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+      - SYSLOG
+    read_only: true
+
+  # node-exporter — host CPU, memory, load, disk, and filesystem saturation,
+  # scraped by otel-collector on :9100. cAdvisor answers "which container is
+  # eating the box"; this answers "is the box full".
+  #
+  # On a VM-backed engine — Docker Desktop on macOS or Windows, Colima,
+  # Rancher Desktop — the "host" is the Linux VM that runs the engine, not the
+  # laptop: the CPU count, memory, and filesystems reported here are the VM's.
+  # That is still the right denominator for these containers, but it is not the
+  # machine's own resource usage. See docs/observability.md.
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    container_name: groovemap-node-exporter
+    hostname: node-exporter
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      # Without this every container's overlay mount is reported as a separate
+      # filesystem and the host filesystem panel becomes unreadable.
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials/.+|var/lib/docker/.+)($$|/)"
+    # :9100 stays internal, like every other exporter.
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - groovemap
+    # The image is busybox-based, so unlike redis-exporter it can probe itself.
+    # The landing page is a few bytes; /metrics would render the whole scrape.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
+  # VictoriaMetrics — the organisation's metrics backend and the only TSDB in
+  # this stack. It accepts Prometheus remote write natively (no flag needed)
+  # and serves the Prometheus query API on the same port, which is why the
+  # Grafana datasource stays `type: prometheus` and every existing dashboard
+  # keeps working. It scrapes nothing itself; otel-collector owns all
+  # collection and remote-writes here.
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd
+    container_name: groovemap-victoria-metrics
+    hostname: victoria-metrics
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=15d"
+      - "-httpListenAddr=:8428"
+    ports:
+      - "8428:8428"    # vmui, the Prometheus query API, and remote write (loopback-only in prod)
+    volumes:
+      - victoria_metrics_data:/victoria-metrics-data
     networks:
       groovemap:
         aliases:
           - metrics-store
+    # 127.0.0.1, not localhost: the server binds IPv4 only, and busybox wget
+    # resolves `localhost` to ::1 first, which is refused.
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8428/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -282,6 +394,46 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # VictoriaTraces — the trace store. The collector pushes OTLP/HTTP spans to
+  # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
+  # API this server exposes under /select/tempo.
+  victoria-traces:
+    image: victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd
+    container_name: groovemap-victoria-traces
+    hostname: victoria-traces
+    command:
+      - "-storageDataPath=/victoria-traces-data"
+      - "-retentionPeriod=7d"
+      - "-httpListenAddr=:10428"
+    ports:
+      - "10428:10428"    # OTLP trace ingest and the Tempo query API (loopback-only in prod)
+    volumes:
+      - victoria_traces_data:/victoria-traces-data
+    networks:
+      groovemap:
+        aliases:
+          - traces-store
+    # This image is distroless — no shell, no wget, no curl — so the probe
+    # cannot call /health the way victoria-metrics does. Re-running the
+    # server's own binary with -version still proves the container is alive
+    # and its entrypoint intact, the same compromise the collector makes
+    # below. /health on :10428 is the operator-facing liveness endpoint,
+    # reachable from any other container on the network.
+    healthcheck:
+      test: ["CMD", "/victoria-traces-prod", "-version"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
@@ -295,7 +447,9 @@ services:
     volumes:
       - ./config/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
-      prometheus:
+      victoria-metrics:
+        condition: service_healthy
+      victoria-traces:
         condition: service_healthy
     networks:
       groovemap:
@@ -345,7 +499,9 @@ services:
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     depends_on:
-      prometheus:
+      victoria-metrics:
+        condition: service_healthy
+      victoria-traces:
         condition: service_healthy
     networks:
       groovemap:
@@ -959,5 +1115,6 @@ volumes:
   brainztableinator_logs:
   insights_logs:
   musicbrainz_data:
-  prometheus_data:
+  victoria_metrics_data:
+  victoria_traces_data:
   grafana_data:

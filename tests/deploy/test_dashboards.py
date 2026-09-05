@@ -1,12 +1,14 @@
-"""Tests for the provisioned dashboards and their lint gate (gm-deployment-gxr.3).
+"""Tests for the provisioned dashboards, alert rules, and their lint gate
+(gm-deployment-gxr.3, extended for wave 2 by gm-deployment-dqh.3 and .4).
 
 Two layers:
 
-- the real artefacts — the five dashboards and the Grafana provisioning that
-  loads them — are checked for the properties operators depend on (stable uids,
-  the datasource variable, the panels the acceptance calls for);
-- ``scripts/check-dashboards.py`` is exercised directly on synthetic
-  dashboards, because a gate that cannot fail is not a gate.
+- the real artefacts — the dashboards, the Grafana-managed alert rules, and the
+  provisioning that loads them — are checked for the properties operators
+  depend on (stable uids, the datasource variables, the panels and rules the
+  acceptance calls for, the thresholds the documentation quotes);
+- ``scripts/check-dashboards.py`` is exercised directly on synthetic dashboards
+  and rule files, because a gate that cannot fail is not a gate.
 """
 
 from __future__ import annotations
@@ -29,9 +31,24 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_DIR = REPO_ROOT / "config" / "grafana" / "dashboards"
 PROVISIONING = REPO_ROOT / "config" / "grafana" / "provisioning"
+ALERTING_FILE = PROVISIONING / "alerting" / "groovemap.yaml"
 CHECKER = REPO_ROOT / "scripts" / "check-dashboards.py"
 
+# The nine dashboards docs/observability.md documents, and the wave that
+# delivered each. The inventory is closed: exactly these files exist.
 EXPECTED_UIDS = {
+    "groovemap-pipeline-overview",
+    "groovemap-ingestion",
+    "groovemap-consumers",
+    "groovemap-api-services",
+    "groovemap-infrastructure",
+    "groovemap-runtime",
+    "groovemap-neo4j",
+    "groovemap-containers",
+    "groovemap-traces",
+}
+
+WAVE_ONE_UIDS = {
     "groovemap-pipeline-overview",
     "groovemap-ingestion",
     "groovemap-consumers",
@@ -39,7 +56,12 @@ EXPECTED_UIDS = {
     "groovemap-infrastructure",
 }
 
+# `groovemap-containers` is wave 2 as well: gm-deployment-dqh.2 added it
+# alongside the cadvisor and node-exporter scrape jobs that feed it.
+WAVE_TWO_UIDS = {"groovemap-runtime", "groovemap-neo4j", "groovemap-containers", "groovemap-traces"}
+
 DATASOURCE_VARIABLE = "${DS_PROMETHEUS}"
+TRACE_DATASOURCE_VARIABLE = "${DS_TEMPO}"
 
 
 def _load_checker() -> ModuleType:
@@ -69,10 +91,21 @@ class TestProvisioning:
         config = yaml.safe_load((PROVISIONING / "datasources" / "prometheus.yaml").read_text())
         assert config["apiVersion"] == 1
         datasource = config["datasources"][0]
+        # VictoriaMetrics serves the Prometheus query API, so the name, type,
+        # and uid outlive the server swap and every dashboard keeps resolving.
+        assert datasource["name"] == "Prometheus"
         assert datasource["uid"] == "prometheus"
         assert datasource["type"] == "prometheus"
-        assert datasource["url"] == "http://prometheus:9090"
+        assert datasource["url"] == "http://victoria-metrics:8428"
         assert datasource["editable"] is False, "datasources are code; UI edits would be silently reverted"
+
+    def test_the_tempo_datasource_reads_victoria_traces(self) -> None:
+        config = yaml.safe_load((PROVISIONING / "datasources" / "prometheus.yaml").read_text())
+        tempo = next(entry for entry in config["datasources"] if entry["uid"] == "tempo")
+        assert tempo["name"] == "Tempo"
+        assert tempo["type"] == "tempo"
+        assert tempo["url"] == "http://victoria-traces:10428/select/tempo"
+        assert tempo["editable"] is False
 
     def test_dashboard_provider_loads_the_mounted_directory(self) -> None:
         config = yaml.safe_load((PROVISIONING / "dashboards" / "groovemap.yaml").read_text())
@@ -85,9 +118,28 @@ class TestProvisioning:
 
 
 class TestDashboardInventory:
-    def test_exactly_the_five_expected_dashboards_exist(self) -> None:
+    def test_exactly_the_expected_dashboards_exist(self) -> None:
+        """gm-deployment-dqh.3 relaxed this to a pair of subset assertions
+        because `groovemap-containers` was landing on a sibling branch and an
+        equality would have failed on whichever branch merged first. Both
+        wave-2 branches are together now, so the inventory is closed again: a
+        dashboard nobody documented is one nobody can be told to open, and a
+        documented uid with no file behind it is a dead link in the runbook."""
         uids = {dashboard["uid"] for dashboard in _dashboards().values()}
         assert uids == EXPECTED_UIDS
+
+    def test_the_wave_split_accounts_for_every_dashboard(self) -> None:
+        assert WAVE_ONE_UIDS | WAVE_TWO_UIDS == EXPECTED_UIDS
+        assert WAVE_ONE_UIDS.isdisjoint(WAVE_TWO_UIDS)
+
+    def test_the_wave_one_dashboards_are_still_there(self) -> None:
+        """Wave 2 adds dashboards; it never replaces one."""
+        uids = {dashboard["uid"] for dashboard in _dashboards().values()}
+        assert uids >= WAVE_ONE_UIDS
+
+    def test_the_wave_two_dashboards_exist(self) -> None:
+        uids = {dashboard["uid"] for dashboard in _dashboards().values()}
+        assert uids >= WAVE_TWO_UIDS
 
     def test_uids_and_titles_are_unique(self) -> None:
         dashboards = list(_dashboards().values())
@@ -105,10 +157,23 @@ class TestDashboardInventory:
             assert dashboard["editable"] is False, name
             assert "groovemap" in dashboard["tags"], name
 
-    def test_every_panel_uses_the_datasource_variable(self) -> None:
+    def test_every_panel_uses_a_datasource_variable(self) -> None:
+        allowed = {DATASOURCE_VARIABLE, TRACE_DATASOURCE_VARIABLE}
         for name, dashboard in _dashboards().items():
             uids = checker.collect_datasource_uids(dashboard)
-            assert uids == {DATASOURCE_VARIABLE}, (name, sorted(uids))
+            assert uids <= allowed, (name, sorted(uids))
+            assert DATASOURCE_VARIABLE in uids, name
+
+    def test_the_trace_datasource_is_confined_to_trace_panels(self) -> None:
+        for name, dashboard in _dashboards().items():
+            assert checker.check_trace_datasource(name, dashboard) == []
+
+    def test_a_dashboard_using_the_trace_variable_declares_it(self) -> None:
+        for name, dashboard in _dashboards().items():
+            if TRACE_DATASOURCE_VARIABLE not in checker.collect_datasource_uids(dashboard):
+                continue
+            variables = {variable["name"] for variable in dashboard["templating"]["list"]}
+            assert "DS_TEMPO" in variables, name
 
     def test_every_dashboard_defines_the_datasource_variable(self) -> None:
         for name, dashboard in _dashboards().items():
@@ -182,6 +247,73 @@ class TestAcceptancePanels:
         assert "groovemap_insights_last_success_seconds" in metrics
         assert "groovemap_mcp_tool_calls_total" in metrics
 
+    def test_runtime_covers_process_gc_event_loop_and_tokio(self) -> None:
+        metrics = self._metrics("runtime.json")
+        assert "process_cpu_utilization_ratio" in metrics
+        assert "process_cpu_time_seconds_total" in metrics, "Rust services have no utilisation gauge"
+        assert "process_memory_usage_bytes" in metrics
+        assert "process_memory_virtual_bytes" in metrics
+        assert "process_thread_count" in metrics
+        assert "process_open_file_descriptor_count" in metrics
+        assert "cpython_gc_collections_total" in metrics
+        assert "groovemap_runtime_event_loop_lag_seconds_bucket" in metrics
+        assert "groovemap_runtime_tokio_alive_tasks" in metrics
+        assert "groovemap_runtime_tokio_global_queue_depth" in metrics
+
+    def test_runtime_plots_event_loop_lag_at_p95_and_p99(self) -> None:
+        expressions = " ".join(_expressions(_dashboards()["runtime.json"]))
+        for quantile in ("0.95", "0.99"):
+            assert f"histogram_quantile({quantile}" in expressions
+
+    def test_neo4j_covers_the_graph_gauges_and_client_latency(self) -> None:
+        metrics = self._metrics("neo4j.json")
+        assert "groovemap_neo4j_up" in metrics
+        assert "groovemap_neo4j_nodes" in metrics
+        assert "groovemap_neo4j_relationships" in metrics
+        assert "groovemap_neo4j_transactions_active" in metrics
+        assert "groovemap_neo4j_store_size_bytes" in metrics
+        assert "db_client_operation_duration_seconds_bucket" in metrics
+
+    def test_neo4j_client_latency_is_scoped_to_the_graph(self) -> None:
+        """db.client.operation.duration is shared with PostgreSQL and Redis."""
+        for expr in _expressions(_dashboards()["neo4j.json"]):
+            if "db_client_operation_duration_seconds" in expr:
+                assert 'db_system_name="neo4j"' in expr, expr
+
+    def test_traces_covers_red_from_the_span_metrics(self) -> None:
+        metrics = self._metrics("traces.json")
+        assert "traces_span_metrics_calls_total" in metrics
+        assert "traces_span_metrics_duration_seconds_bucket" in metrics
+
+    def test_traces_plots_p50_p95_and_p99(self) -> None:
+        expressions = " ".join(_expressions(_dashboards()["traces.json"]))
+        for quantile in ("0.50", "0.95", "0.99"):
+            assert f"histogram_quantile({quantile}" in expressions
+
+    def test_traces_measures_errors_by_span_status(self) -> None:
+        """Span metrics carry an OTLP status enum, not an HTTP status class."""
+        expressions = " ".join(_expressions(_dashboards()["traces.json"]))
+        assert 'status_code="STATUS_CODE_ERROR"' in expressions
+
+    def test_traces_has_a_tempo_search_panel_bound_to_the_variable(self) -> None:
+        dashboard = _dashboards()["traces.json"]
+        search = [panel for panel in checker.iter_panels(dashboard) if TRACE_DATASOURCE_VARIABLE in checker.collect_datasource_uids(panel)]
+        assert search, "the Traces dashboard has no panel reading the trace store"
+        for panel in search:
+            assert panel["type"] in checker.TRACE_PANEL_TYPES
+            assert panel["datasource"] == {"type": "tempo", "uid": TRACE_DATASOURCE_VARIABLE}
+            assert any(target.get("query") for target in panel["targets"]), panel["title"]
+
+    def test_traces_red_panels_link_into_explore(self) -> None:
+        dashboard = _dashboards()["traces.json"]
+        links = [link for panel in checker.iter_panels(dashboard) for link in panel.get("fieldConfig", {}).get("defaults", {}).get("links", [])]
+        assert links, "no RED panel links into Explore"
+        for link in links:
+            assert link["url"].startswith("/explore?"), link
+            # The link resolves the trace datasource through the same variable
+            # the panels do, so it survives a rebuild that renames the uid.
+            assert TRACE_DATASOURCE_VARIABLE in link["url"], link
+
     def test_infrastructure_covers_all_three_exporters_and_the_collector(self) -> None:
         metrics = self._metrics("infrastructure.json")
         assert any(metric.startswith("rabbitmq_") for metric in metrics)
@@ -191,12 +323,90 @@ class TestAcceptancePanels:
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
 
+    def test_containers_covers_per_container_usage_and_host_saturation(self) -> None:
+        metrics = self._metrics("containers.json")
+        for metric in (
+            "container_cpu_usage_seconds_total",
+            "container_memory_working_set_bytes",
+            "container_spec_memory_limit_bytes",
+            "container_network_receive_bytes_total",
+            "container_network_transmit_bytes_total",
+            "container_fs_reads_bytes_total",
+            "container_fs_writes_bytes_total",
+            "container_start_time_seconds",
+        ):
+            assert metric in metrics, metric
+        for metric in (
+            "node_cpu_seconds_total",
+            "node_memory_MemAvailable_bytes",
+            "node_load1",
+            "node_disk_read_bytes_total",
+            "node_filesystem_avail_bytes",
+        ):
+            assert metric in metrics, metric
+
+    def test_containers_filters_by_the_compose_service_label(self) -> None:
+        """cAdvisor's own series carry no compose identity; the whitelisted
+        label is what ties a container back to a compose service."""
+        dashboard = _dashboards()["containers.json"]
+        container_expressions = [expr for expr in _expressions(dashboard) if "container_" in expr]
+        assert container_expressions
+        for expr in container_expressions:
+            assert "container_label_com_docker_compose_service" in expr, expr
+
+    def test_containers_all_excludes_series_without_the_compose_label(self) -> None:
+        """`.+`, not `.*`. In PromQL a missing label reads as the empty string,
+        so an `=~` matcher that accepts empty also selects every series that
+        LACKS the label — and cAdvisor with --store_container_labels=false
+        emits no compose label on the root cgroup or on any container started
+        outside this stack. With `.*` the default All view is silently
+        unfiltered: the container count includes the whole host, and each
+        panel gains a blank-legend series covering it."""
+        dashboard = _dashboards()["containers.json"]
+        variable = next(entry for entry in dashboard["templating"]["list"] if entry["name"] == "service")
+        assert variable["allValue"] == ".+"
+
+    def test_the_infrastructure_scrape_stat_covers_the_two_new_jobs(self) -> None:
+        """The stat queries the bare `up` series, so it counts every collector
+        scrape job; its description names them so a reader knows what to expect."""
+        dashboard = _dashboards()["infrastructure.json"]
+        panel = next(panel for panel in dashboard["panels"] if panel["title"] == "Scrape targets up")
+        assert [target["expr"] for target in panel["targets"]] == ["up"]
+        for job in ("cadvisor", "node-exporter"):
+            assert job in panel["description"], job
+
 
 class TestCatalogParsing:
     def test_catalog_yields_the_documented_metrics(self) -> None:
         catalog = checker.load_catalog()
         assert "groovemap_pipeline_messages_total" in catalog
         assert "http_server_request_duration_seconds" in catalog
+
+    def test_the_wave_two_metrics_are_catalogued(self) -> None:
+        """The dashboards below may only reference what this catalog names."""
+        catalog = checker.load_catalog()
+        for metric in (
+            "process_cpu_time_seconds_total",
+            "process_cpu_utilization_ratio",
+            "process_memory_usage_bytes",
+            "process_memory_virtual_bytes",
+            "process_thread_count",
+            "process_open_file_descriptor_count",
+            "process_context_switches_total",
+            "cpython_gc_collections_total",
+            "groovemap_runtime_event_loop_lag_seconds",
+            "groovemap_runtime_tokio_workers",
+            "groovemap_runtime_tokio_alive_tasks",
+            "groovemap_runtime_tokio_global_queue_depth",
+            "groovemap_neo4j_up",
+            "groovemap_neo4j_nodes",
+            "groovemap_neo4j_relationships",
+            "groovemap_neo4j_transactions_active",
+            "groovemap_neo4j_store_size_bytes",
+            "traces_span_metrics_calls_total",
+            "traces_span_metrics_duration_seconds",
+        ):
+            assert metric in catalog, metric
 
     def test_histogram_suffixes_are_derived(self) -> None:
         catalog = checker.load_catalog()
@@ -205,6 +415,35 @@ class TestCatalogParsing:
 
     def test_otel_dot_names_are_not_treated_as_prometheus_names(self) -> None:
         assert not any("." in name for name in checker.load_catalog())
+
+    def test_only_the_metric_catalog_section_widens_the_allowlist(self) -> None:
+        """Other tables in the document are not a back door into the catalog.
+
+        The Alerts table and the service inventory also put a backticked
+        identifier in their second column. Reading the whole file would let a
+        rule catalogue its own typo simply by tabulating it, and did admit
+        service names and git shas as metric names before gm-deployment-dqh.4.
+        """
+        catalog = checker.load_catalog()
+        for intruder in ("api", "insights", "dashboard", "graphinator", "tableinator"):
+            assert intruder not in catalog, f"{intruder!r} is a service name, not a metric"
+
+    def test_a_metric_added_outside_the_catalog_section_is_not_allowed(self, tmp_path: Path) -> None:
+        document = tmp_path / "observability.md"
+        document.write_text(
+            "## Metric catalog\n\n| OTEL | Prometheus |\n| --- | --- |\n| `a.b` | `real_metric_total` |\n"
+            "\n## Alerts\n\n| Rule | Expression |\n| --- | --- |\n| `Bogus` | `smuggled_metric_total` |\n",
+            encoding="utf-8",
+        )
+        catalog = checker.load_catalog(document)
+        assert "real_metric_total" in catalog
+        assert "smuggled_metric_total" not in catalog
+
+    def test_a_document_without_the_catalog_heading_catalogues_nothing(self, tmp_path: Path) -> None:
+        """Losing the heading must fail loudly, not silently widen the gate."""
+        document = tmp_path / "observability.md"
+        document.write_text("| OTEL | Prometheus |\n| --- | --- |\n| `a.b` | `orphan_metric_total` |\n", encoding="utf-8")
+        assert checker.load_catalog(document) == set()
 
     def test_every_metric_a_dashboard_uses_is_allowed(self) -> None:
         allowed = checker.load_catalog() | checker.EXPORTER_METRICS
@@ -296,6 +535,428 @@ class TestCheckerRejectsBrokenDashboards:
         assert any("no panel queries" in problem for problem in problems)
 
 
+def _trace_dashboard(panel_type: str = "table", uid: str = TRACE_DATASOURCE_VARIABLE, **overrides: Any) -> dict[str, Any]:
+    """A dashboard whose second panel reads the trace store."""
+    dashboard = _minimal_dashboard()
+    dashboard["templating"]["list"].append({"name": "DS_TEMPO", "type": "datasource"})
+    dashboard["panels"].append(
+        {
+            "datasource": {"type": "tempo", "uid": uid},
+            "title": "Trace search",
+            "type": panel_type,
+            "targets": [{"query": '{resource.service.name="api"}', "queryType": "traceql", "refId": "A"}],
+        }
+    )
+    dashboard.update(overrides)
+    return dashboard
+
+
+class TestCheckerScopesTheTraceDatasource:
+    """${DS_TEMPO} is allowed, but only where a trace can actually be drawn."""
+
+    allowed: ClassVar[set[str]] = {"groovemap_pipeline_messages_total"}
+
+    def test_the_trace_variable_is_accepted_on_a_trace_panel(self) -> None:
+        assert checker.check_dashboard(Path("ok.json"), _trace_dashboard(), self.allowed) == []
+
+    def test_every_trace_panel_type_is_accepted(self) -> None:
+        for panel_type in sorted(checker.TRACE_PANEL_TYPES):
+            dashboard = _trace_dashboard(panel_type=panel_type)
+            assert checker.check_dashboard(Path("ok.json"), dashboard, self.allowed) == [], panel_type
+
+    def test_a_raw_tempo_uid_is_rejected(self) -> None:
+        """The whole point of the variable: a pinned uid only resolves where it was exported."""
+        dashboard = _trace_dashboard(uid="tempo")
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("hard-coded datasource uid 'tempo'" in problem for problem in problems)
+
+    def test_a_generated_tempo_uid_is_rejected(self) -> None:
+        dashboard = _trace_dashboard(uid="PA5C4F1D2E3B6A7C8")
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("hard-coded datasource uid" in problem for problem in problems)
+
+    def test_the_trace_variable_on_a_metric_panel_is_rejected(self) -> None:
+        dashboard = _trace_dashboard(panel_type="timeseries")
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("only trace panels" in problem for problem in problems)
+
+    def test_the_trace_variable_without_its_variable_declaration_is_rejected(self) -> None:
+        dashboard = _trace_dashboard()
+        dashboard["templating"]["list"] = [{"name": "DS_PROMETHEUS", "type": "datasource"}]
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("without defining the DS_TEMPO datasource variable" in problem for problem in problems)
+
+    def test_the_trace_variable_outside_a_panel_is_rejected(self) -> None:
+        dashboard = _minimal_dashboard()
+        dashboard["templating"]["list"].append(
+            {"name": "DS_TEMPO", "type": "datasource"},
+        )
+        dashboard["annotations"] = {"list": [{"datasource": {"type": "tempo", "uid": TRACE_DATASOURCE_VARIABLE}}]}
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("referenced outside a panel" in problem for problem in problems)
+
+    def test_a_malformed_panel_entry_does_not_crash_the_gate(self) -> None:
+        """A hand-edited dashboard can hold junk; the gate reports, it does not raise."""
+        dashboard = _trace_dashboard()
+        dashboard["panels"].append(None)
+        dashboard["panels"][1]["panels"] = ["not a panel"]
+        assert checker.check_dashboard(Path("ok.json"), dashboard, self.allowed) == []
+
+    def test_a_trace_panel_nested_in_a_row_is_seen(self) -> None:
+        """Collapsed rows carry their panels inside themselves, not next to them."""
+        dashboard = _minimal_dashboard()
+        dashboard["templating"]["list"].append({"name": "DS_TEMPO", "type": "datasource"})
+        dashboard["panels"].append(
+            {
+                "collapsed": True,
+                "title": "Traces",
+                "type": "row",
+                "panels": [
+                    {
+                        "datasource": {"type": "tempo", "uid": TRACE_DATASOURCE_VARIABLE},
+                        "title": "Nested chart",
+                        "type": "timeseries",
+                        "targets": [{"query": "{}", "refId": "A"}],
+                    }
+                ],
+            }
+        )
+        problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
+        assert any("'Nested chart'" in problem for problem in problems)
+        assert not any("'Traces'" in problem for problem in problems), "the row itself is not the offender"
+
+
+ALERT_RULES = """
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: groovemap
+    folder: GrooveMap
+    interval: 1m
+    rules:
+      - uid: groovemap-queue-backlog
+        title: Queue backlog is growing
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              expr: sum(groovemap_pipeline_messages_total)
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              refId: C
+        annotations:
+          summary: A queue is backing up
+          description: 'Threshold: more than 50000 ready messages for 30m.'
+        labels:
+          severity: warning
+"""
+
+
+class TestCheckerLintsTheAlertRules:
+    """gm-deployment-dqh.4 provisions the rules; the gate must be ready for them
+    and must not fail the repository before they exist."""
+
+    allowed: ClassVar[set[str]] = {"groovemap_pipeline_messages_total"}
+
+    def _write(self, tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "groovemap.yaml"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_a_missing_file_is_not_a_failure(self, tmp_path: Path) -> None:
+        assert checker.check_alerting(self.allowed, tmp_path / "absent.yaml") == []
+
+    def test_the_repository_passes_whether_or_not_the_rules_exist(self) -> None:
+        assert checker.check_alerting(checker.load_catalog() | checker.EXPORTER_METRICS) == []
+
+    def test_a_well_formed_rule_file_passes(self, tmp_path: Path) -> None:
+        assert checker.check_alerting(self.allowed, self._write(tmp_path, ALERT_RULES)) == []
+
+    def test_an_uncatalogued_alert_metric_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("groovemap_pipeline_messages_total", "groovemap_typo_total")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("groovemap_typo_total" in problem for problem in problems)
+
+    def test_an_unknown_alert_datasource_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("datasourceUid: prometheus", "datasourceUid: PBFA97CFB590B2093")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("unknown datasource uid" in problem for problem in problems)
+
+    def test_a_file_with_no_groups_is_rejected(self, tmp_path: Path) -> None:
+        empty = "apiVersion: 1\ngroups: []\n"
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, empty))
+        assert any("provisions no alert rule groups" in problem for problem in problems)
+
+    def test_a_group_without_rules_is_rejected(self, tmp_path: Path) -> None:
+        body = "apiVersion: 1\ngroups:\n  - name: groovemap\n    folder: GrooveMap\n    rules: []\n"
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("has no rules" in problem for problem in problems)
+
+    def test_a_rule_without_a_title_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("        title: Queue backlog is growing\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("has no title" in problem for problem in problems)
+
+    def test_a_group_without_a_name_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("    name: groovemap\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("has no name" in problem for problem in problems)
+
+    def test_a_group_without_a_folder_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("    folder: GrooveMap\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("names no folder" in problem for problem in problems)
+
+    def test_the_wrong_api_version_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("apiVersion: 1", "apiVersion: 2")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("apiVersion must be 1" in problem for problem in problems)
+
+    def test_a_document_that_is_not_a_mapping_is_rejected(self, tmp_path: Path) -> None:
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, "- not a mapping\n"))
+        assert any("not a provisioning document" in problem for problem in problems)
+
+    def test_the_gate_runs_the_alerting_check(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main() must fail on a broken rule file, not merely offer the check."""
+        body = ALERT_RULES.replace("groovemap_pipeline_messages_total", "groovemap_typo_total")
+        monkeypatch.setattr(checker, "ALERTING_FILE", self._write(tmp_path, body))
+        assert checker.main() == 1
+
+    def test_the_gate_engages_on_the_real_rule_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The provisioned file is really linted, not merely present.
+
+        Renaming one catalogued metric in a copy of the shipped rules must fail
+        the whole gate; if it does not, ``check_alerting`` is looking somewhere
+        other than at the file Grafana loads.
+        """
+        assert ALERTING_FILE.is_file(), "gm-deployment-dqh.4 provisions the alert rules"
+        body = ALERTING_FILE.read_text(encoding="utf-8").replace("groovemap_neo4j_up", "groovemap_neo4j_reachable")
+        monkeypatch.setattr(checker, "ALERTING_FILE", self._write(tmp_path, body))
+        assert checker.main() == 1
+
+    def test_a_rule_without_a_summary_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          summary: A queue is backing up\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no summary annotation" in problem for problem in problems)
+
+    def test_a_rule_without_a_description_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          description: 'Threshold: more than 50000 ready messages for 30m.'\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no description annotation" in problem for problem in problems)
+
+    def test_a_rule_without_a_severity_label_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          severity: warning\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no severity label" in problem for problem in problems)
+
+    def test_a_rule_without_a_uid_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("      - uid: groovemap-queue-backlog\n", "      - \n")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("has no uid" in problem for problem in problems)
+
+    def test_a_uid_longer_than_grafana_allows_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("groovemap-queue-backlog", "g" * (checker.ALERT_RULE_UID_MAX_LENGTH + 1))
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("at most 40 characters" in problem for problem in problems)
+
+    def test_a_uid_with_illegal_characters_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("groovemap-queue-backlog", "groovemap.queue.backlog")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("letters, digits" in problem for problem in problems)
+
+    def test_a_duplicate_rule_uid_is_rejected(self, tmp_path: Path) -> None:
+        rule = ALERT_RULES.partition("    rules:\n")[2]
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, ALERT_RULES + rule))
+        assert any("used more than once" in problem for problem in problems)
+
+    def test_a_condition_that_names_no_refid_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("        condition: C\n", "        condition: D\n")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("which is not one of its refIds" in problem for problem in problems)
+
+    def test_a_rule_without_a_condition_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("        condition: C\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("names no condition" in problem for problem in problems)
+
+    def test_a_rule_with_no_promql_query_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("              expr: sum(groovemap_pipeline_messages_total)\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("runs no PromQL query" in problem for problem in problems)
+
+    def test_the_dashboard_datasource_variable_is_rejected_in_a_rule(self, tmp_path: Path) -> None:
+        """A rule is evaluated server-side, so ${DS_PROMETHEUS} never resolves."""
+        body = ALERT_RULES.replace("datasourceUid: prometheus", f"datasourceUid: '{DATASOURCE_VARIABLE}'")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("evaluated server-side and must name the uid directly" in problem for problem in problems)
+
+
+# The rules gm-deployment-dqh.4 provisions, and the severity each carries. The
+# set is closed: these are the rules docs/observability.md tabulates, and a rule
+# added or renamed without touching both is the drift this pins.
+EXPECTED_ALERT_SEVERITIES = {
+    "ScrapeTargetDown": "critical",
+    "CollectorDroppingPoints": "critical",
+    "ExtractorErrorRateHigh": "warning",
+    "ConsumerFailureRateHigh": "critical",
+    "CircuitBreakerOpen": "critical",
+    "QueueBacklogGrowing": "warning",
+    "ConsumersAbsent": "critical",
+    "InsightsStale": "warning",
+    "ApiErrorRateHigh": "critical",
+    "ApiLatencyHigh": "warning",
+    "PostgresConnectionsNearMax": "warning",
+    "RedisMemoryHigh": "warning",
+    "RabbitMqMemoryAlarm": "critical",
+    "Neo4jDown": "critical",
+    "EventLoopLagHigh": "warning",
+    "ContainerMemoryNearLimit": "warning",
+    "HostDiskLow": "warning",
+}
+
+
+def _alert_document() -> dict[str, Any]:
+    document: dict[str, Any] = yaml.safe_load(ALERTING_FILE.read_text(encoding="utf-8"))
+    return document
+
+
+def _alert_rules() -> list[dict[str, Any]]:
+    return [rule for group in _alert_document()["groups"] for rule in group["rules"]]
+
+
+class TestProvisionedAlertRules:
+    """The real rule file, checked for the properties an operator depends on."""
+
+    def test_the_rule_file_is_provisioned(self) -> None:
+        assert ALERTING_FILE.is_file(), f"missing {ALERTING_FILE}"
+        assert _alert_document()["apiVersion"] == 1
+
+    def test_one_group_in_the_groovemap_folder_evaluated_every_minute(self) -> None:
+        groups = _alert_document()["groups"]
+        assert len(groups) == 1, "one evaluation group keeps every rule on the same cadence"
+        group = groups[0]
+        assert group["name"] == "groovemap"
+        assert group["folder"] == "GrooveMap"
+        assert group["interval"] == "1m"
+        assert group["orgId"] == 1
+
+    def test_exactly_the_expected_rules_are_provisioned(self) -> None:
+        titles = [rule["title"] for rule in _alert_rules()]
+        assert sorted(titles) == sorted(EXPECTED_ALERT_SEVERITIES)
+        assert len(titles) == len(set(titles)), "rule titles must be unique"
+
+    def test_every_rule_carries_its_documented_severity(self) -> None:
+        for rule in _alert_rules():
+            assert rule["labels"]["severity"] == EXPECTED_ALERT_SEVERITIES[rule["title"]]
+
+    def test_every_rule_states_its_threshold_in_the_description(self) -> None:
+        """A page that does not say what it measured is not actionable."""
+        for rule in _alert_rules():
+            description = rule["annotations"]["description"]
+            assert "Threshold:" in description, f"{rule['title']} does not state a threshold"
+            assert rule["annotations"]["summary"].strip()
+
+    def test_every_rule_declares_its_no_data_and_error_behaviour(self) -> None:
+        for rule in _alert_rules():
+            assert rule["noDataState"] in {"NoData", "Alerting", "OK"}
+            assert rule["execErrState"] in {"Error", "Alerting", "OK"}
+            assert rule["for"], f"{rule['title']} fires instantly; every rule needs a `for`"
+
+    def test_only_three_canaries_report_missing_telemetry(self) -> None:
+        """Grafana's `NoData` default would raise a DatasourceNoData alert for
+        nearly every rule at once on a stack that is still starting up. One
+        canary per source of telemetry says the same thing once: the scrape
+        jobs, the services that push OTLP, and the graph probe."""
+        canaries = {rule["title"]: rule["noDataState"] for rule in _alert_rules() if rule["noDataState"] != "OK"}
+        assert canaries == {
+            # `up` returning nothing means there is no scrape data at all.
+            "ScrapeTargetDown": "NoData",
+            # A consumer gauge that stopped arriving is the alert itself.
+            "ConsumersAbsent": "Alerting",
+            # operations-console pushes this; it is not a scrape target.
+            "Neo4jDown": "NoData",
+        }
+
+    def test_a_failing_query_is_distinguishable_from_an_empty_one(self) -> None:
+        for rule in _alert_rules():
+            assert rule["execErrState"] == "Error", rule["title"]
+
+    def test_every_rule_queries_the_provisioned_prometheus_uid(self) -> None:
+        for rule in _alert_rules():
+            uids = {item["datasourceUid"] for item in rule["data"]}
+            assert "prometheus" in uids, f"{rule['title']} runs no Prometheus query"
+            assert uids <= {"prometheus", "__expr__"}
+            assert DATASOURCE_VARIABLE not in uids, "a rule cannot resolve a dashboard template variable"
+
+    def test_every_rule_condition_names_a_threshold_expression(self) -> None:
+        for rule in _alert_rules():
+            condition = rule["condition"]
+            node = next(item for item in rule["data"] if item["refId"] == condition)
+            assert node["datasourceUid"] == "__expr__"
+            assert node["model"]["type"] == "threshold"
+            evaluator = node["model"]["conditions"][0]["evaluator"]
+            assert evaluator["type"] in {"gt", "lt", "within_range", "outside_range"}
+            assert evaluator["params"], f"{rule['title']} has a threshold with no value"
+
+    def test_every_rule_expression_is_catalogued(self) -> None:
+        allowed = checker.load_catalog() | checker.EXPORTER_METRICS
+        assert checker.check_alerting(allowed, ALERTING_FILE) == []
+
+    def test_no_contact_point_or_notification_policy_is_provisioned(self) -> None:
+        """Wave 2 stops at the alert list; nobody has agreed to be woken up yet."""
+        for path in (PROVISIONING / "alerting").rglob("*.yaml"):
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for key in ("contactPoints", "policies", "muteTimes", "templates"):
+                assert key not in document, f"{path.name} provisions {key}"
+
+    def test_grafana_mounts_the_alerting_directory(self) -> None:
+        """The rules only exist if the provisioning mount reaches them."""
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        volumes = compose["services"]["grafana"]["volumes"]
+        assert "./config/grafana/provisioning:/etc/grafana/provisioning:ro" in volumes
+        assert ALERTING_FILE.parent.parent.name == "provisioning", "the rules must sit under the mounted directory"
+
+
+class TestAlertDocumentation:
+    """docs/observability.md is where an operator reads what will page them."""
+
+    @staticmethod
+    def _section() -> str:
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "\n## Alerts\n" in doc, "docs/observability.md has no Alerts section"
+        return doc.partition("\n## Alerts\n")[2].partition("\n## ")[0]
+
+    def test_the_alerts_table_lists_every_rule_with_its_severity(self) -> None:
+        section = self._section()
+        for title, severity in EXPECTED_ALERT_SEVERITIES.items():
+            row = next((line for line in section.splitlines() if line.startswith(f"| `{title}`")), None)
+            assert row is not None, f"the Alerts table does not list {title}"
+            assert severity in row, f"the Alerts table gives {title} a severity other than {severity}"
+            assert row.count("|") >= 5, f"the {title} row has no expression/threshold columns"
+
+    def test_the_no_data_canaries_are_documented(self) -> None:
+        section = self._section()
+        for canary in ("ScrapeTargetDown", "ConsumersAbsent", "Neo4jDown"):
+            assert f"| `{canary}` | `" in section or f"`{canary}`" in section, canary
+        assert "DatasourceNoData" in section
+        assert "noDataState" in section
+
+    def test_the_absence_of_a_contact_point_is_documented(self) -> None:
+        section = self._section()
+        assert "contact point" in section
+        assert "notification policy" in section
+
+    def test_the_raw_datasource_uid_is_explained(self) -> None:
+        section = self._section()
+        assert "DS_PROMETHEUS" in section
+        assert "`prometheus`" in section
+
+
 class TestCheckerEntryPoint:
     def test_the_real_repository_passes(self) -> None:
         assert checker.main() == 0
@@ -317,6 +978,28 @@ class TestDashboardDocumentation:
         assert "DS_PROMETHEUS" in doc
         for uid in EXPECTED_UIDS:
             assert uid in doc, f"docs/observability.md does not list {uid}"
+
+    def test_all_nine_dashboards_are_listed(self) -> None:
+        """The section is the operator's index; a dashboard missing from it is invisible."""
+        assert len(EXPECTED_UIDS) == 9
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        section = doc.partition("\n## Dashboards\n")[2].partition("\n### Provisioning\n")[0]
+        for uid in EXPECTED_UIDS:
+            assert f"`{uid}`" in section, f"the Dashboards section does not list {uid}"
+
+    def test_the_trace_datasource_rule_is_documented(self) -> None:
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "DS_TEMPO" in doc
+        assert "TraceQL" in doc
+
+    def test_the_wave_two_catalog_sections_exist(self) -> None:
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        for heading in ("### Runtime metrics", "### Neo4j metrics", "### Span metrics", "### Traces"):
+            assert f"\n{heading}\n" in doc, f"docs/observability.md has no {heading} section"
+
+    def test_the_trace_conventions_sit_with_the_other_conventions(self) -> None:
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert doc.index("\n## Conventions\n") < doc.index("\n### Traces\n") < doc.index("\n## Metric catalog\n")
 
 
 class TestCheckerMainDetectsFolderLevelProblems:

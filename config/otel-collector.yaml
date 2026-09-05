@@ -7,8 +7,11 @@
 # (no native gRPC dependency, works for one-shot jobs and stdio processes).
 # The gRPC receiver on 4317 stays enabled for future use.
 #
-# The collector remote-writes every series to Prometheus, which runs purely as
-# a remote-write receiver — see config/prometheus.yml.
+# The collector remote-writes every series to VictoriaMetrics, which accepts
+# the Prometheus remote-write protocol natively and needs no configuration file
+# of its own. Spans take the second pipeline below: they are pushed to
+# VictoriaTraces over OTLP/HTTP and, in the same pass, folded into RED span
+# metrics by the spanmetrics connector so they land in the metrics store too.
 
 receivers:
   otlp:
@@ -40,6 +43,18 @@ receivers:
           scrape_interval: 15s
           static_configs:
             - targets: ["otel-collector:8888"]
+        # 30s, not 15s: cadvisor exports a series per container per device and
+        # node-exporter a series per CPU, mode, and filesystem, so these two
+        # jobs dominate the sample count. Container and host saturation move
+        # over minutes, not seconds, and half the samples still show it.
+        - job_name: cadvisor
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["cadvisor:8080"]
+        - job_name: node-exporter
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["node-exporter:9100"]
 
 processors:
   # memory_limiter must be the FIRST processor in the pipeline so back-pressure
@@ -56,7 +71,7 @@ processors:
 exporters:
   prometheusremotewrite:
     http:
-      endpoint: http://prometheus:9090/api/v1/write
+      endpoint: http://victoria-metrics:8428/api/v1/write
       tls:
         # Plain HTTP over the internal `groovemap` bridge network. The exporter
         # enables TLS by default, so this must be set explicitly.
@@ -65,6 +80,32 @@ exporters:
     # deployment.environment.name, service.version) to Prometheus labels.
     resource_to_telemetry_conversion:
       enabled: true
+
+  # VictoriaTraces ingests OTLP/HTTP natively on its own insert path. The
+  # `http://` scheme already selects plaintext, so no tls block is needed.
+  otlphttp/victoria_traces:
+    traces_endpoint: http://victoria-traces:10428/insert/opentelemetry/v1/traces
+
+connectors:
+  # RED metrics derived from spans, so latency and error rate exist for every
+  # instrumented operation without a service emitting a single extra
+  # instrument. The namespace makes the Prometheus names
+  # `traces_span_metrics_calls_total` and `traces_span_metrics_duration_seconds`.
+  spanmetrics:
+    namespace: traces.span.metrics
+    histogram:
+      # Seconds, matching every other GrooveMap histogram, with explicit
+      # buckets — the catalog is Prometheus-facing and exponential histograms
+      # do not survive remote write intact.
+      unit: s
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2500ms, 5s, 10s]
+    # service.name, span.name, span.kind and status.code are the connector's
+    # built-in dimensions and are exactly the label set the conventions
+    # declare, so no extra dimensions are configured. collector.instance.id is
+    # added by default in this version and is dropped: there is one collector
+    # in this stack, so it only adds a constant label to every series.
+    exclude_dimensions: [collector.instance.id]
 
 extensions:
   # Liveness endpoint for operators and for `docker compose exec`-free probing
@@ -89,6 +130,10 @@ service:
                 port: 8888
   pipelines:
     metrics:
-      receivers: [otlp, prometheus]
+      receivers: [otlp, prometheus, spanmetrics]
       processors: [memory_limiter, batch]
       exporters: [prometheusremotewrite]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [spanmetrics, otlphttp/victoria_traces]

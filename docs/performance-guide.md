@@ -651,7 +651,8 @@ Before deployment, ensure:
 
 ### Monitoring Tools
 
-- **Prometheus**: Metrics collection
+- **VictoriaMetrics**: Metrics storage, fed by the OpenTelemetry collector
+- **VictoriaTraces**: Trace storage, fed by the same collector
 - **Grafana**: Metrics visualization
 - **htop**: System resource monitoring
 - **iotop**: I/O monitoring

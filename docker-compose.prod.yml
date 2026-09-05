@@ -43,6 +43,11 @@ secrets:
 # unchanged; only the resource attributes are re-stamped.
 x-otel-prod-env: &otel-prod-env
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=prod"
+  # Production keeps a tenth of the traces. The sampler itself
+  # (`parentbased_traceidratio`) is unchanged from the base file, so a trace
+  # sampled at the edge is still recorded end to end — only the head rate at
+  # the edge changes.
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
 
 services:
   rabbitmq:
@@ -249,14 +254,31 @@ services:
     secrets:
       - redis_password
 
-  # The base file publishes 9090 on 0.0.0.0 for local PromQL work. Prometheus
-  # has no authentication of its own and its API can delete series, so in prod
-  # it is bound to loopback and reached through Grafana (or an SSH tunnel).
-  # `!override` fully replaces (not merges) the base publish.
-  prometheus:
+  # Neither host exporter publishes a port and neither takes a credential, so
+  # prod only needs the restart policy. cadvisor's two capabilities and its
+  # /dev/kmsg device are the same in both environments: they are what make OOM
+  # events observable at all, and production is where that matters most.
+  cadvisor:
+    restart: always
+
+  node-exporter:
+    restart: always
+
+  # The base file publishes 8428 on 0.0.0.0 for local PromQL work.
+  # VictoriaMetrics has no authentication of its own and its API can delete
+  # series, so in prod it is bound to loopback and reached through Grafana (or
+  # an SSH tunnel). `!override` fully replaces (not merges) the base publish.
+  victoria-metrics:
     restart: always
     ports: !override
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:8428:8428"
+
+  # Same reasoning for the trace store: 10428 accepts unauthenticated span
+  # ingest as well as queries, so it never faces the host's public interfaces.
+  victoria-traces:
+    restart: always
+    ports: !override
+      - "127.0.0.1:10428:10428"
 
   otel-collector:
     restart: always
