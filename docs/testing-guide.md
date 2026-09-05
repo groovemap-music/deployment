@@ -74,6 +74,10 @@ must never be copied into an environment `.env` file.
 Real environments must use approved `ghcr.io/groovemap-music/<repository>`
 references pinned with `@sha256:<manifest-digest>`.
 
+The reviewed release digests are not kept in either environment file. They live
+in `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py`, which is what
+`just smoke-released` validates a candidate `.env` against.
+
 ## Live and performance checks
 
 The following commands are intentionally outside `just check` and CI because
@@ -85,11 +89,16 @@ resources:
 | `just smoke` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-media` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-infra` | Operator approval to start the infrastructure smoke stack |
+| `just smoke-released` | Operator approval and a reviewed `GM_RELEASED_STACK_ENV_FILE` containing approved digests for every internal image |
 | `just performance` | Operator approval, a running target environment, and an approved performance-runner image |
 | `just down` | Operator approval because it changes the current environment |
 
 Do not use these commands as substitutes for the static gate. Record the exact
 environment, image digests, and outcome when an operator approves a live test.
+`just smoke-released` rejects mutable tags and validation-only digests before
+starting containers, runs the schema initializer twice before applications,
+waits for service health, exercises graceful consumer shutdown, and retains
+service status and logs on failure.
 
 ### The canonical media assertion
 

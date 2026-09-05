@@ -23,11 +23,28 @@ released image into the stack.
 | `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
 | `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
 
-The repository name is also the GHCR image name:
+Each primary image therefore has the form
+`ghcr.io/groovemap-music/<source-repository>`. An auxiliary image appends its
+role to the owning repository name. The performance runner is owned by
+`catalog-api` and uses
+`ghcr.io/groovemap-music/catalog-api-performance`; deployment does not publish
+it.
 
-```text
-ghcr.io/groovemap-music/<repository>
-```
+## Compatibility identifiers
+
+The Compose service keys, hostnames, and `groovemap-*` container names in the
+table are retained runtime contracts. They appear in service discovery,
+operator commands, volumes, and health checks, so changing them would be an
+environment migration. Names such as `graphinator`, `tableinator`, `explore`,
+and `insights` describe those compatibility identifiers only; the source
+repository and GHCR path are the canonical service and artifact identities.
+
+RabbitMQ exchanges and queues are also retained wire contracts. The
+`groovemap-discogs-*`, `groovemap-musicbrainz-*`, `graphinator-*`,
+`tableinator-*`, `brainzgraphinator-*`, and `brainztableinator-*` names must
+remain compatible across independently released producers and consumers. See
+the [message queue architecture](architecture.md#message-queue-architecture)
+for the exact topology.
 
 ## Promotion requirements
 

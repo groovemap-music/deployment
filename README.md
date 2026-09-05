@@ -19,16 +19,17 @@ just check
 
 `just check` is credential-free: it validates formatting, image ownership and
 digest policy, base and production Compose merges, deployment regression tests,
-and secret leaks. `config/validation.env` contains non-published dummy digests
-used only for syntax validation.
+and secret leaks. `config/validation.env` pins the reviewed released-image
+manifests used for static Compose validation without starting the stack.
 
 `just build` validates both Compose configurations without starting containers.
+The [quick start](docs/quick-start.md) explains the complete local workflow.
 
 ## Configure an environment
 
 1. Copy `.env.example` to untracked `.env`.
-2. Replace every image placeholder with an approved GHCR reference containing
-   `@sha256:` and the manifest digest. Tags alone are not accepted.
+2. Review the pinned GHCR manifests and update them only when promoting another
+   approved release. Tags alone are not accepted.
 3. For production, run `just secrets-bootstrap` locally. It creates untracked
    `secrets/` files with restrictive permissions and never prints values.
 4. Review `docker compose config` or `just config-prod` in full.
@@ -85,5 +86,12 @@ affected-record count, and rollback procedure. `just check` and CI never invoke 
 - CI performs source/Compose validation only. It neither starts the production
   stack nor reads deployment secrets.
 
-See the [documentation index](docs/README.md) for architecture, configuration,
-operations, testing, and troubleshooting guidance.
+Primary GrooveMap images are named after their source repositories. The stack
+retains shorter Compose service names such as `api`, `graphinator`, and
+`dashboard` because they are internal DNS and operator compatibility
+identifiers, not product or image names. See the local [container image and
+identifier map](docs/dockerfile-standards.md) and [architecture
+guide](docs/architecture.md) for the complete mapping.
+
+The [documentation index](docs/README.md) links configuration, operations,
+testing, performance, and troubleshooting guidance.
