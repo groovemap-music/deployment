@@ -454,7 +454,7 @@ reconciled against a running stack by the end-to-end verification.
 | `process.thread.count` | `process_thread_count` | gauge | — |
 | `process.open_file_descriptor.count` | `process_open_file_descriptor_count` | gauge | — |
 | `process.context_switches` | `process_context_switches_total` | counter | `type` (`voluntary`\|`involuntary`) |
-| `cpython.gc.collections` | `cpython_gc_collections_total` | counter (`{collection}`) | `cpython.gc.generation` (`0`\|`1`\|`2`) |
+| `cpython.gc.collections` | `cpython_gc_collections_total` | counter (`{collection}`) | `generation` and `cpython.gc.generation`, both (`0`\|`1`\|`2`) |
 | `groovemap.runtime.event_loop.lag` | `groovemap_runtime_event_loop_lag_seconds` | histogram (s) | — |
 | `groovemap.runtime.tokio.workers` | `groovemap_runtime_tokio_workers` | gauge | — |
 | `groovemap.runtime.tokio.alive_tasks` | `groovemap_runtime_tokio_alive_tasks` | gauge | — |
@@ -803,16 +803,41 @@ It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the four exporters
 collector, VictoriaMetrics, VictoriaTraces, Grafana, and every application
 service.
 
-`--wait` blocks on container health. The Python service images ship no `curl`,
-while the compose healthchecks for those services invoke `curl`, so on a stack
-built from those images `--wait` never converges even though every service is
-running and exporting. When that happens, start without the gate and read the
-image's own healthcheck instead:
+`--wait` blocks on container health. On the wave-2 images it converges: the
+Python service images carry a `python -c urlopen` healthcheck rather than one
+that shells out to `curl`, and both extractor images do ship `curl`, which their
+compose healthcheck still invokes. That was not true of the wave-1 images, whose
+Python healthchecks called a `curl` the image did not contain, so `--wait` hung
+on a stack where every service was in fact running and exporting.
+
+A hang is therefore now a real failure rather than a known quirk — but read the
+container's own healthcheck before concluding anything, because a service can be
+exporting perfectly while its probe is misconfigured:
 
 ```bash
 docker compose up -d
 docker compose ps --format '{{.Service}}\t{{.State}}\t{{.Status}}'
 ```
+
+**Both extractors start downloading real monthly dumps the moment they start.**
+Neither takes a fixture or a size limit: `discogs-ingestion` scrapes the Discogs
+dump index, and `musicbrainz-ingestion` its own, then pulls the whole set before
+parsing any of it. That is tens of gigabytes, at whatever rate the link allows,
+onto the Docker VM's data filesystem. It is what filled the volume and corrupted
+the VM during the first execution of this runbook.
+
+Watch the free space for as long as they run, and stop them as soon as the
+evidence you came for is in:
+
+```bash
+docker run --rm --privileged -v /var/lib/docker:/d:ro alpine df -h /d
+docker compose stop extractor-discogs extractor-musicbrainz
+```
+
+The extractors are worth starting anyway: they are the only source of the
+`groovemap_runtime_tokio_*` gauges, of the Rust `process.*` rows, and of a real
+`publish` span. A couple of minutes of running is enough for all three, and the
+first entity's records begin publishing as soon as the last file has downloaded.
 
 ### 3. Confirm the collector is receiving data points
 
@@ -826,11 +851,20 @@ docker compose exec victoria-metrics \
   wget -qO- http://otel-collector:8888/metrics | grep -E '^otelcol_(receiver|exporter)_'
 ```
 
-Expect non-zero `otelcol_receiver_accepted_metric_points_total` for both the
-`otlp` receiver (the application push path) and the `prometheus` receiver (the
-infrastructure scrape path), a matching
-`otelcol_exporter_sent_metric_points_total` for `prometheusremotewrite`, and
-zero on the `refused` and `send_failed` counters.
+Expect non-zero `otelcol_receiver_accepted_metric_points` for both the `otlp`
+receiver (the application push path) and the `prometheus` receiver (the
+infrastructure scrape path), a matching `otelcol_exporter_sent_metric_points`
+for `prometheusremotewrite`, and zero on the `refused` and `failed` counters.
+Once services push spans, `otelcol_receiver_accepted_spans` climbs on the `otlp`
+receiver and `otelcol_exporter_sent_spans` on `otlphttp/victoria_traces`.
+
+The names on `:8888` carry **no** `_total` suffix. The suffix is added by the
+remote-write translation, so the same counters are
+`otelcol_receiver_accepted_metric_points_total` and
+`otelcol_exporter_sent_metric_points_total` once they reach VictoriaMetrics —
+which is the form the Infrastructure dashboard and the `CollectorDroppingPoints`
+rule query, and the form the catalog allowlist names. Grepping `:8888` for the
+suffixed name finds nothing and looks exactly like a dead collector.
 
 The collector's liveness endpoint answers on the same network:
 
@@ -924,7 +958,202 @@ and no messages in flight, leaves the pipeline and extraction panels blank
 while the infrastructure, API, and schema panels fill immediately. Drive the
 pipeline before concluding a panel is broken.
 
-### 6. Confirm Grafana has all nine dashboards
+### 6. Confirm the wave-2 series in detail
+
+Step 5 proves each dashboard's headline panel can fill. These queries prove the
+series wave 2 added are present with the labels the catalog promises, which is
+what tells a runtime, Neo4j, span, container, or host panel apart from a panel
+whose metric never arrived.
+
+Runtime. The `process.*` instruments come from
+`opentelemetry-instrumentation-system-metrics` on Python and from `/proc/self`
+on Rust, so the first four answer for every service and the rest split by
+language:
+
+```bash
+# Every service — CPU seconds, resident and virtual memory, threads, descriptors
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name, type) (rate(process_cpu_time_seconds_total[5m]))'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=count by (service_name) (process_memory_virtual_bytes)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (process_thread_count)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (process_open_file_descriptor_count)'
+
+# Python only — utilisation ratio, context switches, GC, and event-loop lag
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (process_cpu_utilization_ratio)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name, type) (rate(process_context_switches_total[5m]))'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name, cpython_gc_generation) (rate(cpython_gc_collections_total[5m]))'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.95, sum by (le, service_name) (rate(groovemap_runtime_event_loop_lag_seconds_bucket[5m])))'
+
+# Rust only — the three tokio gauges, one series per extractor
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (groovemap_runtime_tokio_workers)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (groovemap_runtime_tokio_alive_tasks)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (groovemap_runtime_tokio_global_queue_depth)'
+```
+
+`process_cpu_time_seconds_total` carries `type` on Python and `cpu_mode` on
+Rust, which is why the query sums over the label rather than filtering on it. An
+empty `cpython_gc_collections_total` with a populated `process_thread_count`
+means the service is Rust, not that the instrument broke.
+
+Neo4j. All five gauges come from `operations-console` (`dashboard`); an empty
+result for every one of them means that service is not emitting, not that the
+graph is down:
+
+```bash
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=groovemap_neo4j_up'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=groovemap_neo4j_transactions_active'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (type) (groovemap_neo4j_relationships)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (store) (groovemap_neo4j_store_size_bytes)'
+```
+
+`groovemap_neo4j_store_size_bytes` is the one gauge whose absence is not a
+fault: `dbms.queryJmx` does not answer on every Community build, and the
+convention is to omit the series rather than report a zero.
+
+Span metrics. Nothing emits these — the collector's `spanmetrics` connector
+derives them from arriving spans, so a non-empty result is proof the traces
+pipeline is carrying data, independent of the trace store:
+
+```bash
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (span_kind) (rate(traces_span_metrics_calls_total[5m]))'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_seconds_bucket[5m])))'
+```
+
+`span_kind` should show `SPAN_KIND_SERVER`, `SPAN_KIND_CLIENT`,
+`SPAN_KIND_PRODUCER`, `SPAN_KIND_CONSUMER`, and `SPAN_KIND_INTERNAL` — the OTLP
+enum names, not the short forms.
+
+Containers and host, from the two scrape jobs step 4 added:
+
+```bash
+# One row per compose service, from the cadvisor container label
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=count by (container_label_com_docker_compose_service) (container_last_seen)'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes)'
+
+# The host node-exporter measures: on Docker Desktop and Colima this is the VM
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=node_load1'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (mode) (rate(node_cpu_seconds_total[5m]))'
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=1 - node_filesystem_avail_bytes / node_filesystem_size_bytes'
+```
+
+Scrape targets. `up` is synthesised by the collector's Prometheus receiver, one
+series per job, and survives remote write into VictoriaMetrics. Every canary in
+the alert rules rests on that, so confirm it directly rather than inferring it
+from the exporters' own series:
+
+```bash
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=min by (job) (up)'
+```
+
+Expect one row per scrape job, each `1`: `cadvisor`, `node-exporter`,
+`otelcol-contrib`, `postgres-exporter`, `rabbitmq`, `redis-exporter`. The
+collector's own job is labelled `otelcol-contrib` for the reason step 4 gives.
+
+### 7. Confirm one trace spans a publish and a consume
+
+The traces pipeline is only proved end to end when a producer's span and a
+consumer's span are in the *same* trace, because that is what the `traceparent`
+header carried over AMQP is for. Everything before this step would still pass if
+propagation were broken and each service simply started its own trace.
+
+The trace store answers TraceQL rather than PromQL, so this query goes to
+VictoriaTraces' Tempo API and not to VictoriaMetrics:
+
+```bash
+# Find a trace that contains an extractor's publish span
+curl -sG 'http://localhost:10428/select/tempo/api/search' \
+  --data-urlencode 'q={name=~"publish .*"}' \
+  --data-urlencode 'limit=5'
+
+# Then read the whole trace and list its spans by service and kind
+TRACE_ID=<traceID from the search above>
+curl -s "http://localhost:10428/select/tempo/api/traces/${TRACE_ID}" \
+  | python3 -c '
+import collections, json, sys
+counts = collections.Counter()
+for batch in json.load(sys.stdin)["batches"]:
+    service = {a["key"]: list(a["value"].values())[0] for a in batch["resource"]["attributes"]}["service.name"]
+    for scope in batch["scopeSpans"]:
+        for span in scope["spans"]:
+            counts[(service, span["kind"], span["name"])] += 1
+for (service, kind, name), n in sorted(counts.items(), key=lambda kv: -kv[1]):
+    print("%6d  %-24s %-20s %s" % (n, service, kind, name))
+'
+```
+
+The spans are counted rather than listed because a real trace is large: the
+extractor opens one `extract {source} {entity}` root span per **file**, so every
+publish and every downstream consume for that whole file hangs off one root. A
+partial artists file produced a trace of 69,760 spans during the 2026-09-05 run.
+`kind` comes back as the OTLP enum name (`SPAN_KIND_PRODUCER`), the same string
+the span metrics carry, not as the integer the OTLP wire format uses.
+
+A pass is one trace holding a `publish {exchange}` span of kind `PRODUCER` under
+an extractor's `service.name`, and at least one `process {queue}` span of kind
+`CONSUMER` under a loader's or enricher's. The database `CLIENT` spans and the
+`flush {store} {entity}` `INTERNAL` span the consumer opens around its batch
+write come along in the same trace, which is the point of the whole exercise.
+
+Two syntax details cost time. VictoriaTraces accepts `{kind=producer}` but not
+Tempo's `{span:kind=producer}`, so use the short form. And a `=~` matcher takes
+an RE2 regular expression: Grafana's *default* interpolation of a multi-value
+dashboard variable is a glob (`{api,insights}`), which RE2 reads as a literal and
+which therefore matches nothing. That is why the Traces dashboard's search panel
+interpolates `${service:regex}` rather than `$service` — the `regex` format
+produces `(api|insights)`, which does match.
+
+### 8. Confirm the alert rules are evaluating
+
+Rules are provisioned read-only from
+`config/grafana/provisioning/alerting/groovemap.yaml`. Grafana provisions the
+whole file or none of it, so a single malformed rule is a silent loss of all
+seventeen:
+
+```bash
+curl -s 'http://localhost:3000/api/v1/provisioning/alert-rules' \
+  | python3 -c 'import json,sys; print(len(json.load(sys.stdin)), "rules provisioned")'
+
+curl -s 'http://localhost:3000/api/prometheus/grafana/api/v1/rules' \
+  | python3 -c '
+import json, sys
+for group in json.load(sys.stdin)["data"]["groups"]:
+    for rule in group["rules"]:
+        print("%-32s %-9s health=%s" % (rule["name"], rule["state"], rule["health"]))
+'
+```
+
+Expect seventeen rules in folder `GrooveMap`, group `groovemap`. `state` is
+`inactive` for a healthy stack, `pending` once a condition has held for less than
+its `for` duration, and `alerting` after. `health` is `ok` for a rule that
+evaluated, `nodata` for one whose query returned nothing — which is the correct
+state for `Neo4jDown` and `ScrapeTargetDown` until their series exist, and is why
+those two are the rules that declare `noDataState: NoData`.
+
+### 9. Confirm Grafana has all nine dashboards
 
 Development enables anonymous `Viewer` access, so `http://localhost:3000` opens
 the dashboards in a browser without a login. The search API is the scriptable
@@ -958,7 +1187,7 @@ A dashboard missing from an otherwise good listing, when the file does exist in
 `config/grafana/dashboards`, means the provisioning mount or the provider file
 is wrong, not the dashboard.
 
-### 7. Tear the stack down
+### 10. Tear the stack down
 
 ```bash
 docker compose down -v
@@ -1049,7 +1278,236 @@ and must not be read as passing.
 | `mcp-server` | Not a compose service, so this stack cannot exercise it at all. Its telemetry landed at `511845d`. |
 
 Re-running the whole runbook is the way to close these; there is no shortcut
-that turns the partial evidence into a pass.
+that turns the partial evidence into a pass. The 2026-09-05 record below is that
+re-run: it closes the Grafana listing, the clean pass, and `graphinator`, and it
+leaves `mcp-server` open for the same reason.
+
+### Second execution, 2026-09-05
+
+Wave 2's run. It exercised the VictoriaMetrics backend, the VictoriaTraces
+pipeline, the runtime, Neo4j, span, container, and host series, and the
+seventeen provisioned alert rules, against images built from every service
+repository's `main`. It also closes three of the four gaps the 2026-09-03 record
+left open.
+
+**Images.** Nothing wave 2 produced is published to GHCR yet, so every image was
+built on the workstation from its repository's local `main` and tagged
+`<name>:local`; a local, uncommitted `.env` pointed each compose image variable
+at that tag. The Python images were built through each repository's
+`just image`, whose `prepare-runtime-wheel.sh` step builds the
+`groovemap-runtime` wheel from a clean checkout of `python-libraries` at the
+revision that repository pins — `455523e` for every service except, before its
+wave-2 molecule landed mid-run, `operations-console`. The two Rust images were
+built by their own `just image`. The identifiers below are local image IDs, not
+registry manifest digests: nothing was pushed, so no manifest digest exists.
+
+| Repository | Commit | Local image ID | Compose service |
+| --- | --- | --- | --- |
+| `database-schema` | `91cbf6e` | `f09f251fa403` | `schema-init` |
+| `catalog-api` | `acdf9be` | `43db9627e2b0` | `api` |
+| `graph-explorer` | `9ef18c8` | `06b9263a6175` | `explore` |
+| `analytics-engine` | `ec733f2` | `850ee3515037` | `insights` |
+| `operations-console` | `b563f10` | `82783d1d7f4d` | `dashboard` |
+| `discogs-sql-loader` | `c3fba8f` | `565a10972608` | `tableinator` |
+| `musicbrainz-sql-loader` | `8b5f346` | `82e85eed5b07` | `brainztableinator` |
+| `discogs-graph-enricher` | `ab23f7b` | `2c4617be0c4c` | `graphinator` |
+| `musicbrainz-graph-enricher` | `c6e3514` | `76a54865f518` | `brainzgraphinator` |
+| `discogs-ingestion` | `403e70f` | `cc4c6b9e429d` | `extractor-discogs` |
+| `musicbrainz-ingestion` | `0aa08e2` | `76bdbd106a43` | `extractor-musicbrainz` |
+
+Every third-party image was the digest-pinned reference already committed in
+`docker-compose.yml`, unchanged for this run.
+
+`operations-console` was rebuilt during the run. The stack first came up on
+`b5e11d0`, which still pinned `python-libraries` at the pre-wave-2 revision
+`41805b6` and emitted no Neo4j gauges, no runtime metrics, and no spans; the
+Neo4j dashboard and `Neo4jDown` were unexercisable while it ran. Its wave-2
+molecule landed on local `main` as `b563f10` partway through, and the numbers
+below are from the rebuilt image. The earlier state is recorded because it is
+exactly what a service that has not adopted looks like from the backend: present
+and healthy, silent on every wave-2 series.
+
+**`--wait` converges now.** `docker compose up -d --wait` returned `0` in fifteen
+seconds with every service healthy. The wave-1 record's `curl` caveat no longer
+applies: the Python images carry a `python -c urlopen` healthcheck, and both
+extractor images ship the `curl` their compose healthcheck calls.
+
+**`service_name` values observed.** Seventeen, from step 4 — the full roll call
+for the first time. Pushed by services: `api`, `brainzgraphinator`,
+`brainztableinator`, `dashboard`, `explore`, `extractor-discogs`,
+`extractor-musicbrainz`, `graphinator`, `insights`, `schema-init`,
+`tableinator` — all eleven wired services. From the scrape jobs: `cadvisor`,
+`node-exporter`, `otelcol-contrib`, `postgres-exporter`, `rabbitmq`,
+`redis-exporter`.
+
+**`up` is queryable.** `min by (job) (up)` returned `1` for all six scrape jobs
+(`cadvisor`, `node-exporter`, `otelcol-contrib`, `postgres-exporter`,
+`rabbitmq`, `redis-exporter`). The collector's Prometheus receiver synthesises
+the series and remote write carries it into VictoriaMetrics intact, which is
+what `ScrapeTargetDown` rests on.
+
+**Runtime series split by language exactly as the catalog says.** The four
+`/proc`-derived rows — `process_cpu_time_seconds_total`,
+`process_memory_usage_bytes`, `process_thread_count`,
+`process_open_file_descriptor_count` — answered for all eleven services.
+`cpython_gc_collections_total`, `process_cpu_utilization_ratio`,
+`process_memory_virtual_bytes`, and `process_context_switches_total` answered for
+the nine Python services only. `groovemap_runtime_event_loop_lag_seconds`
+answered for eight: every Python service except `schema-init`, which is one-shot
+and has no long-running loop to sample. The three `groovemap_runtime_tokio_*`
+gauges answered for the two Rust extractors only.
+
+`cpython_gc_collections_total` arrives carrying **both** `generation` and
+`cpython_gc_generation`, not one or the other; the catalog row was corrected to
+say so. `process_cpu_time_seconds_total` carries `type` on Python, as the catalog
+already noted.
+
+**Neo4j gauges.** `groovemap_neo4j_up`, `groovemap_neo4j_transactions_active`,
+`groovemap_neo4j_nodes` (ten series, one per constrained label) and
+`groovemap_neo4j_relationships` (twenty-one series, one per relationship type)
+all arrived from `dashboard` once it ran the wave-2 image. The closed attribute
+sets held: no label or type outside the declared lists appeared.
+`groovemap_neo4j_store_size_bytes` was **absent**, which is the documented
+correct behaviour — `dbms.queryJmx` does not answer on this Neo4j Community
+build, and the series is omitted rather than reported as zero.
+
+**Span metrics and the trace path.** The `spanmetrics` connector produced
+`traces_span_metrics_calls_total` and `traces_span_metrics_duration_seconds` for
+every instrumented service, with `span_kind` taking all five OTLP enum names —
+`SPAN_KIND_INTERNAL`, `SPAN_KIND_CLIENT`, `SPAN_KIND_SERVER`,
+`SPAN_KIND_CONSUMER`, `SPAN_KIND_PRODUCER` — and no short forms. The collector
+accepted 142,949 spans on its `otlp` receiver with zero refused and zero failed,
+and had sent 142,910 of them to `otlphttp/victoria_traces`; the difference was
+the batch still in flight.
+
+One trace, `53e1e0be1d203701398e8e7e678a65d4`, spans the whole pipeline:
+
+| Spans | Service | Kind | Name |
+| ---: | --- | --- | --- |
+| 338 | `extractor-discogs` | `SPAN_KIND_PRODUCER` | `publish groovemap-discogs-artists` |
+| 34,175 | `tableinator` | `SPAN_KIND_CONSUMER` | `process artists` |
+| 34,175 | `graphinator` | `SPAN_KIND_CONSUMER` | `process discogs-graph-enricher-artists` |
+| 450 | `graphinator` | `SPAN_KIND_INTERNAL` | `flush neo4j artist` |
+| 450 | `graphinator` | `SPAN_KIND_CLIENT` | `session neo4j` |
+| 86 | `tableinator` | `SPAN_KIND_INTERNAL` | `flush postgresql artists` |
+| 86 | `tableinator` | `SPAN_KIND_CLIENT` | `session postgresql` |
+
+That is the acceptance in one object: a real extractor `publish` PRODUCER span
+and real consumer `process` CONSUMER spans in a single trace, which is only
+possible if the `traceparent` header survives the AMQP hop. The database `CLIENT`
+spans and the batch `flush` `INTERNAL` spans came along with it.
+
+The trace is also 69,760 spans, from a partial artists file. The extractor opens
+one `extract {source} {entity}` root span per **file**, and every publish and
+every downstream consume hangs off that one root, so a completed releases file
+would put tens of millions of spans under it. That is a design problem rather
+than a verification failure, and it is recorded in the not-verified table below.
+
+Two consumers name the same destination differently: `tableinator` opens
+`process artists` while `graphinator` opens
+`process discogs-graph-enricher-artists`. The convention is
+`process {messaging.destination.name}`, so one of the two is naming its queue and
+the other its entity. Also a follow-up, not a wave-2 regression.
+
+**Panels with data**, from running every panel's queries against the run window:
+
+| Dashboard | Panels returning series |
+| --- | ---: |
+| Runtime | 10 of 10 |
+| Containers & host | 14 of 14 |
+| Consumers | 10 of 10 |
+| Neo4j | 9 of 10 |
+| Infrastructure | 17 of 20 |
+| Pipeline overview | 8 of 10 |
+| API services | 8 of 16 |
+| Traces | 6 of 7 |
+| Ingestion | 5 of 8 |
+
+The Traces dashboard's seventh panel is the TraceQL `Trace search` table, which
+queries the Tempo datasource rather than VictoriaMetrics and so cannot be counted
+by a PromQL sweep; it was confirmed separately against the Tempo API in step 7.
+
+**Why each panel was empty.** Three different reasons, and only one of them is a
+fault.
+
+*The series exist but carry no sample inside the query window.* `Schema
+initialisation duration`, `Insights computation duration p95`, and `Cache hit
+ratio` all query series that are present in VictoriaMetrics —
+`groovemap_schema_init_duration_seconds_bucket` has 48 series and
+`groovemap_insights_computation_duration_seconds_bucket` has 112 — but the work
+that produced them happened at start-up and a `rate()` over a later window is
+empty. Widen the dashboard's time range and they fill. Their metric names are
+right, which is exactly what distinguishes them from the group below.
+
+*The workload never ran.* The API sync, NLQ, and explore-proxy panels need calls
+nobody made — `groovemap_explore_proxy_duration_seconds` was never recorded at
+all. The two MCP panels can never fill here because `mcp-server` is not a compose
+service. The ingestion file-progress, files-by-outcome, and errors-by-stage
+panels and the two pipeline failure panels need a completed file and a failure,
+and this run stopped the extractors mid-file on purpose. `Store sizes` is the
+documented Neo4j omission above.
+
+*A real naming defect.* The three PostgreSQL panels on Infrastructure are not a
+workload gap, and the wave-1 record's explanation for them — too few samples —
+was wrong. Five metric
+names those panels query do not exist in VictoriaMetrics under the name the panel
+uses. `postgres-exporter` publishes `pg_stat_database_xact_commit`,
+`pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`,
+`pg_stat_database_blks_read`, and `pg_stat_database_deadlocks` with no suffix;
+the collector's remote-write translation appends `_total` to each, so the series
+land as `pg_stat_database_xact_commit_total` and so on. The panels ask for the
+unsuffixed name and can therefore never fill. A sixth,
+`rabbitmq_global_messages_published_total`, does not exist in RabbitMQ 4 at all —
+the publish-side counter is now `rabbitmq_global_messages_received_total`. All
+six are recorded as follow-ups; none is a wave-2 regression, and none was
+changed here.
+
+**Alert rules.** All seventeen provisioned into folder `GrooveMap`, group
+`groovemap`, and all seventeen evaluated with `health=ok`:
+
+| State | Rules |
+| --- | --- |
+| `firing` | `HostDiskLow` |
+| `inactive` | the other sixteen |
+
+`HostDiskLow` firing is real evidence rather than noise: the extractors' dump
+downloads took the Docker VM's data filesystem past the rule's threshold, and the
+rule walked `inactive` → `pending` → `firing` on its own. `Neo4jDown` sat at
+`health=nodata` while `dashboard` ran the pre-wave-2 image and moved to
+`health=ok`, state `inactive`, once the rebuilt image was emitting
+`groovemap_neo4j_up` — which is the no-data design working as intended.
+`ConsumersAbsent` never fired, because every consumer reported
+`groovemap_pipeline_consumers_active`.
+
+**Grafana.** `/api/search?type=dash-db` listed exactly nine dashboards, one per
+expected uid, and `/api/datasources` listed both `prometheus` (VictoriaMetrics)
+and `tempo` (VictoriaTraces). This is the wave-1 gap that the damaged volume
+prevented; it is now closed.
+
+**Not verified in this run.**
+
+| Item | Why |
+| --- | --- |
+| `mcp-server` | Still not a compose service, so this stack cannot exercise it. Its two API-services panels and its `groovemap_mcp_*` series have never been observed anywhere. |
+| `groovemap_neo4j_store_size_bytes` | `dbms.queryJmx('org.neo4j:instance=kernel#0,name=Store sizes')` does not answer on this Neo4j Community build, so the gauge is correctly omitted. The `Store sizes` panel has never been seen with data. |
+| A completed extraction | Both extractors were stopped mid-file to protect the Docker VM's disk. Nothing here exercised a file-completion path: `groovemap_extraction_files_total`, `groovemap_extraction_errors_total`, the ingestion file-progress and errors-by-stage panels, and the two pipeline failure panels stayed empty. |
+| The production overlay | Only the development stack was run. The loopback binds and the `0.1` trace sampler in `docker-compose.prod.yml` are covered by tests and `just config-prod`, not by an execution. |
+| Published images | Nothing wave 2 built is on GHCR. This run proves the code, not a release; the digest table in `docs/maintenance.md` is unchanged and still records the wave-1 releases. |
+| Grafana's rendering of any panel | Every panel was checked by issuing its query against the datasource, not by loading the dashboard in a browser. A panel whose query returns series can still render wrongly. |
+
+**Follow-ups this run found.** None is a wave-2 regression, and none was changed
+by the verification bead, which owns the runbook rather than the dashboards or
+the services.
+
+| Follow-up | Evidence |
+| --- | --- |
+| Five Infrastructure panel queries name `pg_stat_database_xact_commit`, `pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`, `pg_stat_database_blks_read`, and `pg_stat_database_deadlocks`; remote write stores them with a `_total` suffix. | Three PostgreSQL panels are permanently empty. The suffixed names are present in VictoriaMetrics and the unsuffixed ones are absent. |
+| The Infrastructure RabbitMQ publish-rate query names `rabbitmq_global_messages_published_total`, which RabbitMQ 4 does not emit. | The broker's `:15692` endpoint publishes `rabbitmq_global_messages_received_total` and no `_published_` counter at all. |
+| An extractor opens one `extract {source} {entity}` root span per file, so one file is one unbounded trace. | 69,760 spans in one trace from a partial artists file; a completed releases file would be orders of magnitude larger. |
+| `tableinator` and `graphinator` disagree on the `process {destination}` span name. | `process artists` against `process discogs-graph-enricher-artists` in the same trace. |
+| `mcp-server` has telemetry but no place to run it. | Two API-services panels and every `groovemap_mcp_*` series have never been observed on any stack. |
+| Neither extractor can be run against a fixture. | Both download the full monthly dump set on start, with no size limit, no fixture mode, and no configurable source URL. Verifying a publish span costs tens of gigabytes. |
+
 
 ## Rollout
 
