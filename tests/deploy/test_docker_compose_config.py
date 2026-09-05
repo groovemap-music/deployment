@@ -57,7 +57,7 @@ def _base_compose() -> dict[str, Any]:
 
 
 class TestExtractorStartupDelayRemoved:
-    """STARTUP_DELAY was dead on the catalog-ingestion image."""
+    """STARTUP_DELAY was dead on both per-source extractor images."""
 
     def test_extractor_services_have_no_startup_delay_env(self) -> None:
         compose = _base_compose()

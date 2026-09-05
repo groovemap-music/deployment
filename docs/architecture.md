@@ -19,7 +19,8 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | Source repository | Compose service | Purpose | Port(s) |
 | --- | --- | --- | --- |
 | [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `api` | User auth, graph queries, and sync triggers | 8004 (external), 8005 |
-| [`catalog-ingestion`](https://github.com/groovemap-music/catalog-ingestion) | `extractor-discogs`, `extractor-musicbrainz` | Discogs XML and MusicBrainz JSONL extraction | 8000 (health) |
+| [`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) | `extractor-discogs` | Discogs XML extraction | 8000 (health) |
+| [`musicbrainz-ingestion`](https://github.com/groovemap-music/musicbrainz-ingestion) | `extractor-musicbrainz` | MusicBrainz JSONL extraction | 8000 (health) |
 | [`database-schema`](https://github.com/groovemap-music/database-schema) | `schema-init` | One-shot database schema initialization | — |
 | [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `graphinator` | Build the Discogs-backed Neo4j graph | 8001 (health) |
 | [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `tableinator` | Load Discogs data into PostgreSQL | 8002 (health) |
@@ -60,8 +61,8 @@ graph TD
     S3[("🌐 Discogs S3<br/>Monthly Data Dumps<br/>~11.3GB XML")]
     MB[("🎵 MusicBrainz<br/>JSONL Dumps<br/>Twice Weekly")]
     SCHEMA[["database-schema<br/>Compose: schema-init"]]
-    EXT_D[["catalog-ingestion<br/>Compose: extractor-discogs"]]
-    EXT_MB[["catalog-ingestion<br/>Compose: extractor-musicbrainz"]]
+    EXT_D[["discogs-ingestion<br/>Compose: extractor-discogs"]]
+    EXT_MB[["musicbrainz-ingestion<br/>Compose: extractor-musicbrainz"]]
     RMQ{{"🐰 RabbitMQ 4.x<br/>Message Broker<br/>8 Fanout Exchanges"}}
     NEO4J[("🔗 Neo4j 2026<br/>Graph Database<br/>Relationships")]
     PG[("🐘 PostgreSQL 18<br/>Analytics DB<br/>Full-text Search")]
@@ -147,13 +148,13 @@ graph TD
     DASH[["operations-console<br/>Compose: dashboard"]]
 
     subgraph Discogs ["Discogs Pipeline"]
-        EXT_D[["catalog-ingestion<br/>extractor-discogs"]]
+        EXT_D[["discogs-ingestion<br/>extractor-discogs"]]
         GRAPH[["discogs-graph-enricher<br/>graphinator"]]
         TABLE[["discogs-sql-loader<br/>tableinator"]]
     end
 
     subgraph MB ["MusicBrainz Pipeline"]
-        EXT_MB[["catalog-ingestion<br/>extractor-musicbrainz"]]
+        EXT_MB[["musicbrainz-ingestion<br/>extractor-musicbrainz"]]
         BGRAPH[["musicbrainz-graph-enricher<br/>brainzgraphinator"]]
         BTABLE[["musicbrainz-sql-loader<br/>brainztableinator"]]
     end
@@ -217,13 +218,14 @@ graph LR
 
 ### 1. Data Extraction Phase
 
-**catalog-ingestion** (Compose services `extractor-discogs` and
-`extractor-musicbrainz`, two modes):
+**discogs-ingestion** (Compose service `extractor-discogs`) and
+**musicbrainz-ingestion** (Compose service `extractor-musicbrainz`). ADR 0005
+gave each source its own repository, image, and binary:
 
-- **Discogs mode** (`--source discogs`): Downloads XML dumps from Discogs S3 bucket, high-performance XML parsing (20,000-400,000+ records/sec), SHA256 hash-based deduplication
-- **MusicBrainz mode** (`--source musicbrainz`): Parses MusicBrainz JSONL dumps (xz-compressed), extracts Discogs IDs from URL relationships, publishes to MusicBrainz-specific fanout exchanges
-- Both modes publish JSON messages to per-data-type RabbitMQ fanout exchanges
-- Each mode runs as a separate container with its own state markers
+- **discogs-ingestion**: Downloads XML dumps from Discogs S3 bucket, high-performance XML parsing (20,000-400,000+ records/sec), SHA256 hash-based deduplication
+- **musicbrainz-ingestion**: Parses MusicBrainz JSONL dumps (xz-compressed), extracts Discogs IDs from URL relationships, publishes to MusicBrainz-specific fanout exchanges
+- Both publish JSON messages to per-data-type RabbitMQ fanout exchanges
+- Each runs as a separate container with its own state markers
 
 ### 2. Message Distribution Phase
 
@@ -370,12 +372,12 @@ The `internal` prefix on hop 2 is only a URL path: those routes live on the **sa
 
 ## Component Details
 
-### catalog-ingestion (`extractor-*`)
+### discogs-ingestion and musicbrainz-ingestion (`extractor-*`)
 
 **Responsibilities**:
 
-- **Discogs mode** (`--source discogs`): Download XML dumps from S3, parse, deduplicate, publish to 4 fanout exchanges
-- **MusicBrainz mode** (`--source musicbrainz`): Parse JSONL dumps, extract Discogs IDs, publish to 4 fanout exchanges
+- **discogs-ingestion**: Download XML dumps from S3, parse, deduplicate, publish to 4 fanout exchanges
+- **musicbrainz-ingestion**: Parse JSONL dumps, extract Discogs IDs, publish to 4 fanout exchanges
 - Validate checksums and metadata
 - Track progress via version-specific state markers
 
@@ -662,7 +664,7 @@ See [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/RE
 ```mermaid
 graph LR
     subgraph Producers
-        EXT[catalog-ingestion<br/>extractor-discogs]
+        EXT[discogs-ingestion<br/>extractor-discogs]
     end
 
     subgraph RabbitMQ
@@ -713,7 +715,7 @@ graph LR
 ```mermaid
 graph LR
     subgraph Producers
-        EXT_MB[catalog-ingestion<br/>extractor-musicbrainz]
+        EXT_MB[musicbrainz-ingestion<br/>extractor-musicbrainz]
     end
 
     subgraph RabbitMQ
