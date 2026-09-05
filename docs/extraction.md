@@ -40,7 +40,6 @@ git filter-repo --force \
   --path docs/quick-start.md --path docs/testing-guide.md \
   --path docs/troubleshooting.md --path docs/usage-examples.md \
   --path .github/workflows/docker-compose-validate.yml
-
 ```
 
 The filtered source branch contains 288 retained commits before the standalone

@@ -64,14 +64,19 @@ flowchart LR
 | Database schema behavior and initializer image | [`database-schema`](https://github.com/groovemap-music/database-schema) |
 | Shared CI behavior | [`.github`](https://github.com/groovemap-music/.github) |
 
-## Reviewed image references
+## Validation-only image references
 
-`config/validation.env` pins the approved manifest digest for every released
-service image. It lets Docker Compose resolve every required variable during
-static configuration validation without pulling or starting those images.
+`config/validation.env` contains syntactically valid, non-published dummy
+digests. They exist only so Docker Compose can resolve every required variable
+during static configuration validation. They are not deployment inputs and
+must never be copied into an environment `.env` file.
 
 Real environments must use approved `ghcr.io/groovemap-music/<repository>`
 references pinned with `@sha256:<manifest-digest>`.
+
+The reviewed release digests are not kept in either environment file. They live
+in `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py`, which is what
+`just smoke-released` validates a candidate `.env` against.
 
 ## Live and performance checks
 

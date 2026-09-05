@@ -32,17 +32,22 @@ Create an untracked environment file:
 cp .env.example .env
 ```
 
-The example pins the currently approved source-repository releases. Review each
-manifest before use; a future promotion must retain this form:
+Replace every `REPLACE_WITH_64_HEX_CHARACTERS` placeholder with the manifest
+digest of an approved source-repository release. The required form is:
 
 ```dotenv
-DATABASE_SCHEMA_IMAGE=ghcr.io/groovemap-music/database-schema@sha256:6831fa563e5a1b2dccb54fe2a86b64c084bb8d320d57fdd8ff65ace5b65eafa3
-CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:3483fb912c94f79076b4010043fb074eda3cdbb1299d3080887d6709590501d7
+DATABASE_SCHEMA_IMAGE=ghcr.io/groovemap-music/database-schema@sha256:<digest>
+CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:<digest>
 ```
 
-Tags alone and `latest` are rejected. See
-[Container image standards](dockerfile-standards.md) for the complete ownership
-map.
+Apply the same pattern to all remaining image variables. Tags alone and
+`latest` are rejected. See [Container image standards](dockerfile-standards.md)
+for the complete ownership map.
+
+The reviewed release for each variable is recorded in `RELEASED_IMAGE_DIGESTS`
+in `scripts/check-images.py`, with the release tag beside each digest. Once
+`.env` promotes them, `just smoke-released` verifies it against that set before
+it starts anything.
 
 ## 3. Review the rendered configuration
 
