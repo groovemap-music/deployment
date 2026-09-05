@@ -259,6 +259,55 @@ Use an OTEL semantic convention wherever one exists. Attribute values are
 **low-cardinality only** — never put ids, file names, or free text in
 attributes.
 
+### Traces
+
+Spans follow the same env-var-only contract as metrics, over the same endpoint.
+
+- `OTEL_TRACES_EXPORTER` is `otlp` or `none`; unset with
+  `OTEL_EXPORTER_OTLP_ENDPOINT` set means `otlp`. `OTEL_TRACES_SAMPLER` defaults
+  to `parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG` is `1.0` in
+  development and `0.1` on the production overlay, so a production trace is
+  sampled at the root and every service in the request keeps the same decision.
+- Transport is OTLP/HTTP-protobuf to `http://otel-collector:4318`, shared with
+  metrics, through a `BatchSpanProcessor`. A no-op `TracerProvider` is installed
+  when tracing is disabled. Tracing never fails startup and never raises into
+  application code. One-shot processes `force_flush` and `shutdown` the tracer
+  provider on exit, next to the meter provider.
+- Context propagates as W3C TraceContext. HTTP propagation comes from the
+  `fastapi` and `httpx` instrumentors. Across RabbitMQ, the producer span
+  injects `traceparent` and `tracestate` into the message headers and the
+  consumer span extracts them, so a trace spans the queue.
+
+Span names are low-cardinality, exactly like metric names, because each distinct
+name is a distinct span-metric series:
+
+| Kind of work | Span name | Span kind |
+| --- | --- | --- |
+| HTTP server and client | route-templated, from the instrumentor | `SERVER`, `CLIENT` |
+| Database call | `{db.operation.name} {db.system.name}` | `CLIENT` |
+| Publish to a queue | `publish {messaging.destination.name}` | `PRODUCER` |
+| Consume from a queue | `process {messaging.destination.name}` | `CONSUMER` |
+| Batch flush | `flush {store} {entity}` | `INTERNAL` |
+| Extractor file | `extract {source} {entity}`, with `download` and `parse` children | `INTERNAL` |
+| Domain roots | `insights {computation}`, `mcp.tool {tool}`, `schema_init {store}`, `console.poll {target}`, `api.sync` | `INTERNAL` |
+
+A consumer span is a child of the context extracted from the message, not of the
+flush that follows it; a batch flush instead carries span **links** to at most
+64 member message spans, which is what keeps a 5000-message flush from
+producing a 5000-parent span.
+
+Span attributes use the same closed sets as the metric catalog: never ids, file
+names, or free text. Database spans carry `db.system.name` and
+`db.operation.name` and never a statement. Messaging spans carry
+`messaging.system=rabbitmq`, `messaging.destination.name`, and
+`messaging.operation.name`. No span event carries a payload. An error sets the
+span status to `ERROR` with `error.type` and nothing else.
+
+Nothing queries VictoriaTraces for a span an operator has not asked for: the
+RED numbers on the Traces dashboard come from the span metrics in the catalog
+below, and the trace store is read only by the search panel and by the Explore
+links out of those panels.
+
 ## Metric catalog
 
 This is the canonical catalog. `scripts/check-dashboards.py` refuses any
@@ -332,11 +381,127 @@ templated `/api/{path:path}`, matching what the FastAPI instrumentation reports
 for the same request, and `outcome` is one of `success`, `timeout`, or
 `upstream_error`.
 
+### Runtime metrics
+
+Process and language-runtime health for every service, so a consumer that is
+slowly leaking memory or a Rust service whose tokio queue is backing up is
+visible before it fails. No service emits `system.*` host metrics: the host is
+node-exporter's job.
+
+The Python names come from `opentelemetry-instrumentation-system-metrics`,
+which `groovemap-runtime` installs with the process-scoped subset only.
+`docs/runtime.md` in [`python-libraries`](https://github.com/groovemap-music/python-libraries)
+is the source of truth for exactly which instruments the pinned version emits;
+the rows below were read from version `0.65b0` of that package and are
+reconciled against a running stack by the end-to-end verification.
+
+| OTEL name | Prometheus name | Kind | Attributes |
+| --- | --- | --- | --- |
+| `process.cpu.time` | `process_cpu_time_seconds_total` | counter (s) | `type` (`user`\|`system`) on Python, `cpu.mode` (`user`\|`system`) on Rust |
+| `process.cpu.utilization` | `process_cpu_utilization_ratio` | gauge (ratio 0..1) | — |
+| `process.memory.usage` | `process_memory_usage_bytes` | gauge (By, resident) | — |
+| `process.memory.virtual` | `process_memory_virtual_bytes` | gauge (By) | — |
+| `process.thread.count` | `process_thread_count` | gauge | — |
+| `process.open_file_descriptor.count` | `process_open_file_descriptor_count` | gauge | — |
+| `process.context_switches` | `process_context_switches_total` | counter | `type` (`voluntary`\|`involuntary`) |
+| `cpython.gc.collections` | `cpython_gc_collections_total` | counter (`{collection}`) | `cpython.gc.generation` (`0`\|`1`\|`2`) |
+| `groovemap.runtime.event_loop.lag` | `groovemap_runtime_event_loop_lag_seconds` | histogram (s) | — |
+| `groovemap.runtime.tokio.workers` | `groovemap_runtime_tokio_workers` | gauge | — |
+| `groovemap.runtime.tokio.alive_tasks` | `groovemap_runtime_tokio_alive_tasks` | gauge | — |
+| `groovemap.runtime.tokio.global_queue_depth` | `groovemap_runtime_tokio_global_queue_depth` | gauge | — |
+
+Which services emit which:
+
+- Every Python service emits the `process.*` rows and `cpython.gc.collections`.
+  Every Python service with a running event loop also emits
+  `groovemap.runtime.event_loop.lag`, sampled once a second by the background
+  task `common.telemetry.start_event_loop_monitor()` starts.
+- Rust services emit `process.cpu.time`, `process.memory.usage`,
+  `process.thread.count`, and `process.open_file_descriptor.count` by reading
+  `/proc/self` — silently absent off Linux — plus the three
+  `groovemap.runtime.tokio.*` gauges from `tokio::runtime::Handle::metrics()`.
+  They do not emit `process.cpu.utilization`, `process.context_switches`, or
+  `process.memory.virtual`, so the utilisation panel derives cores-in-use from
+  `rate(process_cpu_time_seconds_total[...])` for them.
+
+Two names in the table are version-sensitive and are the first things to check
+if a Runtime panel is empty. `cpython.gc.collections` replaced the older
+`process.runtime.cpython.gc_count` instrument, which reaches Prometheus as
+`process_runtime_cpython_gc_count_bytes_total` (the `By` unit on a collection
+count is a bug in the old instrument, not a typo here). And `process.cpu.time`
+carries `type` in the instrumentor and `cpu.mode` in current semantic
+conventions; the panels deliberately sum over it rather than filter on it, so
+the discrepancy costs a legend and nothing else.
+
+### Neo4j metrics
+
+Neo4j Community Edition has no Prometheus endpoint, so `operations-console`
+(`dashboard`) emits these observable gauges on its behalf, refreshed at most
+once per export interval. Every underlying query is bounded — the count store
+or a `SHOW`/`CALL` command — so scraping the graph never costs a scan.
+
+| OTEL name | Prometheus name | Kind | Attributes |
+| --- | --- | --- | --- |
+| `groovemap.neo4j.up` | `groovemap_neo4j_up` | gauge (0 unreachable, 1 reachable) | — |
+| `groovemap.neo4j.nodes` | `groovemap_neo4j_nodes` | gauge | `label` |
+| `groovemap.neo4j.relationships` | `groovemap_neo4j_relationships` | gauge | `type` |
+| `groovemap.neo4j.transactions.active` | `groovemap_neo4j_transactions_active` | gauge | — |
+| `groovemap.neo4j.store.size.bytes` | `groovemap_neo4j_store_size_bytes` | gauge (By) | `store` |
+
+The attribute sets are closed: `operations-console` iterates a fixed list, so a
+label or relationship type nobody declared cannot appear as a new series.
+
+- `label` is one of `Artist`, `Genre`, `Label`, `Master`, `MediaFamily`,
+  `Medium`, `Person`, `Release`, `Style`, `User` — the ten labels
+  `database-schema` puts a uniqueness constraint on.
+- `type` is one of the relationship types
+  [`docs/architecture.md`](architecture.md) inventories: `BY`, `ON`, `IS`,
+  `DERIVED_FROM`, `MEMBER_OF`, `ALIAS_OF`, `SUBLABEL_OF`, `PART_OF`,
+  `CREDITED_ON`, `SAME_AS`, `COLLECTED`, `WANTS`, `IN_FAMILY`, `ISSUED_ON`, and
+  the MusicBrainz enrichment edges `COLLABORATED_WITH`, `TAUGHT`, `TRIBUTE_TO`,
+  `FOUNDED`, `SUPPORTED`, `SUBGROUP_OF`, `RENAMED_TO`. That document owns the
+  list; this one does not restate it as a second source of truth.
+- `store` is the store name `CALL dbms.queryJmx('org.neo4j:instance=kernel#0,name=Store sizes')`
+  reports. That procedure is not available on every Community build; when it
+  does not answer, the series is **omitted** rather than reported as zero, so an
+  empty store-size panel means "not measurable here", not "no data".
+
+Neo4j *latency* is not in this section: it is already covered by
+`db_client_operation_duration_seconds{db_system_name="neo4j"}`, emitted by every
+service that talks to the graph.
+
+### Span metrics
+
+RED metrics derived from spans by the collector's `spanmetrics` connector.
+**No service emits these** — they exist for every instrumented operation the
+moment its spans arrive, which is why they cover operations no hand-written
+metric does.
+
+| OTEL name | Prometheus name | Kind | Attributes |
+| --- | --- | --- | --- |
+| `traces.span.metrics.calls` | `traces_span_metrics_calls_total` | counter | `service.name`, `span.name`, `span.kind`, `status.code` |
+| `traces.span.metrics.duration` | `traces_span_metrics_duration_seconds` | histogram (s) | as above |
+
+As Prometheus labels those are `service_name`, `span_name`, `span_kind`, and
+`status_code`. `span_kind` is an OTLP enum name (`SPAN_KIND_SERVER`,
+`SPAN_KIND_CLIENT`, `SPAN_KIND_PRODUCER`, `SPAN_KIND_CONSUMER`,
+`SPAN_KIND_INTERNAL`) and `status_code` likewise (`STATUS_CODE_UNSET`,
+`STATUS_CODE_OK`, `STATUS_CODE_ERROR`) — an error ratio therefore filters on
+`status_code="STATUS_CODE_ERROR"`, not on `5..`.
+
+The connector's default `collector.instance.id` dimension is excluded in
+`config/otel-collector.yaml`: there is one collector in this stack, so it would
+only add a constant label to every series.
+
 ### Metrics that are deliberately absent
 
-Neo4j Community Edition has no Prometheus endpoint. There is no Neo4j exporter
-in this stack, and Neo4j health is observed through the application-side
-`db.client.operation.duration` series and the container healthcheck.
+There is no Neo4j exporter in this stack, because Neo4j Community Edition has no
+Prometheus endpoint to scrape. Graph health is observed from the application
+side instead: the `groovemap.neo4j.*` gauges above, the
+`db.client.operation.duration` series, and the container healthcheck.
+
+No service emits `system.*` host metrics. The host is measured once, by
+node-exporter, rather than once per container by every service on it.
 
 ## Dashboards
 
@@ -352,8 +517,12 @@ restart.
 | Consumers | `groovemap-consumers` | Messages per second by entity and outcome, message duration p95, batch size and flush latency by store, database operation duration, circuit breaker state, active consumers |
 | API services | `groovemap-api-services` | RED per service and route, sync duration, cache hit ratio, NLQ outcomes, insights computation duration and staleness |
 | Infrastructure | `groovemap-infrastructure` | RabbitMQ, PostgreSQL, and Redis exporter panels, plus collector points received, exported, and dropped |
+| Runtime | `groovemap-runtime` | Per-service CPU, resident and virtual memory, threads, open file descriptors, GC collections, event-loop lag, and the tokio task and queue gauges |
+| Neo4j | `groovemap-neo4j` | Graph reachability, nodes by label, relationships by type, active transactions, store sizes, and client operation latency by service |
+| Containers | `groovemap-containers` | Per-container CPU, memory, network, and restarts from cadvisor, plus host CPU, memory, disk, and load from node-exporter |
+| Traces | `groovemap-traces` | RED per service and span name from the span metrics, and a TraceQL search over VictoriaTraces |
 
-The uids are stable and part of the contract: links and bookmarks depend on
+Nine dashboards, one page each. The uids are stable and part of the contract: links and bookmarks depend on
 them, so rename a title freely but never a uid.
 
 ### Provisioning
@@ -367,12 +536,20 @@ Every panel resolves its datasource through the `${DS_PROMETHEUS}` template
 variable rather than naming a uid. A dashboard that pins a literal uid works on
 the machine it was exported from and nowhere else, so the checker rejects one.
 
+`${DS_TEMPO}` is the one other variable a panel may resolve, and only a panel
+that renders traces — a `table`, `traces`, or `nodeGraph` panel. The trace store
+answers TraceQL, not PromQL, so a timeseries panel pointed at it draws an empty
+graph rather than raising an error; the checker refuses that pairing, and
+refuses the raw `tempo` uid exactly as it refuses the raw `prometheus` one.
+
 ### Adding a dashboard
 
 1. Add a JSON file to `config/grafana/dashboards`. Give it a `uid` that starts
    with `groovemap-`, a unique `title`, and a `schemaVersion`.
 2. Define a `DS_PROMETHEUS` datasource template variable, and set every panel's
    and every target's datasource to `{"type": "prometheus", "uid": "${DS_PROMETHEUS}"}`.
+   A dashboard with a trace panel additionally defines `DS_TEMPO` and sets that
+   panel's datasource to `{"type": "tempo", "uid": "${DS_TEMPO}"}`.
 3. Add a `service`, `source`, or `queue` template variable so the dashboard can
    be narrowed to one thing.
 4. Write PromQL against the **Prometheus** names in the catalog above, not the
@@ -383,9 +560,11 @@ the machine it was exported from and nowhere else, so the checker rejects one.
 
 The checker fails the build when a dashboard does not parse, is missing a `uid`,
 `title`, or `schemaVersion`, duplicates another dashboard's uid or title, pins a
-datasource uid instead of using the variable, has no queries, or references a
+datasource uid instead of using the variable, reaches for `${DS_TEMPO}` from a
+panel that cannot render a trace, has no queries, or references a
 metric that is in neither the catalog above nor its exporter/collector
-allowlist. Adding a metric to a service means adding it to the catalog first —
+allowlist. It lints the provisioned alert rules the same way, against the same
+catalog, once `config/grafana/provisioning/alerting/groovemap.yaml` exists. Adding a metric to a service means adding it to the catalog first —
 that is the ordering the gate enforces.
 
 If a panel needs a new exporter or collector metric, add the exact name to
@@ -525,6 +704,18 @@ curl -sG 'http://localhost:8428/api/v1/query' \
 # Infrastructure — every scrape target reporting up
 curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=up'
+
+# Runtime — resident memory per service
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (process_memory_usage_bytes)'
+
+# Neo4j — node count per label, emitted by operations-console
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (label) (groovemap_neo4j_nodes)'
+
+# Traces — span rate per service, derived by the spanmetrics connector
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (service_name) (rate(traces_span_metrics_calls_total[5m]))'
 ```
 
 `tests/deploy/test_observability_runbook.py` pins these queries against the
@@ -537,7 +728,7 @@ and no messages in flight, leaves the pipeline and extraction panels blank
 while the infrastructure, API, and schema panels fill immediately. Drive the
 pipeline before concluding a panel is broken.
 
-### 6. Confirm Grafana has the five dashboards
+### 6. Confirm Grafana has all nine dashboards
 
 Development enables anonymous `Viewer` access, so `http://localhost:3000` opens
 the dashboards in a browser without a login. The search API is the scriptable
@@ -548,9 +739,10 @@ curl -s 'http://localhost:3000/api/search?type=dash-db' \
   | python3 -c 'import json,sys; [print(d["uid"], "|", d["title"]) for d in json.load(sys.stdin)]'
 ```
 
-Expect exactly five rows, one per uid: `groovemap-pipeline-overview`,
+Expect exactly nine rows, one per uid: `groovemap-pipeline-overview`,
 `groovemap-ingestion`, `groovemap-consumers`, `groovemap-api-services`,
-`groovemap-infrastructure`.
+`groovemap-infrastructure`, `groovemap-runtime`, `groovemap-neo4j`,
+`groovemap-containers`, `groovemap-traces`.
 
 An `Unauthorized` body instead of that list means anonymous access is not in
 effect — always on the production overlay, which disables it, and also on a
