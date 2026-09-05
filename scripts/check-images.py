@@ -47,6 +47,30 @@ IMAGE_OWNERS = {
 assert set(INTERNAL_IMAGES.values()) == set(IMAGE_OWNERS), "every required image variable needs a declared owning repository"
 assert len(set(INTERNAL_IMAGES.values())) == len(INTERNAL_IMAGES), "each service must promote its own source-owned image"
 
+# Image variable -> the manifest digest of the release this deployment has reviewed. The
+# released-stack smoke (`just smoke-released`) refuses an operator env file that promotes
+# anything else. `.env.example` and `config/validation.env` deliberately stay on
+# placeholder and syntax-only digests, so these are the only real digests in the tree.
+RELEASED_IMAGE_DIGESTS = {
+    "DATABASE_SCHEMA_IMAGE": "35e1ef9fbd7506dd67f93f6733dbf689ac5f1bda4f2b7ff24859b8a2115218de",  # database-schema v0.2.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "3483fb912c94f79076b4010043fb074eda3cdbb1299d3080887d6709590501d7",  # catalog-api v0.1.1  gitleaks:allow
+    "DISCOGS_INGESTION_IMAGE": "4a961aab647bb830074414b30e121d927c8287d2a1b2e4d61a34f42a1b50e94b",  # discogs-ingestion v0.2.1  gitleaks:allow
+    "MUSICBRAINZ_INGESTION_IMAGE": "2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37",  # musicbrainz-ingestion v0.2.1  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b",  # discogs-graph-enricher v0.2.0  gitleaks:allow
+    "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e",  # musicbrainz-graph-enricher v0.2.0  gitleaks:allow
+    "DISCOGS_SQL_LOADER_IMAGE": "dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c",  # discogs-sql-loader v0.2.0  gitleaks:allow
+    "MUSICBRAINZ_SQL_LOADER_IMAGE": "cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027",  # musicbrainz-sql-loader v0.2.0  gitleaks:allow
+    "OPERATIONS_CONSOLE_IMAGE": "fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1",  # operations-console v0.1.1  gitleaks:allow
+    "GRAPH_EXPLORER_IMAGE": "546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b",  # graph-explorer v0.1.1  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69",  # analytics-engine v0.1.1  gitleaks:allow
+}
+
+assert set(RELEASED_IMAGE_DIGESTS) == set(IMAGE_OWNERS), "every owned image variable needs a reviewed release digest"
+assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
+    "a reviewed release digest must be a full manifest digest"
+)
+
+
 compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 services = compose["services"]
 assert not any("build" in service for service in services.values()), "deployment must consume images, not sibling build contexts"

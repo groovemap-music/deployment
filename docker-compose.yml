@@ -468,7 +468,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -477,7 +477,7 @@ services:
     # shell (and its STARTUP_DELAY sleep) instead of being discarded — a
     # non-interactive shell installs no signal handler, so without an init a
     # stop/restart landing inside the startup delay window is silently ignored
-    # until Docker's SIGKILL grace period expires (discogsography-uur3).
+    # until Docker's SIGKILL grace period expires.
     init: true
     restart: unless-stopped
     logging: *default-logging
@@ -603,7 +603,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -655,7 +655,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8011/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -708,7 +708,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -761,7 +761,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8010/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -823,7 +823,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -866,7 +866,7 @@ services:
       - "8006:8006"
       - "8007:8007"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -920,7 +920,7 @@ services:
     networks:
       - groovemap
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8009/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

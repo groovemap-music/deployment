@@ -1,4 +1,4 @@
-"""Deploy-config regression tests for discogsography-q31w.
+"""Deploy-config regression tests for the internal insights secret.
 
 Both api and insights default INSIGHTS_INTERNAL_SECRET to the repo-committed
 literal "dev-internal-insights-secret-change-in-production" in

@@ -1,4 +1,4 @@
-"""Regression tests for discogsography-edez.
+"""Regression tests for production secret bootstrap completeness.
 
 ``docker-compose.prod.yml`` declared ``nlq_api_key`` as a file-backed secret
 (``./secrets/nlq_api_key.txt``) and listed it under the ``api`` service, but

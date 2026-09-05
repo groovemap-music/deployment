@@ -1,4 +1,4 @@
-"""Regression tests for discogsography-p386.
+"""Regression tests for Neo4j health-check credentials.
 
 The base neo4j healthcheck authenticates with the literal dev password
 (``cypher-shell -u neo4j -p groovemap``), and docker-compose.prod.yml

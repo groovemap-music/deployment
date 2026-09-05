@@ -11,3 +11,34 @@ services:
     ports: !override []
   redis:
     ports: !override []
+
+  # Release images currently target linux/amd64. Keep the infrastructure
+  # images on the host-native architecture because their immutable digests
+  # are platform-specific, while Docker Desktop emulates the application
+  # containers on Apple silicon.
+  schema-init:
+    platform: linux/amd64
+  api:
+    platform: linux/amd64
+  extractor-discogs:
+    platform: linux/amd64
+    volumes: !override
+      - discogs_data:/discogs-data
+      - extractor_discogs_logs:/logs
+      - ${GM_EXTRACTION_RULES_FILE:-./config/extraction-rules.yaml}:/config/extraction-rules.yaml:ro
+  extractor-musicbrainz:
+    platform: linux/amd64
+  graphinator:
+    platform: linux/amd64
+  brainzgraphinator:
+    platform: linux/amd64
+  tableinator:
+    platform: linux/amd64
+  brainztableinator:
+    platform: linux/amd64
+  dashboard:
+    platform: linux/amd64
+  explore:
+    platform: linux/amd64
+  insights:
+    platform: linux/amd64
