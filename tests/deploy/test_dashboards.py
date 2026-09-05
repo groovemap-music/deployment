@@ -2,7 +2,7 @@
 
 Two layers:
 
-- the real artefacts — the five dashboards and the Grafana provisioning that
+- the real artefacts — the dashboards and the Grafana provisioning that
   loads them — are checked for the properties operators depend on (stable uids,
   the datasource variable, the panels the acceptance calls for);
 - ``scripts/check-dashboards.py`` is exercised directly on synthetic
@@ -37,6 +37,7 @@ EXPECTED_UIDS = {
     "groovemap-consumers",
     "groovemap-api-services",
     "groovemap-infrastructure",
+    "groovemap-containers",
 }
 
 DATASOURCE_VARIABLE = "${DS_PROMETHEUS}"
@@ -96,7 +97,7 @@ class TestProvisioning:
 
 
 class TestDashboardInventory:
-    def test_exactly_the_five_expected_dashboards_exist(self) -> None:
+    def test_exactly_the_expected_dashboards_exist(self) -> None:
         uids = {dashboard["uid"] for dashboard in _dashboards().values()}
         assert uids == EXPECTED_UIDS
 
@@ -201,6 +202,46 @@ class TestAcceptancePanels:
         assert "otelcol_receiver_accepted_metric_points_total" in metrics
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
+
+    def test_containers_covers_per_container_usage_and_host_saturation(self) -> None:
+        metrics = self._metrics("containers.json")
+        for metric in (
+            "container_cpu_usage_seconds_total",
+            "container_memory_working_set_bytes",
+            "container_spec_memory_limit_bytes",
+            "container_network_receive_bytes_total",
+            "container_network_transmit_bytes_total",
+            "container_fs_reads_bytes_total",
+            "container_fs_writes_bytes_total",
+            "container_start_time_seconds",
+        ):
+            assert metric in metrics, metric
+        for metric in (
+            "node_cpu_seconds_total",
+            "node_memory_MemAvailable_bytes",
+            "node_load1",
+            "node_disk_read_bytes_total",
+            "node_filesystem_avail_bytes",
+        ):
+            assert metric in metrics, metric
+
+    def test_containers_filters_by_the_compose_service_label(self) -> None:
+        """cAdvisor's own series carry no compose identity; the whitelisted
+        label is what ties a container back to a compose service."""
+        dashboard = _dashboards()["containers.json"]
+        container_expressions = [expr for expr in _expressions(dashboard) if "container_" in expr]
+        assert container_expressions
+        for expr in container_expressions:
+            assert "container_label_com_docker_compose_service" in expr, expr
+
+    def test_the_infrastructure_scrape_stat_covers_the_two_new_jobs(self) -> None:
+        """The stat queries the bare `up` series, so it counts every collector
+        scrape job; its description names them so a reader knows what to expect."""
+        dashboard = _dashboards()["infrastructure.json"]
+        panel = next(panel for panel in dashboard["panels"] if panel["title"] == "Scrape targets up")
+        assert [target["expr"] for target in panel["targets"]] == ["up"]
+        for job in ("cadvisor", "node-exporter"):
+            assert job in panel["description"], job
 
 
 class TestCatalogParsing:
