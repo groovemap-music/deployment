@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "RabbitMQ, PostgreSQL, and Redis from their exporters, plus the collector's own throughput.",
+  "description": "Per-container CPU, memory, network, and block I/O from cAdvisor, and host saturation from node-exporter.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -13,7 +13,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "One series per collector scrape job — `rabbitmq`, `postgres-exporter`, `redis-exporter`, `otel-collector`, `cadvisor`, and `node-exporter`. The query is the bare `up` series, so a job added to the collector appears here without editing this panel. Anything below 1 means that target is unreachable.",
+      "description": "How many of the selected compose services cAdvisor is currently reporting. A drop here is a container that stopped, not a metric that went missing.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -54,13 +54,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "up",
-          "legendFormat": "{{job}}",
+          "expr": "count(container_last_seen{container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "containers",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Scrape targets up",
+      "title": "Compose containers seen",
       "type": "stat"
     },
     {
@@ -68,14 +68,15 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Fraction of host CPU time spent outside idle, averaged over every core. On Docker Desktop the host is the Linux VM that runs the engine.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "mappings": [],
-          "unit": "short"
+          "unit": "percentunit",
+          "decimals": 2
         },
         "overrides": []
       },
@@ -109,13 +110,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "pg_up",
-          "legendFormat": "pg_up",
+          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "busy",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "PostgreSQL reachable",
+      "title": "Host CPU busy",
       "type": "stat"
     },
     {
@@ -123,14 +124,15 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "1 - MemAvailable/MemTotal. MemAvailable, not MemFree: page cache the kernel will hand back on demand is not pressure.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "mappings": [],
-          "unit": "short"
+          "unit": "percentunit",
+          "decimals": 2
         },
         "overrides": []
       },
@@ -164,13 +166,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "redis_up",
-          "legendFormat": "redis_up",
+          "expr": "1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+          "legendFormat": "used",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Redis reachable",
+      "title": "Host memory used",
       "type": "stat"
     },
     {
@@ -178,14 +180,15 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "One-minute load average divided by the host's core count. Above 1 means runnable work is queueing.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "mappings": [],
-          "unit": "short"
+          "unit": "short",
+          "decimals": 2
         },
         "overrides": []
       },
@@ -219,24 +222,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_connections",
-          "legendFormat": "connections",
+          "expr": "node_load1 / on() group_left() count(count by (cpu) (node_cpu_seconds_total))",
+          "legendFormat": "load1/core",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rabbitmq_channels",
-          "legendFormat": "channels",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "RabbitMQ connections",
+      "title": "Host load per core",
       "type": "stat"
     },
     {
@@ -244,7 +236,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "CPU seconds consumed per second, so 1 is one saturated core. This is the panel that names a runaway consumer.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -254,7 +246,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "",
+            "axisLabel": "cores",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
@@ -317,24 +309,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (queue) (rabbitmq_queue_messages_ready{queue=~\"$queue\"})",
-          "legendFormat": "{{queue}} ready",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (queue) (rabbitmq_queue_messages_unacked{queue=~\"$queue\"})",
-          "legendFormat": "{{queue}} unacked",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "RabbitMQ queue depth",
+      "title": "Container CPU",
       "type": "timeseries"
     },
     {
@@ -342,7 +323,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Working set is what the kernel cannot reclaim, which is what the OOM killer measures against. A limit series is drawn only for containers that declare one.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -381,7 +362,7 @@
             }
           },
           "mappings": [],
-          "unit": "reqps"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -415,8 +396,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_published_total[$__rate_interval]))",
-          "legendFormat": "published/s",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{container_label_com_docker_compose_service}} working set",
           "range": true,
           "refId": "A"
         },
@@ -426,13 +407,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total[$__rate_interval]))",
-          "legendFormat": "acknowledged/s",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{container_label_com_docker_compose_service=~\"$service\"} > 0)",
+          "legendFormat": "{{container_label_com_docker_compose_service}} limit",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "RabbitMQ publish and ack rate",
+      "title": "Container memory working set vs limit",
       "type": "timeseries"
     },
     {
@@ -440,7 +421,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Bytes received and transmitted per second, summed over every interface of each compose service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -479,7 +460,7 @@
             }
           },
           "mappings": [],
-          "unit": "bytes"
+          "unit": "Bps"
         },
         "overrides": []
       },
@@ -513,8 +494,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_process_resident_memory_bytes",
-          "legendFormat": "resident",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} rx",
           "range": true,
           "refId": "A"
         },
@@ -524,13 +505,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_resident_memory_limit_bytes",
-          "legendFormat": "limit",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} tx",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "RabbitMQ memory",
+      "title": "Container network",
       "type": "timeseries"
     },
     {
@@ -538,7 +519,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Bytes read from and written to block devices per second. Volume-backed services (postgres, neo4j, victoria-metrics) dominate here by design.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -577,7 +558,7 @@
             }
           },
           "mappings": [],
-          "unit": "bytes"
+          "unit": "Bps"
         },
         "overrides": []
       },
@@ -611,13 +592,24 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_disk_space_available_bytes",
-          "legendFormat": "available",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} read",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} write",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "RabbitMQ disk space available",
+      "title": "Container block I/O",
       "type": "timeseries"
     },
     {
@@ -625,7 +617,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "cAdvisor exposes no restart counter, so a restart is read as a change in the container's start time. An OOM event beside a restart is the cause of it.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -698,8 +690,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(pg_stat_database_numbackends)",
-          "legendFormat": "in use",
+          "expr": "sum by (container_label_com_docker_compose_service) (changes(container_start_time_seconds{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} restarts",
           "range": true,
           "refId": "A"
         },
@@ -709,13 +701,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(pg_settings_max_connections)",
-          "legendFormat": "max",
+          "expr": "sum by (container_label_com_docker_compose_service) (increase(container_oom_events_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}} OOM kills",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "PostgreSQL connections",
+      "title": "Container restarts and OOM kills",
       "type": "timeseries"
     },
     {
@@ -723,7 +715,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Host CPU time by mode, normalised to a fraction of all cores. A high iowait share means the disk is the bottleneck, not the CPU.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -762,7 +754,7 @@
             }
           },
           "mappings": [],
-          "unit": "reqps"
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -796,24 +788,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_xact_commit[$__rate_interval]))",
-          "legendFormat": "commit/s",
+          "expr": "sum by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[$__rate_interval])) / on() group_left() count(count by (cpu) (node_cpu_seconds_total))",
+          "legendFormat": "{{mode}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_xact_rollback[$__rate_interval]))",
-          "legendFormat": "rollback/s",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "PostgreSQL transaction rate",
+      "title": "Host CPU by mode",
       "type": "timeseries"
     },
     {
@@ -821,7 +802,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Total and available host memory. The gap between them is memory the kernel cannot hand to a new allocation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -860,9 +841,7 @@
             }
           },
           "mappings": [],
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
+          "unit": "bytes"
         },
         "overrides": []
       },
@@ -896,269 +875,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_blks_hit[$__rate_interval])) / clamp_min(sum(rate(pg_stat_database_blks_hit[$__rate_interval])) + sum(rate(pg_stat_database_blks_read[$__rate_interval])), 0.001)",
-          "legendFormat": "hit ratio",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "PostgreSQL buffer cache hit ratio",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 29
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_deadlocks[$__rate_interval]))",
-          "legendFormat": "deadlocks/s",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "PostgreSQL deadlocks and database size",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 37
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (datname) (pg_database_size_bytes)",
-          "legendFormat": "{{datname}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "PostgreSQL database size",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 37
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "redis_memory_used_bytes",
-          "legendFormat": "used",
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "total",
           "range": true,
           "refId": "A"
         },
@@ -1168,102 +886,24 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "redis_memory_max_bytes",
-          "legendFormat": "max",
+          "expr": "node_memory_MemAvailable_bytes",
+          "legendFormat": "available",
           "range": true,
           "refId": "B"
-        }
-      ],
-      "title": "Redis memory",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 45
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(redis_keyspace_hits_total[$__rate_interval]) / clamp_min(rate(redis_keyspace_hits_total[$__rate_interval]) + rate(redis_keyspace_misses_total[$__rate_interval]), 0.001)",
-          "legendFormat": "hit ratio",
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "used",
           "range": true,
-          "refId": "A"
+          "refId": "C"
         }
       ],
-      "title": "Redis keyspace hit ratio",
+      "title": "Host memory",
       "type": "timeseries"
     },
     {
@@ -1271,7 +911,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "One-, five-, and fifteen-minute load averages. Compare against the core count on the stat above.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1318,9 +958,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 29
       },
-      "id": 16,
+      "id": 12,
       "options": {
         "legend": {
           "calcs": [
@@ -1344,8 +984,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "redis_connected_clients",
-          "legendFormat": "connected",
+          "expr": "node_load1",
+          "legendFormat": "1m",
           "range": true,
           "refId": "A"
         },
@@ -1355,8 +995,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "redis_blocked_clients",
-          "legendFormat": "blocked",
+          "expr": "node_load5",
+          "legendFormat": "5m",
           "range": true,
           "refId": "B"
         },
@@ -1366,13 +1006,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(redis_evicted_keys_total[$__rate_interval])",
-          "legendFormat": "evicted/s",
+          "expr": "node_load15",
+          "legendFormat": "15m",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "Redis clients and evictions",
+      "title": "Host load average",
       "type": "timeseries"
     },
     {
@@ -1380,7 +1020,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "",
+      "description": "Bytes read from and written to each host block device per second.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1419,7 +1059,7 @@
             }
           },
           "mappings": [],
-          "unit": "reqps"
+          "unit": "Bps"
         },
         "overrides": []
       },
@@ -1427,9 +1067,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 53
+        "y": 37
       },
-      "id": 17,
+      "id": 13,
       "options": {
         "legend": {
           "calcs": [
@@ -1453,269 +1093,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(redis_commands_processed_total[$__rate_interval])",
-          "legendFormat": "commands/s",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Redis command rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 53
-      },
-      "id": 18,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_metric_points_total[$__rate_interval]))",
-          "legendFormat": "{{receiver}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Collector points received",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 61
-      },
-      "id": 19,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (exporter) (rate(otelcol_exporter_sent_metric_points_total[$__rate_interval]))",
-          "legendFormat": "{{exporter}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Collector points exported",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Anything above zero here means metrics are being lost between the services and Prometheus.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 61
-      },
-      "id": 20,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total[$__rate_interval]))",
-          "legendFormat": "refused at ingest",
+          "expr": "sum by (device) (rate(node_disk_read_bytes_total[$__rate_interval]))",
+          "legendFormat": "{{device}} read",
           "range": true,
           "refId": "A"
         },
@@ -1725,13 +1104,100 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total[$__rate_interval]))",
-          "legendFormat": "failed on export",
+          "expr": "sum by (device) (rate(node_disk_written_bytes_total[$__rate_interval]))",
+          "legendFormat": "{{device}} written",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Collector points dropped",
+      "title": "Host disk throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Used fraction of each real host filesystem. tmpfs, overlay, and squashfs mounts are excluded: they are per-container views of memory or of a layer, not host capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 37
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "{{mountpoint}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Host filesystem used",
       "type": "timeseries"
     }
   ],
@@ -1761,7 +1227,7 @@
         "type": "datasource"
       },
       {
-        "allValue": ".*",
+        "allValue": ".+",
         "current": {
           "text": "All",
           "value": "$__all"
@@ -1770,17 +1236,17 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(rabbitmq_queue_messages_ready, queue)",
+        "definition": "label_values(container_last_seen, container_label_com_docker_compose_service)",
         "hide": 0,
         "includeAll": true,
-        "label": "Queue",
+        "label": "Service",
         "multi": true,
-        "name": "queue",
+        "name": "service",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(rabbitmq_queue_messages_ready, queue)",
-          "refId": "queueVariable"
+          "query": "label_values(container_last_seen, container_label_com_docker_compose_service)",
+          "refId": "serviceVariable"
         },
         "refresh": 2,
         "regex": "",
@@ -1796,8 +1262,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "GrooveMap · Infrastructure",
-  "uid": "groovemap-infrastructure",
+  "title": "GrooveMap · Containers & host",
+  "uid": "groovemap-containers",
   "version": 1,
   "weekStart": ""
 }

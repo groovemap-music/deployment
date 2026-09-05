@@ -254,6 +254,16 @@ services:
     secrets:
       - redis_password
 
+  # Neither host exporter publishes a port and neither takes a credential, so
+  # prod only needs the restart policy. cadvisor's two capabilities and its
+  # /dev/kmsg device are the same in both environments: they are what make OOM
+  # events observable at all, and production is where that matters most.
+  cadvisor:
+    restart: always
+
+  node-exporter:
+    restart: always
+
   # The base file publishes 8428 on 0.0.0.0 for local PromQL work.
   # VictoriaMetrics has no authentication of its own and its API can delete
   # series, so in prod it is bound to loopback and reached through Grafana (or

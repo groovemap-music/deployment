@@ -20,6 +20,8 @@ against, and the metric catalog dashboards are allowed to reference.
   rabbitmq :15692                            │  │                          :10428
   postgres-exporter :9187  ◀──── prometheus receiver (scrape)
   redis-exporter :9121                       │
+  cadvisor :8080                             │
+  node-exporter :9100                        │
   otel-collector :8888     ◀─────────────────┘
 ```
 
@@ -30,7 +32,9 @@ Three collection paths meet in one collector:
   a Prometheus scrape endpoint for its own OTEL metrics.
 - **Infrastructure metrics are scraped.** RabbitMQ, PostgreSQL, and Redis have
   no OTLP support, so the collector's Prometheus receiver scrapes their
-  exporters and folds those series into the same pipeline.
+  exporters and folds those series into the same pipeline. The container
+  runtime and the host kernel are scraped the same way, through cAdvisor and
+  node-exporter.
 - **Spans are pushed to the same endpoint.** Traces ride the OTLP receiver
   alongside metrics, take their own pipeline, and are written to VictoriaTraces.
 
@@ -56,6 +60,8 @@ console reads, and they stay as they are.
 | `otel-collector` | 13133 | no | `health_check` extension liveness endpoint |
 | `victoria-metrics` | 8428 | dev only | vmui, the Prometheus query API, and the remote-write receiver |
 | `victoria-traces` | 10428 | dev only | OTLP trace ingest and the Tempo query API |
+| `cadvisor` | 8080 | no | Per-container metrics, scraped by the collector |
+| `node-exporter` | 9100 | no | Host metrics, scraped by the collector |
 | `grafana` | 3000 | yes | Dashboards |
 
 In production both Victoria publishes are replaced with loopback bindings
@@ -176,18 +182,62 @@ service is the supported way to mute it without touching its code.
 ### Infrastructure exporters
 
 RabbitMQ, PostgreSQL, and Redis speak no OTLP, so the collector's Prometheus
-receiver scrapes them. None of these ports is published to the host: exporters
-expose server internals and have no authentication of their own.
+receiver scrapes them. Neither does the container runtime or the host kernel, so
+cAdvisor and node-exporter are scraped the same way. None of these ports is
+published to the host: exporters expose server internals and have no
+authentication of their own.
 
-| Scrape job | Target | Source |
-| --- | --- | --- |
-| `rabbitmq` | `rabbitmq:15692` | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
-| `postgres-exporter` | `postgres-exporter:9187` | `prometheuscommunity/postgres-exporter` |
-| `redis-exporter` | `redis-exporter:9121` | `oliver006/redis_exporter` |
-| `otel-collector` | `otel-collector:8888` | the collector's own telemetry |
+| Scrape job | Target | Interval | Source |
+| --- | --- | ---: | --- |
+| `rabbitmq` | `rabbitmq:15692` | 15s | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
+| `postgres-exporter` | `postgres-exporter:9187` | 15s | `prometheuscommunity/postgres-exporter` |
+| `redis-exporter` | `redis-exporter:9121` | 15s | `oliver006/redis_exporter` |
+| `otel-collector` | `otel-collector:8888` | 15s | the collector's own telemetry |
+| `cadvisor` | `cadvisor:8080` | 30s | `gcr.io/cadvisor/cadvisor` — per-container CPU, memory, network, and block I/O |
+| `node-exporter` | `node-exporter:9100` | 30s | `prom/node-exporter` — host CPU, memory, load, disk, and filesystems |
 
 Job names deliberately match the docker-compose service keys, which is what the
 dashboards filter on.
+
+cAdvisor and node-exporter run at 30s rather than 15s. cAdvisor emits a series
+per container per interface and per device, node-exporter one per CPU per mode
+and per filesystem, so between them they dominate the sample count; container
+and host saturation move over minutes, and half the samples still show it.
+
+`cadvisor` is **not** privileged, and that is a deliberate departure from the
+upstream recipe. Measured against a privileged run on the same engine, the
+capability set below produces an identical series set for every metric the
+Containers & host dashboard plots:
+
+| Grant | Why it is needed |
+| --- | --- |
+| `cap_drop: ALL` then `cap_add: DAC_READ_SEARCH` | Walks the per-container directories under `/var/lib/docker` whose modes exclude it. Without it the filesystem collector logs a permission error on every housekeeping pass. |
+| `cap_add: SYSLOG` | Opens `/dev/kmsg`. |
+| `devices: /dev/kmsg:/dev/kmsg:r` | `/dev/kmsg` is the only source of kernel OOM kill messages. Without it cAdvisor logs `Could not configure a source for OOM detection, disabling OOM events` and `container_oom_events_total` never leaves zero — silently, which for a stack that scrapes cAdvisor precisely to catch OOM kills is the worst available failure. `/dev/kmsg` exists on every Linux engine, including the VM behind Docker Desktop, Colima, and Rancher Desktop. |
+
+All four of its mounts (`/`, `/var/run`, `/sys`, `/var/lib/docker`) are
+read-only, as is the container's own root filesystem, and `no-new-privileges`
+is set. Container labels are not stored wholesale — only
+`com.docker.compose.project` and `com.docker.compose.service` are converted into
+Prometheus labels, which is what the Containers & host dashboard filters on.
+Series cAdvisor reports for the root cgroup and for containers started outside
+this stack carry neither label, so a dashboard filtering on them must use an
+`allValue` of `.+` rather than `.*` — a missing label reads as the empty string
+in PromQL, and `.*` would quietly match those series too.
+
+`node-exporter` needs no capability at all. It reads `/proc`, `/sys`, and `/`
+through read-only bind mounts under `--path.rootfs=/rootfs`, and keeps
+`no-new-privileges`, `cap_drop: ALL`, and `read_only: true`. Its filesystem
+collector excludes the `/var/lib/docker` overlay mounts, without which every
+container's layer appears as a separate host filesystem.
+
+**On a VM-backed engine — Docker Desktop on macOS or Windows, Colima, Rancher
+Desktop — node-exporter reports the Linux VM, not your laptop.** The engine runs
+inside that VM, so `node_cpu_seconds_total`, `node_memory_MemTotal_bytes`, and
+the filesystem series describe the VM's allotted cores, memory, and disk. That
+is the right denominator for the containers on this dashboard, but it is not the
+machine's own usage — a laptop at 20% can show a VM at 90%. cAdvisor is
+unaffected: the containers it reports are the same containers either way.
 
 Both exporters take their credentials the same way the application services do:
 literal values in development, and `_FILE`-backed Docker secrets
@@ -519,7 +569,7 @@ restart.
 | Infrastructure | `groovemap-infrastructure` | RabbitMQ, PostgreSQL, and Redis exporter panels, plus collector points received, exported, and dropped |
 | Runtime | `groovemap-runtime` | Per-service CPU, resident and virtual memory, threads, open file descriptors, GC collections, event-loop lag, and the tokio task and queue gauges |
 | Neo4j | `groovemap-neo4j` | Graph reachability, nodes by label, relationships by type, active transactions, store sizes, and client operation latency by service |
-| Containers | `groovemap-containers` | Per-container CPU, memory, network, and restarts from cadvisor, plus host CPU, memory, disk, and load from node-exporter |
+| Containers & host | `groovemap-containers` | Per-container CPU, memory working set against limit, network, block I/O, restarts and OOM kills, plus host CPU, memory, load, disk, and filesystems |
 | Traces | `groovemap-traces` | RED per service and span name from the span metrics, and a TraceQL search over VictoriaTraces |
 
 Nine dashboards, one page each. The uids are stable and part of the contract: links and bookmarks depend on
@@ -608,7 +658,8 @@ just smoke
 ```
 
 `just smoke` is `docker compose up -d --wait` followed by `docker compose ps`.
-It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the two exporters, the
+It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the four exporters
+(`postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`), the
 collector, VictoriaMetrics, VictoriaTraces, Grafana, and every application
 service.
 
@@ -660,14 +711,15 @@ curl -s 'http://localhost:8428/api/v1/label/service_name/values'
 Expect the eleven compose service keys — `api`, `extractor-discogs`,
 `extractor-musicbrainz`, `graphinator`, `brainzgraphinator`, `tableinator`,
 `brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
-four values that come from the scrape jobs rather than from a push:
-`rabbitmq`, `postgres-exporter`, `redis-exporter`, and `otelcol-contrib`.
+six values that come from the scrape jobs rather than from a push:
+`rabbitmq`, `postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`,
+and `otelcol-contrib`.
 
 Two details are easy to misread. `schema-init` runs once and exits, so it
 appears only because the one-shot bootstrap flushes on shutdown; its absence
 means the flush regressed. And the collector's own scrape job is labelled
 `otelcol-contrib`, not `otel-collector`, because `service.name` from the
-collector's own telemetry wins over the job name — the three exporter jobs do
+collector's own telemetry wins over the job name — the five exporter jobs do
 match their compose service keys.
 
 A service that is missing here is either running an image without the telemetry
@@ -712,6 +764,10 @@ curl -sG 'http://localhost:8428/api/v1/query' \
 # Neo4j — node count per label, emitted by operations-console
 curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=sum by (label) (groovemap_neo4j_nodes)'
+
+# Containers & host — CPU seconds per second, per compose service
+curl -sG 'http://localhost:8428/api/v1/query' \
+  --data-urlencode 'query=sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total[5m]))'
 
 # Traces — span rate per service, derived by the spanmetrics connector
 curl -sG 'http://localhost:8428/api/v1/query' \

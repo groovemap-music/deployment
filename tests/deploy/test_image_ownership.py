@@ -23,6 +23,8 @@ THIRD_PARTY_SERVICES = (
     "grafana",
     "postgres-exporter",
     "redis-exporter",
+    "cadvisor",
+    "node-exporter",
 )
 
 

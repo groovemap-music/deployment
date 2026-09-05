@@ -15,8 +15,13 @@ just an absent dashboard — so they are pinned here:
 - RabbitMQ enables ``rabbitmq_prometheus``, and the two exporters exist,
   digest pinned, unpublished, and credentialed the same way the app services
   are;
-- the collector scrapes all four infrastructure targets under job names that
-  match the compose service keys.
+- the collector scrapes every infrastructure target under a job name that
+  matches the compose service key, with cadvisor and node-exporter on a 30s
+  interval because those two dominate the sample count;
+- cadvisor and node-exporter observe the host itself, with every mount and the
+  container root filesystem read-only; cadvisor takes two capabilities and a
+  read-only /dev/kmsg instead of the upstream recipe's blanket privilege, and
+  node-exporter needs no capability at all.
 """
 
 from __future__ import annotations
@@ -61,6 +66,11 @@ INSTRUMENTED_SERVICES = (
 
 EXPORTERS = ("postgres-exporter", "redis-exporter")
 
+# The two exporters that observe the host rather than a stack service. They are
+# not in EXPORTERS because neither takes a credential and neither is scraped on
+# the 15s interval the service exporters use.
+HOST_EXPORTERS = ("cadvisor", "node-exporter")
+
 # job_name -> scrape target. Job names match the compose service keys because
 # that is what the dashboards filter on.
 EXPECTED_SCRAPE_JOBS = {
@@ -68,7 +78,14 @@ EXPECTED_SCRAPE_JOBS = {
     "postgres-exporter": "postgres-exporter:9187",
     "redis-exporter": "redis-exporter:9121",
     "otel-collector": "otel-collector:8888",
+    "cadvisor": "cadvisor:8080",
+    "node-exporter": "node-exporter:9100",
 }
+
+# The two host exporters emit a series per container per device and per CPU per
+# mode respectively, so they are scraped half as often as the rest.
+HOST_SCRAPE_JOBS = ("cadvisor", "node-exporter")
+HOST_SCRAPE_INTERVAL = "30s"
 
 
 def _base_compose() -> dict[str, Any]:
@@ -286,10 +303,142 @@ class TestCollectorScrapesInfrastructure:
         for job in _scrape_configs():
             assert job["scrape_interval"], job["job_name"]
 
+    def test_the_host_exporters_are_scraped_every_30s(self) -> None:
+        """Container and host saturation move over minutes. These two jobs
+        dominate the sample count, so they run at half the rate of the rest."""
+        intervals = {job["job_name"]: job["scrape_interval"] for job in _scrape_configs()}
+        for job_name in HOST_SCRAPE_JOBS:
+            assert intervals[job_name] == HOST_SCRAPE_INTERVAL, job_name
+
     def test_no_application_service_is_scraped(self) -> None:
         """Applications push; scraping one would double-count and duplicate labels."""
         scraped = {job["job_name"] for job in _scrape_configs()}
         assert scraped.isdisjoint(INSTRUMENTED_SERVICES)
+
+
+class TestHostExporters:
+    """cAdvisor and node-exporter answer the two questions the application
+    metrics cannot: which container is eating the box, and is the box full."""
+
+    def test_both_host_exporters_exist(self) -> None:
+        services = _base_compose()["services"]
+        for name in HOST_EXPORTERS:
+            assert name in services, f"docker-compose.yml is missing {name}"
+
+    def test_host_exporters_are_digest_pinned(self) -> None:
+        services = _base_compose()["services"]
+        expected = {"cadvisor": "gcr.io/cadvisor/cadvisor", "node-exporter": "prom/node-exporter"}
+        for name, repository in expected.items():
+            image = services[name]["image"]
+            assert image.startswith(f"{repository}:"), image
+            digest = image.partition("@sha256:")[2]
+            assert len(digest) == 64, f"{name} is not digest pinned: {image}"
+
+    def test_host_exporters_publish_no_host_ports(self) -> None:
+        """cAdvisor serves an unauthenticated UI listing every container on the
+        host; node-exporter exposes the host's own saturation."""
+        services = _base_compose()["services"]
+        for name in HOST_EXPORTERS:
+            assert "ports" not in services[name], name
+
+    def test_host_exporters_restart_in_prod(self) -> None:
+        services = _prod_compose()["services"]
+        for name in HOST_EXPORTERS:
+            assert services[name]["restart"] == "always", name
+
+    def test_cadvisor_mounts_are_all_read_only(self) -> None:
+        """cAdvisor observes; it never writes. No mount it holds is writable."""
+        volumes = _base_compose()["services"]["cadvisor"]["volumes"]
+        assert set(volumes) == {
+            "/:/rootfs:ro",
+            "/var/run:/var/run:ro",
+            "/sys:/sys:ro",
+            "/var/lib/docker/:/var/lib/docker:ro",
+        }
+        for volume in volumes:
+            assert volume.endswith(":ro"), volume
+
+    def test_cadvisor_is_not_privileged(self) -> None:
+        """The upstream recipe runs privileged. Measured against a privileged
+        run on the same engine, the two capabilities below produce an identical
+        series set, so the privilege is not required and is not taken."""
+        cadvisor = _base_compose()["services"]["cadvisor"]
+        assert "privileged" not in cadvisor
+        assert "no-new-privileges:true" in cadvisor["security_opt"]
+        assert cadvisor["cap_drop"] == ["ALL"]
+        assert cadvisor["read_only"] is True
+
+    def test_cadvisor_takes_exactly_the_two_capabilities_it_needs(self) -> None:
+        """DAC_READ_SEARCH walks the per-container directories under
+        /var/lib/docker whose modes exclude it. SYSLOG opens /dev/kmsg."""
+        assert _base_compose()["services"]["cadvisor"]["cap_add"] == ["DAC_READ_SEARCH", "SYSLOG"]
+
+    def test_cadvisor_can_read_kernel_oom_messages(self) -> None:
+        """/dev/kmsg is the only source of OOM kill messages. Without it
+        cAdvisor disables OOM detection with a warning and
+        container_oom_events_total never leaves zero — which, for a stack that
+        scrapes cAdvisor precisely to catch OOM kills, is the worst failure
+        mode available. The bind is read-only."""
+        assert _base_compose()["services"]["cadvisor"]["devices"] == ["/dev/kmsg:/dev/kmsg:r"]
+
+    def test_cadvisor_converts_only_the_two_compose_labels(self) -> None:
+        """Storing every container label turns every image's labels into
+        Prometheus labels. The dashboard filters on the compose service key."""
+        command = _base_compose()["services"]["cadvisor"]["command"]
+        assert "--store_container_labels=false" in command
+        assert "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service" in command
+
+    def test_cadvisor_keeps_the_metric_families_the_dashboard_plots(self) -> None:
+        """--disable_metrics replaces the upstream default wholesale, so the
+        families behind the panels must survive it."""
+        disabled = next(flag for flag in _base_compose()["services"]["cadvisor"]["command"] if flag.startswith("--disable_metrics="))
+        disabled_sets = set(disabled.partition("=")[2].split(","))
+        for required in ("cpu", "memory", "network", "diskIO", "oom_event"):
+            assert required not in disabled_sets, required
+
+    def test_node_exporter_reads_the_host_read_only(self) -> None:
+        service = _base_compose()["services"]["node-exporter"]
+        assert set(service["volumes"]) == {"/proc:/host/proc:ro", "/sys:/host/sys:ro", "/:/rootfs:ro"}
+        for flag in ("--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--path.rootfs=/rootfs"):
+            assert flag in service["command"], flag
+
+    def test_node_exporter_excludes_the_container_overlay_mounts(self) -> None:
+        """Without this every container's overlay is a separate filesystem and
+        the host filesystem panel is unreadable."""
+        command = _base_compose()["services"]["node-exporter"]["command"]
+        exclusion = next(flag for flag in command if flag.startswith("--collector.filesystem.mount-points-exclude="))
+        assert "var/lib/docker" in exclusion
+
+    def test_node_exporter_is_hardened(self) -> None:
+        """It needs no capability at all: three read-only bind mounts are
+        enough, so unlike cAdvisor it keeps an empty capability set."""
+        service = _base_compose()["services"]["node-exporter"]
+        assert "privileged" not in service
+        assert "cap_add" not in service
+        assert "devices" not in service
+        assert "no-new-privileges:true" in service["security_opt"]
+        assert service["cap_drop"] == ["ALL"]
+        assert service["read_only"] is True
+
+    def test_both_host_exporters_have_healthchecks(self) -> None:
+        """Both images ship a shell and busybox wget, so unlike redis-exporter
+        they can probe themselves."""
+        services = _base_compose()["services"]
+        assert services["cadvisor"]["healthcheck"]["test"] == ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+        assert services["node-exporter"]["healthcheck"]["test"] == ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9100/"]
+
+    def test_neither_host_exporter_is_wired_for_otlp(self) -> None:
+        services = _base_compose()["services"]
+        for name in HOST_EXPORTERS:
+            environment = services[name].get("environment", {}) or {}
+            assert not [key for key in environment if key.startswith("OTEL_")], name
+
+    def test_the_docker_desktop_caveat_is_documented(self) -> None:
+        """On macOS and Windows node-exporter reports the engine's Linux VM,
+        not the laptop. An operator who does not know that reads the wrong box."""
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "Docker Desktop" in doc
+        assert "Linux VM" in doc
 
 
 class TestCollectorTracesPipeline:
@@ -325,7 +474,11 @@ class TestWiringDocumentation:
             "OTEL_TRACES_SAMPLER_ARG",
             "postgres-exporter",
             "redis-exporter",
+            "cadvisor",
+            "node-exporter",
             "15692",
+            "8080",
+            "9100",
         ):
             assert token in doc, f"docs/observability.md does not document {token}"
 

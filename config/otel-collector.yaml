@@ -43,6 +43,18 @@ receivers:
           scrape_interval: 15s
           static_configs:
             - targets: ["otel-collector:8888"]
+        # 30s, not 15s: cadvisor exports a series per container per device and
+        # node-exporter a series per CPU, mode, and filesystem, so these two
+        # jobs dominate the sample count. Container and host saturation move
+        # over minutes, not seconds, and half the samples still show it.
+        - job_name: cadvisor
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["cadvisor:8080"]
+        - job_name: node-exporter
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["node-exporter:9100"]
 
 processors:
   # memory_limiter must be the FIRST processor in the pipeline so back-pressure

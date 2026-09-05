@@ -107,6 +107,31 @@ EXPORTER_METRICS = frozenset(
         "redis_memory_max_bytes",
         "redis_memory_used_bytes",
         "redis_up",
+        # gcr.io/cadvisor/cadvisor. Per-container series; the compose service
+        # key arrives as the container_label_com_docker_compose_service label,
+        # which is why no label name appears in this list.
+        "container_cpu_usage_seconds_total",
+        "container_fs_reads_bytes_total",
+        "container_fs_writes_bytes_total",
+        "container_last_seen",
+        "container_memory_working_set_bytes",
+        "container_network_receive_bytes_total",
+        "container_network_transmit_bytes_total",
+        "container_oom_events_total",
+        "container_spec_memory_limit_bytes",
+        "container_start_time_seconds",
+        # prom/node-exporter. On Docker Desktop these describe the Linux VM
+        # that runs the engine, not the laptop.
+        "node_cpu_seconds_total",
+        "node_disk_read_bytes_total",
+        "node_disk_written_bytes_total",
+        "node_filesystem_avail_bytes",
+        "node_filesystem_size_bytes",
+        "node_load1",
+        "node_load5",
+        "node_load15",
+        "node_memory_MemAvailable_bytes",
+        "node_memory_MemTotal_bytes",
         # The collector's own telemetry, scraped from :8888.
         "otelcol_exporter_send_failed_metric_points_total",
         "otelcol_exporter_sent_metric_points_total",

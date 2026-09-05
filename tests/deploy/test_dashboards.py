@@ -32,10 +32,8 @@ DASHBOARD_DIR = REPO_ROOT / "config" / "grafana" / "dashboards"
 PROVISIONING = REPO_ROOT / "config" / "grafana" / "provisioning"
 CHECKER = REPO_ROOT / "scripts" / "check-dashboards.py"
 
-# The nine dashboards docs/observability.md documents. `groovemap-containers`
-# is delivered by gm-deployment-dqh.2 on its own branch, so this branch asserts
-# that every dashboard on disk is one of these and that the ones it owns exist,
-# rather than an equality that would fail on whichever branch lands first.
+# The nine dashboards docs/observability.md documents, and the wave that
+# delivered each. The inventory is closed: exactly these files exist.
 EXPECTED_UIDS = {
     "groovemap-pipeline-overview",
     "groovemap-ingestion",
@@ -56,7 +54,9 @@ WAVE_ONE_UIDS = {
     "groovemap-infrastructure",
 }
 
-WAVE_TWO_UIDS = {"groovemap-runtime", "groovemap-neo4j", "groovemap-traces"}
+# `groovemap-containers` is wave 2 as well: gm-deployment-dqh.2 added it
+# alongside the cadvisor and node-exporter scrape jobs that feed it.
+WAVE_TWO_UIDS = {"groovemap-runtime", "groovemap-neo4j", "groovemap-containers", "groovemap-traces"}
 
 DATASOURCE_VARIABLE = "${DS_PROMETHEUS}"
 TRACE_DATASOURCE_VARIABLE = "${DS_TEMPO}"
@@ -116,18 +116,28 @@ class TestProvisioning:
 
 
 class TestDashboardInventory:
+    def test_exactly_the_expected_dashboards_exist(self) -> None:
+        """gm-deployment-dqh.3 relaxed this to a pair of subset assertions
+        because `groovemap-containers` was landing on a sibling branch and an
+        equality would have failed on whichever branch merged first. Both
+        wave-2 branches are together now, so the inventory is closed again: a
+        dashboard nobody documented is one nobody can be told to open, and a
+        documented uid with no file behind it is a dead link in the runbook."""
+        uids = {dashboard["uid"] for dashboard in _dashboards().values()}
+        assert uids == EXPECTED_UIDS
+
+    def test_the_wave_split_accounts_for_every_dashboard(self) -> None:
+        assert WAVE_ONE_UIDS | WAVE_TWO_UIDS == EXPECTED_UIDS
+        assert WAVE_ONE_UIDS.isdisjoint(WAVE_TWO_UIDS)
+
     def test_the_wave_one_dashboards_are_still_there(self) -> None:
+        """Wave 2 adds dashboards; it never replaces one."""
         uids = {dashboard["uid"] for dashboard in _dashboards().values()}
         assert uids >= WAVE_ONE_UIDS
 
     def test_the_wave_two_dashboards_exist(self) -> None:
         uids = {dashboard["uid"] for dashboard in _dashboards().values()}
         assert uids >= WAVE_TWO_UIDS
-
-    def test_every_dashboard_on_disk_is_documented(self) -> None:
-        """A dashboard nobody documented is one nobody can be told to open."""
-        uids = {dashboard["uid"] for dashboard in _dashboards().values()}
-        assert uids <= EXPECTED_UIDS
 
     def test_uids_and_titles_are_unique(self) -> None:
         dashboards = list(_dashboards().values())
@@ -310,6 +320,58 @@ class TestAcceptancePanels:
         assert "otelcol_receiver_accepted_metric_points_total" in metrics
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
+
+    def test_containers_covers_per_container_usage_and_host_saturation(self) -> None:
+        metrics = self._metrics("containers.json")
+        for metric in (
+            "container_cpu_usage_seconds_total",
+            "container_memory_working_set_bytes",
+            "container_spec_memory_limit_bytes",
+            "container_network_receive_bytes_total",
+            "container_network_transmit_bytes_total",
+            "container_fs_reads_bytes_total",
+            "container_fs_writes_bytes_total",
+            "container_start_time_seconds",
+        ):
+            assert metric in metrics, metric
+        for metric in (
+            "node_cpu_seconds_total",
+            "node_memory_MemAvailable_bytes",
+            "node_load1",
+            "node_disk_read_bytes_total",
+            "node_filesystem_avail_bytes",
+        ):
+            assert metric in metrics, metric
+
+    def test_containers_filters_by_the_compose_service_label(self) -> None:
+        """cAdvisor's own series carry no compose identity; the whitelisted
+        label is what ties a container back to a compose service."""
+        dashboard = _dashboards()["containers.json"]
+        container_expressions = [expr for expr in _expressions(dashboard) if "container_" in expr]
+        assert container_expressions
+        for expr in container_expressions:
+            assert "container_label_com_docker_compose_service" in expr, expr
+
+    def test_containers_all_excludes_series_without_the_compose_label(self) -> None:
+        """`.+`, not `.*`. In PromQL a missing label reads as the empty string,
+        so an `=~` matcher that accepts empty also selects every series that
+        LACKS the label — and cAdvisor with --store_container_labels=false
+        emits no compose label on the root cgroup or on any container started
+        outside this stack. With `.*` the default All view is silently
+        unfiltered: the container count includes the whole host, and each
+        panel gains a blank-legend series covering it."""
+        dashboard = _dashboards()["containers.json"]
+        variable = next(entry for entry in dashboard["templating"]["list"] if entry["name"] == "service")
+        assert variable["allValue"] == ".+"
+
+    def test_the_infrastructure_scrape_stat_covers_the_two_new_jobs(self) -> None:
+        """The stat queries the bare `up` series, so it counts every collector
+        scrape job; its description names them so a reader knows what to expect."""
+        dashboard = _dashboards()["infrastructure.json"]
+        panel = next(panel for panel in dashboard["panels"] if panel["title"] == "Scrape targets up")
+        assert [target["expr"] for target in panel["targets"]] == ["up"]
+        for job in ("cadvisor", "node-exporter"):
+            assert job in panel["description"], job
 
 
 class TestCatalogParsing:

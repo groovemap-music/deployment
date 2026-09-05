@@ -257,6 +257,109 @@ services:
       - ALL
     read_only: true
 
+  # cAdvisor — per-container CPU, memory, network, and block I/O for every
+  # container on this host, scraped by otel-collector on :8080. Without it a
+  # runaway consumer is invisible until the kernel OOM-kills it.
+  #
+  # The upstream recipe runs this privileged. It does not need to be: measured
+  # against a privileged run on the same engine, `cap_drop: ALL` plus exactly
+  # two capabilities produces an identical series set.
+  #   - DAC_READ_SEARCH lets it walk the per-container directories under
+  #     /var/lib/docker whose modes exclude it; without it the filesystem
+  #     collector logs a permission error on every housekeeping pass.
+  #   - SYSLOG lets it open /dev/kmsg. That is the only source of kernel OOM
+  #     kill messages, and without it cAdvisor logs "Could not configure a
+  #     source for OOM detection, disabling OOM events" and
+  #     `container_oom_events_total` never leaves zero — silently, which for a
+  #     stack whose reason for scraping this is OOM kills is the worst way to
+  #     fail. /dev/kmsg is bound read-only; it exists on every Linux engine,
+  #     including the VM behind Docker Desktop, Colima, and Rancher Desktop.
+  # Every mount is read-only and so is the container's own root filesystem.
+  #
+  # Container labels are NOT stored wholesale (that turns every label on every
+  # image into a Prometheus label). Only the two compose labels are converted,
+  # which is what the Containers & host dashboard filters on.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57
+    container_name: groovemap-cadvisor
+    hostname: cadvisor
+    command:
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+      - "--store_container_labels=false"
+      - "--whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service"
+      - "--disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp"
+    # :8080 stays internal. cAdvisor serves an unauthenticated UI that lists
+    # every container on the host, exactly like the other exporters.
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg:r
+    networks:
+      - groovemap
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+      - SYSLOG
+    read_only: true
+
+  # node-exporter — host CPU, memory, load, disk, and filesystem saturation,
+  # scraped by otel-collector on :9100. cAdvisor answers "which container is
+  # eating the box"; this answers "is the box full".
+  #
+  # On a VM-backed engine — Docker Desktop on macOS or Windows, Colima,
+  # Rancher Desktop — the "host" is the Linux VM that runs the engine, not the
+  # laptop: the CPU count, memory, and filesystems reported here are the VM's.
+  # That is still the right denominator for these containers, but it is not the
+  # machine's own resource usage. See docs/observability.md.
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    container_name: groovemap-node-exporter
+    hostname: node-exporter
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      # Without this every container's overlay mount is reported as a separate
+      # filesystem and the host filesystem panel becomes unreadable.
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials/.+|var/lib/docker/.+)($$|/)"
+    # :9100 stays internal, like every other exporter.
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - groovemap
+    # The image is busybox-based, so unlike redis-exporter it can probe itself.
+    # The landing page is a few bytes; /metrics would render the whole scrape.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
   # VictoriaMetrics — the organisation's metrics backend and the only TSDB in
   # this stack. It accepts Prometheus remote write natively (no flag needed)
   # and serves the Prometheus query API on the same port, which is why the
