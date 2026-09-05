@@ -234,6 +234,18 @@ class TestAcceptancePanels:
         for expr in container_expressions:
             assert "container_label_com_docker_compose_service" in expr, expr
 
+    def test_containers_all_excludes_series_without_the_compose_label(self) -> None:
+        """`.+`, not `.*`. In PromQL a missing label reads as the empty string,
+        so an `=~` matcher that accepts empty also selects every series that
+        LACKS the label — and cAdvisor with --store_container_labels=false
+        emits no compose label on the root cgroup or on any container started
+        outside this stack. With `.*` the default All view is silently
+        unfiltered: the container count includes the whole host, and each
+        panel gains a blank-legend series covering it."""
+        dashboard = _dashboards()["containers.json"]
+        variable = next(entry for entry in dashboard["templating"]["list"] if entry["name"] == "service")
+        assert variable["allValue"] == ".+"
+
     def test_the_infrastructure_scrape_stat_covers_the_two_new_jobs(self) -> None:
         """The stat queries the bare `up` series, so it counts every collector
         scrape job; its description names them so a reader knows what to expect."""

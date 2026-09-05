@@ -220,6 +220,10 @@ read-only, as is the container's own root filesystem, and `no-new-privileges`
 is set. Container labels are not stored wholesale — only
 `com.docker.compose.project` and `com.docker.compose.service` are converted into
 Prometheus labels, which is what the Containers & host dashboard filters on.
+Series cAdvisor reports for the root cgroup and for containers started outside
+this stack carry neither label, so a dashboard filtering on them must use an
+`allValue` of `.+` rather than `.*` — a missing label reads as the empty string
+in PromQL, and `.*` would quietly match those series too.
 
 `node-exporter` needs no capability at all. It reads `/proc`, `/sys`, and `/`
 through read-only bind mounts under `--path.rootfs=/rootfs`, and keeps
