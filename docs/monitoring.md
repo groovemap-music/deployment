@@ -96,8 +96,9 @@ The source repositories own query-specific diagnostics:
 ## Metrics, dashboards, and the OpenTelemetry backend
 
 Application and infrastructure metrics are collected by an OpenTelemetry
-collector, stored in Prometheus, and visualised in Grafana at
-<http://localhost:3000>. The pipeline, the port map, the instrumentation
+collector, stored in VictoriaMetrics, and visualised in Grafana at
+<http://localhost:3000>. Traces take the same collector and are stored in
+VictoriaTraces, read back through the Tempo datasource in the same Grafana. The pipeline, the port map, the instrumentation
 conventions, and the canonical metric catalog live in
 [Observability](observability.md).
 

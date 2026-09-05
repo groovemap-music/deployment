@@ -70,6 +70,27 @@ assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DI
     "a reviewed release digest must be a full manifest digest"
 )
 
+# Compose service -> the exact third-party image reference it runs. These are public
+# registry images nobody here publishes, so the manifest digest is the whole review: a
+# bump is a deliberate edit to this table and to docker-compose.yml together, never a
+# tag that quietly moved underneath the stack. Every service NOT in INTERNAL_IMAGES
+# must appear here.
+THIRD_PARTY_IMAGES = {
+    "grafana": "grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",  # gitleaks:allow
+    "neo4j": "neo4j:2026-community@sha256:dbc377fb9cd8fe8dabc19d3041b197d5ca0ef8bae514cea175b8df265e5b7a76",  # gitleaks:allow
+    "otel-collector": "otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6",  # gitleaks:allow
+    "postgres": "postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",  # gitleaks:allow
+    "postgres-exporter": "prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e",  # gitleaks:allow
+    "rabbitmq": "rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852",  # gitleaks:allow
+    "redis": "redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",  # gitleaks:allow
+    "redis-exporter": "oliver006/redis_exporter:v1.90.0@sha256:a129504e65b87c54f79bc92f1afc403475e8ff646a3d7512de469904ceddf986",  # gitleaks:allow
+    "victoria-metrics": "victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd",  # gitleaks:allow
+    "victoria-traces": "victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd",  # gitleaks:allow
+}
+
+assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_IMAGES), "a service runs either a released GrooveMap image or a public one"
+assert all(DIGEST.search(reference) for reference in THIRD_PARTY_IMAGES.values()), "every third-party reference must be digest pinned"
+
 
 compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 services = compose["services"]
@@ -79,9 +100,16 @@ for service_name, variable in INTERNAL_IMAGES.items():
     image = services[service_name]["image"]
     assert image.startswith(f"${{{variable}:?"), f"{service_name} must require {variable}"
 
-for service_name in sorted(set(services) - set(INTERNAL_IMAGES)):
+third_party_services = sorted(set(services) - set(INTERNAL_IMAGES))
+assert third_party_services == sorted(THIRD_PARTY_IMAGES), (
+    f"THIRD_PARTY_IMAGES does not match the compose services: {sorted(set(third_party_services) ^ set(THIRD_PARTY_IMAGES))}"
+)
+for service_name in third_party_services:
     image = services[service_name]["image"]
     assert DIGEST.search(image), f"{service_name} image is not digest-pinned: {image}"
+    assert image == THIRD_PARTY_IMAGES[service_name], (
+        f"{service_name} runs {image}, which is not the reviewed reference {THIRD_PARTY_IMAGES[service_name]}"
+    )
 
 assert ":latest" not in (ROOT / "docker-compose.yml").read_text()
 

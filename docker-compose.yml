@@ -17,6 +17,14 @@ x-logging: &default-logging
 x-otel-env: &otel-env
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=dev"
+  # Traces share the metrics endpoint and transport. Dev keeps every span
+  # (arg 1.0) because the volumes are small and a dropped span during
+  # development is a debugging dead end; the production overlay re-stamps the
+  # arg to 0.1. `parentbased_traceidratio` means a sampling decision taken at
+  # the edge of a request is honoured by every downstream service, so a trace
+  # is never half-recorded.
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
 
 # service_started, never service_healthy: telemetry must never be able to block
 # an application from starting. A service that boots before the collector is
@@ -249,31 +257,32 @@ services:
       - ALL
     read_only: true
 
-  # Prometheus — remote-write receiver and the single metrics store. It scrapes
-  # nothing itself; otel-collector owns all collection and remote-writes here.
-  prometheus:
-    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
-    container_name: groovemap-prometheus
-    hostname: prometheus
+  # VictoriaMetrics — the organisation's metrics backend and the only TSDB in
+  # this stack. It accepts Prometheus remote write natively (no flag needed)
+  # and serves the Prometheus query API on the same port, which is why the
+  # Grafana datasource stays `type: prometheus` and every existing dashboard
+  # keeps working. It scrapes nothing itself; otel-collector owns all
+  # collection and remote-writes here.
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd
+    container_name: groovemap-victoria-metrics
+    hostname: victoria-metrics
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=15d"
-      # Accept OTLP-derived series pushed by otel-collector.
-      - "--web.enable-remote-write-receiver"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=15d"
+      - "-httpListenAddr=:8428"
     ports:
-      - "9090:9090"    # Prometheus UI and API (loopback-only in prod)
+      - "8428:8428"    # vmui, the Prometheus query API, and remote write (loopback-only in prod)
     volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - victoria_metrics_data:/victoria-metrics-data
     networks:
       groovemap:
         aliases:
           - metrics-store
+    # 127.0.0.1, not localhost: the server binds IPv4 only, and busybox wget
+    # resolves `localhost` to ::1 first, which is refused.
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8428/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -282,6 +291,46 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # VictoriaTraces — the trace store. The collector pushes OTLP/HTTP spans to
+  # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
+  # API this server exposes under /select/tempo.
+  victoria-traces:
+    image: victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd
+    container_name: groovemap-victoria-traces
+    hostname: victoria-traces
+    command:
+      - "-storageDataPath=/victoria-traces-data"
+      - "-retentionPeriod=7d"
+      - "-httpListenAddr=:10428"
+    ports:
+      - "10428:10428"    # OTLP trace ingest and the Tempo query API (loopback-only in prod)
+    volumes:
+      - victoria_traces_data:/victoria-traces-data
+    networks:
+      groovemap:
+        aliases:
+          - traces-store
+    # This image is distroless — no shell, no wget, no curl — so the probe
+    # cannot call /health the way victoria-metrics does. Re-running the
+    # server's own binary with -version still proves the container is alive
+    # and its entrypoint intact, the same compromise the collector makes
+    # below. /health on :10428 is the operator-facing liveness endpoint,
+    # reachable from any other container on the network.
+    healthcheck:
+      test: ["CMD", "/victoria-traces-prod", "-version"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
@@ -295,7 +344,9 @@ services:
     volumes:
       - ./config/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
-      prometheus:
+      victoria-metrics:
+        condition: service_healthy
+      victoria-traces:
         condition: service_healthy
     networks:
       groovemap:
@@ -345,7 +396,9 @@ services:
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     depends_on:
-      prometheus:
+      victoria-metrics:
+        condition: service_healthy
+      victoria-traces:
         condition: service_healthy
     networks:
       groovemap:
@@ -959,5 +1012,6 @@ volumes:
   brainztableinator_logs:
   insights_logs:
   musicbrainz_data:
-  prometheus_data:
+  victoria_metrics_data:
+  victoria_traces_data:
   grafana_data:
