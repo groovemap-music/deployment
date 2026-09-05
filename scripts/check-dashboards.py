@@ -19,8 +19,12 @@ It enforces six things:
    ``docs/observability.md`` or in the exporter/collector allowlist below;
 5. the provisioning files that make the variables resolvable still exist, still
    declare both datasource uids, and still point at the mounted dashboard
-   directory — and, once the alert rules exist, that every expression in them is
-   catalogued exactly like a panel query;
+   directory — and that every expression in the provisioned alert rules is
+   catalogued exactly like a panel query, that each rule carries a ``summary``,
+   a ``description``, a ``severity`` label, a unique Grafana-legal uid, and a
+   ``condition`` that names one of its own refIds, and that a rule names its
+   datasource uid directly instead of reaching for a dashboard variable it
+   cannot resolve;
 6. every PromQL query in the Verification runbook in ``docs/observability.md``
    names catalogued metrics too — the runbook is how an operator proves the
    dashboards have data, so a query that can never match is worse than useless.
@@ -44,10 +48,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = ROOT / "config" / "grafana" / "dashboards"
 DATASOURCE_FILE = ROOT / "config" / "grafana" / "provisioning" / "datasources" / "prometheus.yaml"
 PROVIDER_FILE = ROOT / "config" / "grafana" / "provisioning" / "dashboards" / "groovemap.yaml"
-# Provisioned by gm-deployment-dqh.4. Absent until then, and the gate stays
-# quiet about it rather than failing a repository that has no alert rules yet.
+# Grafana-managed alert rules (gm-deployment-dqh.4). Optional by design: a
+# checkout with no rules is not broken, so absence is silence, not a failure.
 ALERTING_FILE = ROOT / "config" / "grafana" / "provisioning" / "alerting" / "groovemap.yaml"
 CATALOG_FILE = ROOT / "docs" / "observability.md"
+CATALOG_HEADING = "## Metric catalog"
 
 DATASOURCE_VARIABLE = "${DS_PROMETHEUS}"
 DATASOURCE_UID = "prometheus"
@@ -171,6 +176,12 @@ _LABEL_MATCHER = re.compile(r"\{[^{}]*\}")
 _OFFSET_CLAUSE = re.compile(r"\boffset\s+[\w.]+")
 _IDENTIFIER = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 _CATALOG_NAME = re.compile(r"^`([a-z_][a-z0-9_]*)`$")
+# Grafana's own constraint on a provisioned alert rule uid: at most 40 symbols,
+# letters, numbers, hyphen, and underscore only. Grafana rejects the whole file
+# when one uid breaks it, so catching it here costs a diff instead of an
+# alerting stack that silently provisions nothing.
+ALERT_RULE_UID_MAX_LENGTH = 40
+_ALERT_RULE_UID = re.compile(r"[A-Za-z0-9_-]+")
 # The runbook issues each query as `curl -sG ... --data-urlencode 'query=<promql>'`,
 # so the PromQL is exactly what sits between the single quotes.
 _RUNBOOK_QUERY = re.compile(r"--data-urlencode\s+'query=([^']*)'")
@@ -212,16 +223,34 @@ def extract_metric_names(expr: str) -> set[str]:
     return names
 
 
+def _catalog_section(text: str) -> str:
+    """Return the ``## Metric catalog`` section of the observability document.
+
+    Empty when the heading is gone, which fails every dashboard at once and
+    names the real problem — far better than falling back to the whole document
+    and quietly re-admitting the tables this scoping exists to exclude.
+    """
+    _, marker, remainder = ("\n" + text).partition(f"\n{CATALOG_HEADING}\n")
+    if not marker:
+        return ""
+    return remainder.partition("\n## ")[0]
+
+
 def load_catalog(catalog_file: Path | None = None) -> set[str]:
     """Return the Prometheus metric names documented in the metric catalog.
 
     The catalog is a set of markdown tables whose second column is the
     Prometheus name in backticks. Histogram rows name only the base metric, so
     the derived ``_bucket``/``_sum``/``_count`` series are added here.
+
+    Only the ``## Metric catalog`` section is read. The document holds other
+    tables — the Dashboards inventory, the Alerts table — whose second column is
+    also a backticked identifier, and letting one of those widen the allowlist
+    would mean a rule could catalogue its own typo just by tabulating it.
     """
     path = catalog_file if catalog_file is not None else CATALOG_FILE
     names: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in _catalog_section(path.read_text(encoding="utf-8")).splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
@@ -387,6 +416,50 @@ def check_provisioning() -> list[str]:
     return problems
 
 
+def check_alert_rule(name: str, title: str, rule: dict[str, Any], seen_uids: set[str]) -> list[str]:
+    """Validate one alert rule's contract with the operator who receives it.
+
+    A rule that fires without saying what broke and how badly is a pager
+    message nobody can act on, so ``summary``, ``description``, and a
+    ``severity`` label are as mandatory as the query itself. ``condition`` must
+    name a refId the rule actually computes — Grafana rejects a dangling
+    condition at load time and provisions nothing, which is a silent loss of
+    every rule in the file.
+    """
+    problems: list[str] = []
+
+    uid = rule.get("uid")
+    if not uid:
+        problems.append(f"{name}: alert rule {title!r} has no uid")
+    else:
+        if uid in seen_uids:
+            problems.append(f"{name}: alert rule uid {uid!r} is used more than once")
+        seen_uids.add(uid)
+        if len(uid) > ALERT_RULE_UID_MAX_LENGTH or not _ALERT_RULE_UID.fullmatch(uid):
+            problems.append(f"{name}: alert rule uid {uid!r} must be at most {ALERT_RULE_UID_MAX_LENGTH} characters of letters, digits, '-', or '_'")
+
+    annotations = rule.get("annotations") or {}
+    for annotation in ("summary", "description"):
+        if not str(annotations.get(annotation, "")).strip():
+            problems.append(f"{name}: alert rule {title!r} has no {annotation} annotation")
+
+    if not str((rule.get("labels") or {}).get("severity", "")).strip():
+        problems.append(f"{name}: alert rule {title!r} carries no severity label")
+
+    data = rule.get("data") or []
+    ref_ids = {item.get("refId") for item in data if isinstance(item, dict)}
+    condition = rule.get("condition")
+    if not condition:
+        problems.append(f"{name}: alert rule {title!r} names no condition")
+    elif condition not in ref_ids:
+        problems.append(f"{name}: alert rule {title!r} has condition {condition!r}, which is not one of its refIds {sorted(r for r in ref_ids if r)}")
+
+    if not any(isinstance(item, dict) and isinstance(item.get("model"), dict) and item["model"].get("expr") for item in data):
+        problems.append(f"{name}: alert rule {title!r} runs no PromQL query")
+
+    return problems
+
+
 def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None) -> list[str]:
     """Validate the provisioned Grafana-managed alert rules, when there are any.
 
@@ -412,6 +485,7 @@ def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None)
     if not isinstance(groups, list) or not groups:
         return [*problems, f"{name}: provisions no alert rule groups"]
 
+    seen_rule_uids: set[str] = set()
     for group in groups:
         if not group.get("name"):
             problems.append(f"{name}: an alert rule group has no name")
@@ -421,15 +495,28 @@ def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None)
         if not rules:
             problems.append(f"{name}: alert rule group {group.get('name')!r} has no rules")
         for rule in rules:
-            if not rule.get("title"):
+            title = rule.get("title")
+            if not title:
                 problems.append(f"{name}: an alert rule in group {group.get('name')!r} has no title")
+            problems.extend(check_alert_rule(name, title or "<untitled>", rule, seen_rule_uids))
 
     # A rule names its datasource by uid, in `datasourceUid` as well as in the
     # `datasource` block a query model carries. `__expr__` and `-100` are
     # Grafana's built-in server-side expression datasource.
+    #
+    # This is the one place a raw uid is correct rather than the portability bug
+    # `check_dashboard` rejects. A dashboard resolves ${DS_PROMETHEUS} in the
+    # browser, against the datasource list of whatever Grafana served the page.
+    # An alert rule has no browser and no dashboard: the scheduler evaluates it
+    # server-side and looks the datasource up by uid, so a template variable
+    # there is an unresolvable string, not a portable reference. The uid is safe
+    # to hard-code precisely because provisioning fixes it — `prometheus` and
+    # `tempo` are pinned in the datasource file for exactly this reason.
     referenced = collect_datasource_uids(document) | {node["datasourceUid"] for node in _walk(document) if isinstance(node.get("datasourceUid"), str)}
     for uid in sorted(referenced):
-        if uid not in {DATASOURCE_UID, TRACE_DATASOURCE_UID, "__expr__", "-100"}:
+        if uid in DATASOURCE_VARIABLES:
+            problems.append(f"{name}: alert rule uses the dashboard variable {uid}; a rule is evaluated server-side and must name the uid directly")
+        elif uid not in {DATASOURCE_UID, TRACE_DATASOURCE_UID, "__expr__", "-100"}:
             problems.append(f"{name}: alert rule reads unknown datasource uid {uid!r}")
 
     # Alert rules are provisioned server-side, so they name the datasource uid
@@ -448,6 +535,9 @@ def main() -> int:
     dashboard_files = sorted(DASHBOARD_DIR.glob("*.json"))
     if not dashboard_files:
         problems.append(f"no dashboards found in {_display(DASHBOARD_DIR)}")
+
+    if not _catalog_section(CATALOG_FILE.read_text(encoding="utf-8")).strip():
+        problems.append(f"{_display(CATALOG_FILE)}: has no '{CATALOG_HEADING}' section, so no metric name is catalogued")
 
     allowed_metrics = load_catalog() | EXPORTER_METRICS
     problems.extend(check_runbook(allowed_metrics))

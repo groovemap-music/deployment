@@ -1,0 +1,664 @@
+---
+
+# Grafana-managed alert rules, provisioned as code (gm-deployment-dqh.4).
+#
+# Nine dashboards nobody is looking at do not page anyone. These rules are the
+# same queries with a threshold on them, so a metric that is renamed or an
+# expression that can never match fails `scripts/check-dashboards.py` exactly as
+# a broken panel does.
+#
+# No contact point and no notification policy are provisioned: these rules
+# surface in the Grafana alert list (Alerting -> Alert rules) and nowhere else.
+# docs/observability.md explains how to add a contact point when someone is
+# ready to be woken up.
+#
+# Shape of every rule: refId A is an *instant* PromQL query against the
+# Prometheus datasource, refId C is Grafana's built-in threshold expression on
+# A, and `condition: C`. Alert rules are evaluated server-side and cannot
+# resolve a dashboard's ${DS_PROMETHEUS} template variable, so they name the
+# provisioned uid `prometheus` directly — the lint gate allows that uid (and
+# `__expr__`) in this file only, and still rejects any other.
+#
+# relativeTimeRange.from is a uniform 3600s: it only has to be wide enough for
+# the longest range selector below (30m), and an instant query reads at the `to`
+# boundary regardless.
+#
+# noDataState is `OK` on all but three rules, deliberately. Grafana's default is
+# `NoData`, which raises a DatasourceNoData alert whenever a query matches
+# nothing — and on a stack that is starting up, or one whose extractors have not
+# run yet, that is nearly every rule at once. Missing telemetry is reported by
+# exactly three canaries instead, each covering a distinct source:
+# ScrapeTargetDown for the scrape jobs (rabbitmq, postgres, redis, cadvisor,
+# node-exporter, the collector), ConsumersAbsent for the services that push
+# OTLP, and Neo4jDown for the graph probe operations-console emits. A threshold
+# rule downstream of one of those sees no data only when its canary is already
+# firing, so it stays quiet rather than saying the same thing twice.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: groovemap
+    folder: GrooveMap
+    interval: 1m
+    rules:
+      # --- Collection pipeline health ------------------------------------
+
+      - uid: groovemap-scrape-target-down
+        title: ScrapeTargetDown
+        condition: C
+        # A target that stops answering takes every panel built on it with it,
+        # silently. This is the rule that says the dashboards are lying.
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: up
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        # Nothing else reports a silent collector: if `up` itself returns
+        # no series there is no scrape data at all.
+        noDataState: NoData
+        execErrState: Error
+        annotations:
+          summary: A Prometheus scrape target is down
+          description: >-
+            up is 0 for at least 5m, so the collector cannot reach this scrape
+            job. Threshold: up < 1. Every panel fed by this job is empty rather
+            than wrong, which is why this fires first.
+        labels:
+          severity: critical
+
+      - uid: groovemap-collector-dropping-points
+        title: CollectorDroppingPoints
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(otelcol_exporter_send_failed_metric_points_total[15m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: The OTEL collector is failing to export metric points
+          description: >-
+            Threshold: any non-zero failed export rate sustained for 10m.
+            Points the collector cannot write to VictoriaMetrics are lost, so
+            history gets holes that no later query can fill.
+        labels:
+          severity: critical
+
+      # --- Ingestion and consumers ---------------------------------------
+
+      - uid: groovemap-extractor-error-rate-high
+        title: ExtractorErrorRateHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                100 * sum by (source) (rate(groovemap_extraction_files_total{outcome="failed"}[30m]))
+                / sum by (source) (rate(groovemap_extraction_files_total[30m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [10]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: An extractor is failing more than a tenth of its files
+          description: >-
+            Threshold: failed extraction files above 10% of all files over 30m,
+            sustained 15m, for one source. groovemap_extraction_errors_total
+            breaks the same failures down by stage (download, parse, publish).
+            No extraction traffic evaluates to no data, which is OK, not a fire.
+        labels:
+          severity: warning
+
+      - uid: groovemap-consumer-failure-rate-high
+        title: ConsumerFailureRateHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                100 * sum by (service_name, source) (rate(groovemap_pipeline_messages_total{outcome="failed"}[15m]))
+                / sum by (service_name, source) (rate(groovemap_pipeline_messages_total[15m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A consumer is failing more than a twentieth of its messages
+          description: >-
+            Threshold: messages with outcome=failed above 5% of all messages
+            over 15m, sustained 10m, for one service and source. Failed messages
+            are dead-lettered, so the backlog keeps draining while data is lost.
+        labels:
+          severity: critical
+
+      - uid: groovemap-circuit-breaker-open
+        title: CircuitBreakerOpen
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (service_name, system) (groovemap_pipeline_circuit_breaker_state)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [1]}
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A circuit breaker is open
+          description: >-
+            Threshold: groovemap_pipeline_circuit_breaker_state > 1 for 2m. The
+            gauge is 0 closed, 1 half-open, 2 open, so only the open state
+            fires. The service has stopped calling this dependency entirely.
+        labels:
+          severity: critical
+
+      - uid: groovemap-queue-backlog-growing
+        title: QueueBacklogGrowing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # Deep *and* still deepening. A bulk import legitimately parks a
+              # large backlog; one that is not draining is the failure.
+              expr: >-
+                sum by (queue) (rabbitmq_queue_messages_ready)
+                and on (queue) (sum by (queue) (delta(rabbitmq_queue_messages_ready[30m])) > 0)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [50000]}
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A queue is above 50k ready messages and still growing
+          description: >-
+            Threshold: rabbitmq_queue_messages_ready above 50000 while its 30m
+            delta is positive, sustained 30m. Consumers are running slower than
+            the extractors publish.
+        labels:
+          severity: warning
+
+      - uid: groovemap-consumers-absent
+        title: ConsumersAbsent
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (source) (groovemap_pipeline_consumers_active)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 10m
+        # Absence is the alert. A consumer that has stopped reporting the gauge
+        # at all is exactly the case this rule exists for, so no data alerts.
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: No consumers are attached for a source
+          description: >-
+            Threshold: groovemap_pipeline_consumers_active < 1 for a source,
+            sustained 10m; the metric disappearing entirely alerts too. Nothing
+            is draining that source's queues.
+        labels:
+          severity: critical
+
+      # --- Application services -------------------------------------------
+
+      - uid: groovemap-insights-stale
+        title: InsightsStale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: time() - max by (computation) (groovemap_insights_last_success_seconds)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [86400]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: An insights computation has not succeeded in a day
+          description: >-
+            Threshold: 86400s (24h) since the last successful run of this
+            computation, sustained 15m. The insights API keeps serving the stale
+            result rather than erroring, so nothing else notices.
+        labels:
+          severity: warning
+
+      - uid: groovemap-api-error-rate-high
+        title: ApiErrorRateHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                100 * sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[10m]))
+                / sum by (service_name) (rate(http_server_request_duration_seconds_count[10m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: An HTTP service is returning 5xx for more than 5% of requests
+          description: >-
+            Threshold: 5xx responses above 5% of all requests over 10m,
+            sustained 10m, for one service. 4xx is deliberately excluded — it is
+            the caller's fault, not the service's.
+        labels:
+          severity: critical
+
+      - uid: groovemap-api-latency-high
+        title: ApiLatencyHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                histogram_quantile(0.95, sum by (le, service_name)
+                (rate(http_server_request_duration_seconds_bucket[10m])))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [2]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: An HTTP service is serving p95 above two seconds
+          description: >-
+            Threshold: p95 of http.server.request.duration above 2s over 10m,
+            sustained 10m, for one service. Aggregated over every route, so a
+            single slow route only fires this once it dominates the traffic.
+        labels:
+          severity: warning
+
+      - uid: groovemap-event-loop-lag-high
+        title: EventLoopLagHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                histogram_quantile(0.99, sum by (le, service_name)
+                (rate(groovemap_runtime_event_loop_lag_seconds_bucket[10m])))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [1]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A Python service's event loop is blocked
+          description: >-
+            Threshold: p99 event-loop lag above 1s over 10m, sustained 10m. The
+            monitor samples once a second, so a p99 above 1s means synchronous
+            work is running on the loop and every await in that process is late.
+        labels:
+          severity: warning
+
+      # --- Datastores and broker ------------------------------------------
+
+      - uid: groovemap-postgres-connections-near-max
+        title: PostgresConnectionsNearMax
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: 100 * sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [80]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: PostgreSQL is above 80% of max_connections
+          description: >-
+            Threshold: backends above 80% of max_connections, sustained 10m.
+            Past 100% new connections are refused outright, which surfaces as
+            consumer failures rather than as a database error anyone reads.
+        labels:
+          severity: warning
+
+      - uid: groovemap-redis-memory-high
+        title: RedisMemoryHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: 100 * redis_memory_used_bytes / redis_memory_max_bytes
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Redis is above 85% of its maxmemory
+          description: >-
+            Threshold: used memory above 85% of maxmemory (512MB in compose),
+            sustained 15m. The allkeys-lru policy starts evicting rather than
+            failing, so the first symptom is a collapsing cache hit ratio.
+        labels:
+          severity: warning
+
+      - uid: groovemap-rabbitmq-memory-alarm
+        title: RabbitMqMemoryAlarm
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                100 * rabbitmq_process_resident_memory_bytes
+                / rabbitmq_resident_memory_limit_bytes
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: RabbitMQ is about to raise its memory alarm
+          description: >-
+            Threshold: resident memory above 90% of the broker's high watermark,
+            sustained 5m. At 100% RabbitMQ blocks every publisher, which stalls
+            the extractors with no error of their own.
+        labels:
+          severity: critical
+
+      - uid: groovemap-neo4j-down
+        title: Neo4jDown
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min(groovemap_neo4j_up)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        # operations-console pushes this gauge over OTLP rather than being
+        # scraped, so its silence is not covered by ScrapeTargetDown.
+        noDataState: NoData
+        execErrState: Error
+        annotations:
+          summary: Neo4j is unreachable
+          description: >-
+            Threshold: groovemap_neo4j_up < 1 for 5m. Neo4j Community has no
+            Prometheus endpoint, so operations-console probes the graph and
+            emits this gauge on its behalf.
+        labels:
+          severity: critical
+
+      # --- Containers and host ---------------------------------------------
+
+      - uid: groovemap-container-memory-near-limit
+        title: ContainerMemoryNearLimit
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # The compose-label matcher drops cadvisor's unlabelled root
+              # cgroup series, and `> 0` drops containers with no memory limit.
+              expr: >-
+                100 * sum by (container_label_com_docker_compose_service)
+                (container_memory_working_set_bytes{container_label_com_docker_compose_service!=""})
+                / sum by (container_label_com_docker_compose_service)
+                (container_spec_memory_limit_bytes{container_label_com_docker_compose_service!=""} > 0)
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A container is within a tenth of its memory limit
+          description: >-
+            Threshold: working set above 90% of the container's memory limit,
+            sustained 10m. The next step is an OOM kill and a restart, which
+            reads as a crash loop rather than as a limit that is too low.
+        labels:
+          severity: warning
+
+      - uid: groovemap-host-disk-low
+        title: HostDiskLow
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                100 * sum by (device) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"})
+                / sum by (device) (node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"})
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [10]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A host filesystem is below 10% free
+          description: >-
+            Threshold: available space below 10% of the filesystem, sustained
+            15m; tmpfs, overlay, and squashfs are excluded. VictoriaMetrics and
+            the Neo4j and PostgreSQL volumes all live here.
+        labels:
+          severity: warning

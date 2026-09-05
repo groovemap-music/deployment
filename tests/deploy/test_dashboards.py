@@ -1,13 +1,14 @@
-"""Tests for the provisioned dashboards and their lint gate (gm-deployment-gxr.3,
-extended for wave 2 by gm-deployment-dqh.3).
+"""Tests for the provisioned dashboards, alert rules, and their lint gate
+(gm-deployment-gxr.3, extended for wave 2 by gm-deployment-dqh.3 and .4).
 
 Two layers:
 
-- the real artefacts — the dashboards and the Grafana provisioning that loads
-  them — are checked for the properties operators depend on (stable uids, the
-  datasource variables, the panels the acceptance calls for);
-- ``scripts/check-dashboards.py`` is exercised directly on synthetic
-  dashboards, because a gate that cannot fail is not a gate.
+- the real artefacts — the dashboards, the Grafana-managed alert rules, and the
+  provisioning that loads them — are checked for the properties operators
+  depend on (stable uids, the datasource variables, the panels and rules the
+  acceptance calls for, the thresholds the documentation quotes);
+- ``scripts/check-dashboards.py`` is exercised directly on synthetic dashboards
+  and rule files, because a gate that cannot fail is not a gate.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_DIR = REPO_ROOT / "config" / "grafana" / "dashboards"
 PROVISIONING = REPO_ROOT / "config" / "grafana" / "provisioning"
+ALERTING_FILE = PROVISIONING / "alerting" / "groovemap.yaml"
 CHECKER = REPO_ROOT / "scripts" / "check-dashboards.py"
 
 # The nine dashboards docs/observability.md documents, and the wave that
@@ -414,6 +416,35 @@ class TestCatalogParsing:
     def test_otel_dot_names_are_not_treated_as_prometheus_names(self) -> None:
         assert not any("." in name for name in checker.load_catalog())
 
+    def test_only_the_metric_catalog_section_widens_the_allowlist(self) -> None:
+        """Other tables in the document are not a back door into the catalog.
+
+        The Alerts table and the service inventory also put a backticked
+        identifier in their second column. Reading the whole file would let a
+        rule catalogue its own typo simply by tabulating it, and did admit
+        service names and git shas as metric names before gm-deployment-dqh.4.
+        """
+        catalog = checker.load_catalog()
+        for intruder in ("api", "insights", "dashboard", "graphinator", "tableinator"):
+            assert intruder not in catalog, f"{intruder!r} is a service name, not a metric"
+
+    def test_a_metric_added_outside_the_catalog_section_is_not_allowed(self, tmp_path: Path) -> None:
+        document = tmp_path / "observability.md"
+        document.write_text(
+            "## Metric catalog\n\n| OTEL | Prometheus |\n| --- | --- |\n| `a.b` | `real_metric_total` |\n"
+            "\n## Alerts\n\n| Rule | Expression |\n| --- | --- |\n| `Bogus` | `smuggled_metric_total` |\n",
+            encoding="utf-8",
+        )
+        catalog = checker.load_catalog(document)
+        assert "real_metric_total" in catalog
+        assert "smuggled_metric_total" not in catalog
+
+    def test_a_document_without_the_catalog_heading_catalogues_nothing(self, tmp_path: Path) -> None:
+        """Losing the heading must fail loudly, not silently widen the gate."""
+        document = tmp_path / "observability.md"
+        document.write_text("| OTEL | Prometheus |\n| --- | --- |\n| `a.b` | `orphan_metric_total` |\n", encoding="utf-8")
+        assert checker.load_catalog(document) == set()
+
     def test_every_metric_a_dashboard_uses_is_allowed(self) -> None:
         allowed = checker.load_catalog() | checker.EXPORTER_METRICS
         for name, dashboard in _dashboards().items():
@@ -618,6 +649,11 @@ groups:
               type: threshold
               expression: A
               refId: C
+        annotations:
+          summary: A queue is backing up
+          description: 'Threshold: more than 50000 ready messages for 30m.'
+        labels:
+          severity: warning
 """
 
 
@@ -690,6 +726,235 @@ class TestCheckerLintsTheAlertRules:
         body = ALERT_RULES.replace("groovemap_pipeline_messages_total", "groovemap_typo_total")
         monkeypatch.setattr(checker, "ALERTING_FILE", self._write(tmp_path, body))
         assert checker.main() == 1
+
+    def test_the_gate_engages_on_the_real_rule_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The provisioned file is really linted, not merely present.
+
+        Renaming one catalogued metric in a copy of the shipped rules must fail
+        the whole gate; if it does not, ``check_alerting`` is looking somewhere
+        other than at the file Grafana loads.
+        """
+        assert ALERTING_FILE.is_file(), "gm-deployment-dqh.4 provisions the alert rules"
+        body = ALERTING_FILE.read_text(encoding="utf-8").replace("groovemap_neo4j_up", "groovemap_neo4j_reachable")
+        monkeypatch.setattr(checker, "ALERTING_FILE", self._write(tmp_path, body))
+        assert checker.main() == 1
+
+    def test_a_rule_without_a_summary_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          summary: A queue is backing up\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no summary annotation" in problem for problem in problems)
+
+    def test_a_rule_without_a_description_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          description: 'Threshold: more than 50000 ready messages for 30m.'\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no description annotation" in problem for problem in problems)
+
+    def test_a_rule_without_a_severity_label_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("          severity: warning\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("no severity label" in problem for problem in problems)
+
+    def test_a_rule_without_a_uid_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("      - uid: groovemap-queue-backlog\n", "      - \n")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("has no uid" in problem for problem in problems)
+
+    def test_a_uid_longer_than_grafana_allows_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("groovemap-queue-backlog", "g" * (checker.ALERT_RULE_UID_MAX_LENGTH + 1))
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("at most 40 characters" in problem for problem in problems)
+
+    def test_a_uid_with_illegal_characters_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("groovemap-queue-backlog", "groovemap.queue.backlog")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("letters, digits" in problem for problem in problems)
+
+    def test_a_duplicate_rule_uid_is_rejected(self, tmp_path: Path) -> None:
+        rule = ALERT_RULES.partition("    rules:\n")[2]
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, ALERT_RULES + rule))
+        assert any("used more than once" in problem for problem in problems)
+
+    def test_a_condition_that_names_no_refid_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("        condition: C\n", "        condition: D\n")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("which is not one of its refIds" in problem for problem in problems)
+
+    def test_a_rule_without_a_condition_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("        condition: C\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("names no condition" in problem for problem in problems)
+
+    def test_a_rule_with_no_promql_query_is_rejected(self, tmp_path: Path) -> None:
+        body = ALERT_RULES.replace("              expr: sum(groovemap_pipeline_messages_total)\n", "")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("runs no PromQL query" in problem for problem in problems)
+
+    def test_the_dashboard_datasource_variable_is_rejected_in_a_rule(self, tmp_path: Path) -> None:
+        """A rule is evaluated server-side, so ${DS_PROMETHEUS} never resolves."""
+        body = ALERT_RULES.replace("datasourceUid: prometheus", f"datasourceUid: '{DATASOURCE_VARIABLE}'")
+        problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
+        assert any("evaluated server-side and must name the uid directly" in problem for problem in problems)
+
+
+# The rules gm-deployment-dqh.4 provisions, and the severity each carries. The
+# set is closed: these are the rules docs/observability.md tabulates, and a rule
+# added or renamed without touching both is the drift this pins.
+EXPECTED_ALERT_SEVERITIES = {
+    "ScrapeTargetDown": "critical",
+    "CollectorDroppingPoints": "critical",
+    "ExtractorErrorRateHigh": "warning",
+    "ConsumerFailureRateHigh": "critical",
+    "CircuitBreakerOpen": "critical",
+    "QueueBacklogGrowing": "warning",
+    "ConsumersAbsent": "critical",
+    "InsightsStale": "warning",
+    "ApiErrorRateHigh": "critical",
+    "ApiLatencyHigh": "warning",
+    "PostgresConnectionsNearMax": "warning",
+    "RedisMemoryHigh": "warning",
+    "RabbitMqMemoryAlarm": "critical",
+    "Neo4jDown": "critical",
+    "EventLoopLagHigh": "warning",
+    "ContainerMemoryNearLimit": "warning",
+    "HostDiskLow": "warning",
+}
+
+
+def _alert_document() -> dict[str, Any]:
+    document: dict[str, Any] = yaml.safe_load(ALERTING_FILE.read_text(encoding="utf-8"))
+    return document
+
+
+def _alert_rules() -> list[dict[str, Any]]:
+    return [rule for group in _alert_document()["groups"] for rule in group["rules"]]
+
+
+class TestProvisionedAlertRules:
+    """The real rule file, checked for the properties an operator depends on."""
+
+    def test_the_rule_file_is_provisioned(self) -> None:
+        assert ALERTING_FILE.is_file(), f"missing {ALERTING_FILE}"
+        assert _alert_document()["apiVersion"] == 1
+
+    def test_one_group_in_the_groovemap_folder_evaluated_every_minute(self) -> None:
+        groups = _alert_document()["groups"]
+        assert len(groups) == 1, "one evaluation group keeps every rule on the same cadence"
+        group = groups[0]
+        assert group["name"] == "groovemap"
+        assert group["folder"] == "GrooveMap"
+        assert group["interval"] == "1m"
+        assert group["orgId"] == 1
+
+    def test_exactly_the_expected_rules_are_provisioned(self) -> None:
+        titles = [rule["title"] for rule in _alert_rules()]
+        assert sorted(titles) == sorted(EXPECTED_ALERT_SEVERITIES)
+        assert len(titles) == len(set(titles)), "rule titles must be unique"
+
+    def test_every_rule_carries_its_documented_severity(self) -> None:
+        for rule in _alert_rules():
+            assert rule["labels"]["severity"] == EXPECTED_ALERT_SEVERITIES[rule["title"]]
+
+    def test_every_rule_states_its_threshold_in_the_description(self) -> None:
+        """A page that does not say what it measured is not actionable."""
+        for rule in _alert_rules():
+            description = rule["annotations"]["description"]
+            assert "Threshold:" in description, f"{rule['title']} does not state a threshold"
+            assert rule["annotations"]["summary"].strip()
+
+    def test_every_rule_declares_its_no_data_and_error_behaviour(self) -> None:
+        for rule in _alert_rules():
+            assert rule["noDataState"] in {"NoData", "Alerting", "OK"}
+            assert rule["execErrState"] in {"Error", "Alerting", "OK"}
+            assert rule["for"], f"{rule['title']} fires instantly; every rule needs a `for`"
+
+    def test_only_three_canaries_report_missing_telemetry(self) -> None:
+        """Grafana's `NoData` default would raise a DatasourceNoData alert for
+        nearly every rule at once on a stack that is still starting up. One
+        canary per source of telemetry says the same thing once: the scrape
+        jobs, the services that push OTLP, and the graph probe."""
+        canaries = {rule["title"]: rule["noDataState"] for rule in _alert_rules() if rule["noDataState"] != "OK"}
+        assert canaries == {
+            # `up` returning nothing means there is no scrape data at all.
+            "ScrapeTargetDown": "NoData",
+            # A consumer gauge that stopped arriving is the alert itself.
+            "ConsumersAbsent": "Alerting",
+            # operations-console pushes this; it is not a scrape target.
+            "Neo4jDown": "NoData",
+        }
+
+    def test_a_failing_query_is_distinguishable_from_an_empty_one(self) -> None:
+        for rule in _alert_rules():
+            assert rule["execErrState"] == "Error", rule["title"]
+
+    def test_every_rule_queries_the_provisioned_prometheus_uid(self) -> None:
+        for rule in _alert_rules():
+            uids = {item["datasourceUid"] for item in rule["data"]}
+            assert "prometheus" in uids, f"{rule['title']} runs no Prometheus query"
+            assert uids <= {"prometheus", "__expr__"}
+            assert DATASOURCE_VARIABLE not in uids, "a rule cannot resolve a dashboard template variable"
+
+    def test_every_rule_condition_names_a_threshold_expression(self) -> None:
+        for rule in _alert_rules():
+            condition = rule["condition"]
+            node = next(item for item in rule["data"] if item["refId"] == condition)
+            assert node["datasourceUid"] == "__expr__"
+            assert node["model"]["type"] == "threshold"
+            evaluator = node["model"]["conditions"][0]["evaluator"]
+            assert evaluator["type"] in {"gt", "lt", "within_range", "outside_range"}
+            assert evaluator["params"], f"{rule['title']} has a threshold with no value"
+
+    def test_every_rule_expression_is_catalogued(self) -> None:
+        allowed = checker.load_catalog() | checker.EXPORTER_METRICS
+        assert checker.check_alerting(allowed, ALERTING_FILE) == []
+
+    def test_no_contact_point_or_notification_policy_is_provisioned(self) -> None:
+        """Wave 2 stops at the alert list; nobody has agreed to be woken up yet."""
+        for path in (PROVISIONING / "alerting").rglob("*.yaml"):
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for key in ("contactPoints", "policies", "muteTimes", "templates"):
+                assert key not in document, f"{path.name} provisions {key}"
+
+    def test_grafana_mounts_the_alerting_directory(self) -> None:
+        """The rules only exist if the provisioning mount reaches them."""
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        volumes = compose["services"]["grafana"]["volumes"]
+        assert "./config/grafana/provisioning:/etc/grafana/provisioning:ro" in volumes
+        assert ALERTING_FILE.parent.parent.name == "provisioning", "the rules must sit under the mounted directory"
+
+
+class TestAlertDocumentation:
+    """docs/observability.md is where an operator reads what will page them."""
+
+    @staticmethod
+    def _section() -> str:
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "\n## Alerts\n" in doc, "docs/observability.md has no Alerts section"
+        return doc.partition("\n## Alerts\n")[2].partition("\n## ")[0]
+
+    def test_the_alerts_table_lists_every_rule_with_its_severity(self) -> None:
+        section = self._section()
+        for title, severity in EXPECTED_ALERT_SEVERITIES.items():
+            row = next((line for line in section.splitlines() if line.startswith(f"| `{title}`")), None)
+            assert row is not None, f"the Alerts table does not list {title}"
+            assert severity in row, f"the Alerts table gives {title} a severity other than {severity}"
+            assert row.count("|") >= 5, f"the {title} row has no expression/threshold columns"
+
+    def test_the_no_data_canaries_are_documented(self) -> None:
+        section = self._section()
+        for canary in ("ScrapeTargetDown", "ConsumersAbsent", "Neo4jDown"):
+            assert f"| `{canary}` | `" in section or f"`{canary}`" in section, canary
+        assert "DatasourceNoData" in section
+        assert "noDataState" in section
+
+    def test_the_absence_of_a_contact_point_is_documented(self) -> None:
+        section = self._section()
+        assert "contact point" in section
+        assert "notification policy" in section
+
+    def test_the_raw_datasource_uid_is_explained(self) -> None:
+        section = self._section()
+        assert "DS_PROMETHEUS" in section
+        assert "`prometheus`" in section
 
 
 class TestCheckerEntryPoint:
