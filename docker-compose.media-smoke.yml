@@ -31,9 +31,12 @@ services:
   redis:
     container_name: !reset null
     ports: !override []
-  # The telemetry pair the internal services depend on. Compose starts them with
-  # the stack even though the assertion never reads a metric.
-  prometheus:
+  # The telemetry backends the internal services depend on. Compose starts them
+  # with the stack even though the assertion never reads a metric or a span.
+  victoria-metrics:
+    container_name: !reset null
+    ports: !override []
+  victoria-traces:
     container_name: !reset null
     ports: !override []
   otel-collector:

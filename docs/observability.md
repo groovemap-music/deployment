@@ -1,8 +1,8 @@
 # Observability
 
-This document is the canonical reference for GrooveMap metrics: the backend
-that stores them, the conventions every service instruments against, and the
-metric catalog dashboards are allowed to reference.
+This document is the canonical reference for GrooveMap telemetry: the backends
+that store metrics and traces, the conventions every service instruments
+against, and the metric catalog dashboards are allowed to reference.
 
 [`docs/monitoring.md`](monitoring.md) covers operating a running environment
 (health checks, logs, incident snapshots). This document covers telemetry.
@@ -13,16 +13,17 @@ metric catalog dashboards are allowed to reference.
   application services                backend                    UI
   ────────────────────                ───────                    ──
 
-  api, extractor-*, ...  ──OTLP/HTTP──▶ otel-collector ──remote-write──▶ prometheus ──▶ grafana
-                            :4318          :4317 :4318                     :9090          :3000
-                                             │  ▲
-  rabbitmq :15692                            │  │
+                                                  ──remote-write──▶ victoria-metrics ─┐
+  api, extractor-*, ...  ──OTLP/HTTP──▶ otel-collector                   :8428          ├▶ grafana
+                            :4318          :4317 :4318                                  │   :3000
+                                             │  ▲   └─────────OTLP──────▶ victoria-traces ┘
+  rabbitmq :15692                            │  │                          :10428
   postgres-exporter :9187  ◀──── prometheus receiver (scrape)
   redis-exporter :9121                       │
   otel-collector :8888     ◀─────────────────┘
 ```
 
-Two collection paths meet in one collector:
+Three collection paths meet in one collector:
 
 - **Application metrics are pushed.** Every GrooveMap service exports OTLP over
   HTTP/protobuf to `http://otel-collector:4318`. No application service exposes
@@ -30,10 +31,16 @@ Two collection paths meet in one collector:
 - **Infrastructure metrics are scraped.** RabbitMQ, PostgreSQL, and Redis have
   no OTLP support, so the collector's Prometheus receiver scrapes their
   exporters and folds those series into the same pipeline.
+- **Spans are pushed to the same endpoint.** Traces ride the OTLP receiver
+  alongside metrics, take their own pipeline, and are written to VictoriaTraces.
 
-The collector then remote-writes everything to Prometheus, which runs purely as
-a remote-write receiver and scrapes nothing itself. Grafana reads Prometheus and
-is provisioned entirely from files in this repository.
+The collector remote-writes every metric to VictoriaMetrics and pushes every
+span to VictoriaTraces. VictoriaMetrics accepts the Prometheus remote-write
+protocol natively and serves the Prometheus query API back, so nothing about
+the metrics path other than the hostname changed when Prometheus was retired,
+and it needs no configuration file of its own. VictoriaTraces serves the Tempo
+query API under `/select/tempo`. Grafana reads both and is provisioned entirely
+from files in this repository.
 
 The existing JSON `/metrics` endpoints on the Rust extractors are unrelated to
 this pipeline. They are part of the ADR-0005 HTTP contract that the operations
@@ -47,34 +54,73 @@ console reads, and they stay as they are.
 | `otel-collector` | 4318 | no | OTLP/HTTP-protobuf ingest — the org standard |
 | `otel-collector` | 8888 | no | Collector self-metrics, scraped by the collector |
 | `otel-collector` | 13133 | no | `health_check` extension liveness endpoint |
-| `prometheus` | 9090 | dev only | UI, API, and the remote-write receiver |
+| `victoria-metrics` | 8428 | dev only | vmui, the Prometheus query API, and the remote-write receiver |
+| `victoria-traces` | 10428 | dev only | OTLP trace ingest and the Tempo query API |
 | `grafana` | 3000 | yes | Dashboards |
 
-In production the Prometheus publish is replaced with a loopback binding
-(`127.0.0.1:9090:9090`). Prometheus has no authentication of its own and its
-API can delete series, so reach it through Grafana or an SSH tunnel.
+In production both Victoria publishes are replaced with loopback bindings
+(`127.0.0.1:8428:8428` and `127.0.0.1:10428:10428`). Neither server has
+authentication of its own, both accept unauthenticated writes, and the metrics
+API can delete series, so reach them through Grafana or an SSH tunnel.
 
 ## Backend services
 
-All three images are digest pinned like every other third-party image in this
-repository; `scripts/check-images.py` enforces that.
+All four images are digest pinned like every other third-party image in this
+repository; `scripts/check-images.py` enumerates the exact reference each
+service runs and enforces that.
 
 | Service | Image | Config | State |
 | --- | --- | --- | --- |
 | `otel-collector` | `otel/opentelemetry-collector-contrib` | `config/otel-collector.yaml` (read-only mount) | stateless |
-| `prometheus` | `prom/prometheus` | `config/prometheus.yml` (read-only mount) | `prometheus_data` volume, 15d retention |
+| `victoria-metrics` | `victoriametrics/victoria-metrics` | command-line flags only | `victoria_metrics_data` volume, 15d retention |
+| `victoria-traces` | `victoriametrics/victoria-traces` | command-line flags only | `victoria_traces_data` volume, 7d retention |
 | `grafana` | `grafana/grafana` | `config/grafana/` (read-only mount) | `grafana_data` volume |
+
+VictoriaMetrics is the organisation's metrics backend, and it is the only TSDB
+in this stack. It is not a drop-in that needs coaxing: it accepts Prometheus
+remote write with no flag and answers the Prometheus query API on the same
+port, which is why the Grafana datasource below keeps `type: prometheus` and
+uid `prometheus`, and why all five dashboards were unaffected by the swap. The
+`victoriametrics-datasource` plugin is deliberately not used.
+
+The `victoria-traces` image is distroless — no shell, no `wget`, no `curl` —
+so its container healthcheck runs the server's own binary with `-version`
+rather than calling an HTTP endpoint, the same compromise the collector makes.
+`http://victoria-traces:10428/health` is the operator-facing liveness endpoint,
+reachable from any other container on the `groovemap` network.
 
 ### Collector pipeline
 
 ```text
-otlp ─▶ memory_limiter ─▶ batch ─▶ prometheusremotewrite ─▶ http://prometheus:9090/api/v1/write
+metrics: otlp, prometheus, spanmetrics ─▶ memory_limiter ─▶ batch ─▶ prometheusremotewrite
+                                                                    ─▶ http://victoria-metrics:8428/api/v1/write
+
+traces:  otlp ─▶ memory_limiter ─▶ batch ─▶ spanmetrics
+                                          ─▶ otlphttp/victoria_traces
+                                             ─▶ http://victoria-traces:10428/insert/opentelemetry/v1/traces
 ```
 
-`memory_limiter` runs first so back-pressure is applied before batching
-allocates. `resource_to_telemetry_conversion` is enabled, which promotes the
-OTEL resource attributes (`service.name`, `service.namespace`,
-`deployment.environment.name`, `service.version`) to Prometheus labels.
+`memory_limiter` runs first in both pipelines so back-pressure is applied
+before batching allocates. `resource_to_telemetry_conversion` is enabled on the
+remote-write exporter, which promotes the OTEL resource attributes
+(`service.name`, `service.namespace`, `deployment.environment.name`,
+`service.version`) to Prometheus labels.
+
+The `spanmetrics` connector sits in both pipelines at once: it is an exporter
+of the traces pipeline and a receiver of the metrics pipeline. Every span that
+passes through becomes RED metrics — request rate, error rate, duration — with
+no service emitting a single extra instrument. It is configured with
+`namespace: traces.span.metrics`, a histogram in seconds like every other
+GrooveMap histogram, and explicit buckets, because exponential histograms do
+not survive remote write intact. Its four built-in dimensions are exactly the
+label set the conventions declare, so no extra dimensions are configured;
+`collector.instance.id`, added by default, is excluded because one collector
+runs here and it would only add a constant label to every series.
+
+| OTEL name | Prometheus name | Kind | Labels |
+| --- | --- | --- | --- |
+| `traces.span.metrics.calls` | `traces_span_metrics_calls_total` | counter | `service_name`, `span_name`, `span_kind`, `status_code` |
+| `traces.span.metrics.duration` | `traces_span_metrics_duration_seconds` | histogram (s) | as above |
 
 The collector image is distroless, so its container healthcheck re-validates the
 mounted config with the collector's own binary rather than calling an HTTP
@@ -84,15 +130,23 @@ endpoint. The operator-facing liveness probe is
 
 ### Service environment
 
-Every internal-image service is handed the same three variables. Two are shared
+Every internal-image service is handed the same five variables. Four are shared
 through the `x-otel-env` anchor in `docker-compose.yml`; `OTEL_SERVICE_NAME`
 differs per service and is set on the service itself.
 
 | Variable | Value |
 | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` (metrics and traces share it) |
 | `OTEL_SERVICE_NAME` | the service's own compose key |
 | `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=groovemap,deployment.environment.name=dev` (`prod` in the production overlay) |
+| `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` in both environments |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` in dev, `0.1` in the production overlay |
+
+`parentbased_traceidratio` means the sampling decision taken at the edge of a
+request is honoured by every downstream service, so a trace is never recorded
+only in half of the services it touched. Only the head rate changes between
+environments: development keeps every span because the volumes are small and a
+dropped span is a debugging dead end, while production keeps a tenth.
 
 These eleven services are wired:
 
@@ -306,7 +360,7 @@ them, so rename a title freely but never a uid.
 
 | File | Role |
 | --- | --- |
-| `config/grafana/provisioning/datasources/prometheus.yaml` | The Prometheus datasource, uid `prometheus`, not editable in the UI |
+| `config/grafana/provisioning/datasources/prometheus.yaml` | The Prometheus datasource (uid `prometheus`, VictoriaMetrics behind it) and the Tempo datasource (uid `tempo`, VictoriaTraces behind it), neither editable in the UI |
 | `config/grafana/provisioning/dashboards/groovemap.yaml` | Loads `/var/lib/grafana/dashboards` into the `GrooveMap` folder |
 
 Every panel resolves its datasource through the `${DS_PROMETHEUS}` template
@@ -376,7 +430,8 @@ just smoke
 
 `just smoke` is `docker compose up -d --wait` followed by `docker compose ps`.
 It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the two exporters, the
-collector, Prometheus, Grafana, and every application service.
+collector, VictoriaMetrics, VictoriaTraces, Grafana, and every application
+service.
 
 `--wait` blocks on container health. The Python service images ship no `curl`,
 while the compose healthchecks for those services invoke `curl`, so on a stack
@@ -397,7 +452,7 @@ collector is rejecting them. The port is not published, so read it from another
 container on the `groovemap` network:
 
 ```bash
-docker compose exec prometheus \
+docker compose exec victoria-metrics \
   wget -qO- http://otel-collector:8888/metrics | grep -E '^otelcol_(receiver|exporter)_'
 ```
 
@@ -410,17 +465,17 @@ zero on the `refused` and `send_failed` counters.
 The collector's liveness endpoint answers on the same network:
 
 ```bash
-docker compose exec prometheus wget -qO- http://otel-collector:13133/
+docker compose exec victoria-metrics wget -qO- http://otel-collector:13133/
 ```
 
-### 4. Confirm every expected service reached Prometheus
+### 4. Confirm every expected service reached VictoriaMetrics
 
 `service.name` is promoted to the `service_name` Prometheus label by the
 collector's `resource_to_telemetry_conversion`, so the label's values are the
 roll call of everything that exported:
 
 ```bash
-curl -s 'http://localhost:9090/api/v1/label/service_name/values'
+curl -s 'http://localhost:8428/api/v1/label/service_name/values'
 ```
 
 Expect the eleven compose service keys — `api`, `extractor-discogs`,
@@ -452,23 +507,23 @@ panel has data.
 
 ```bash
 # Pipeline overview — queue depth from the RabbitMQ scrape job
-curl -sG 'http://localhost:9090/api/v1/query' \
+curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=sum by (queue) (rabbitmq_queue_messages_ready)'
 
 # Ingestion — bytes pulled by the extractors
-curl -sG 'http://localhost:9090/api/v1/query' \
+curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=sum by (source) (groovemap_extraction_download_bytes_total)'
 
 # Consumers — database call latency from the consumer services
-curl -sG 'http://localhost:9090/api/v1/query' \
+curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=histogram_quantile(0.95, sum by (le, db_system_name) (rate(db_client_operation_duration_seconds_bucket[5m])))'
 
 # API services — request rate per service
-curl -sG 'http://localhost:9090/api/v1/query' \
+curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=sum by (service_name) (rate(http_server_request_duration_seconds_count[5m]))'
 
 # Infrastructure — every scrape target reporting up
-curl -sG 'http://localhost:9090/api/v1/query' \
+curl -sG 'http://localhost:8428/api/v1/query' \
   --data-urlencode 'query=up'
 ```
 
@@ -521,8 +576,8 @@ is wrong, not the dashboard.
 docker compose down -v
 ```
 
-`-v` removes the volumes this run created, including `prometheus_data` and
-`grafana_data`. Leave it off to keep the collected series for a second look.
+`-v` removes the volumes this run created, including `victoria_metrics_data`,
+`victoria_traces_data`, and `grafana_data`. Leave it off to keep the collected series for a second look.
 
 ### First execution, 2026-09-03
 

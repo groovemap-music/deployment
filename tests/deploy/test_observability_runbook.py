@@ -72,7 +72,7 @@ class TestRunbookQueriesAreCatalogued:
     def test_an_uncatalogued_runbook_metric_is_rejected(self, tmp_path: Path) -> None:
         forged = tmp_path / "observability.md"
         forged.write_text(
-            "```bash\ncurl -sG 'http://localhost:9090/api/v1/query' \\\n  --data-urlencode 'query=sum(groovemap_not_a_real_metric_total)'\n```\n",
+            "```bash\ncurl -sG 'http://localhost:8428/api/v1/query' \\\n  --data-urlencode 'query=sum(groovemap_not_a_real_metric_total)'\n```\n",
             encoding="utf-8",
         )
         problems = checker.check_runbook(ALLOWED, forged)

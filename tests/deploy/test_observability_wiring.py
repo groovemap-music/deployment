@@ -5,9 +5,10 @@ infrastructure metrics only appear if the collector is told to scrape them.
 Both halves are silent when they break — a missing env var produces no error,
 just an absent dashboard — so they are pinned here:
 
-- every internal-image service gets the endpoint, its own service name, and the
-  shared resource attributes, with the environment tag flipped to ``prod`` by
-  the production overlay;
+- every internal-image service gets the endpoint, its own service name, the
+  shared resource attributes, and the trace sampler pair, with the environment
+  tag flipped to ``prod`` and the sampling rate cut to 0.1 by the production
+  overlay;
 - every internal-image service depends on the collector with
   ``service_started`` and never ``service_healthy``, so telemetry can never
   block an application from booting;
@@ -35,6 +36,12 @@ ENABLED_PLUGINS = REPO_ROOT / "config" / "rabbitmq-enabled-plugins"
 OTLP_ENDPOINT = "http://otel-collector:4318"
 DEV_RESOURCE_ATTRIBUTES = "service.namespace=groovemap,deployment.environment.name=dev"
 PROD_RESOURCE_ATTRIBUTES = "service.namespace=groovemap,deployment.environment.name=prod"
+
+# Head sampling is parent-based so a decision taken at the edge of a request is
+# honoured by every downstream service and a trace is never half-recorded.
+TRACES_SAMPLER = "parentbased_traceidratio"
+DEV_SAMPLER_ARG = "1.0"
+PROD_SAMPLER_ARG = "0.1"
 
 # Every service running an internally released GrooveMap image. These are the
 # services that carry an OTEL SDK and therefore must be wired for export.
@@ -101,6 +108,18 @@ class TestEveryInstrumentedServiceExports:
         for name in INSTRUMENTED_SERVICES:
             assert services[name]["environment"]["OTEL_RESOURCE_ATTRIBUTES"] == DEV_RESOURCE_ATTRIBUTES, name
 
+    def test_every_service_gets_the_trace_sampler_pair(self) -> None:
+        """Traces share the metrics endpoint; only the sampler is extra."""
+        services = _base_compose()["services"]
+        for name in INSTRUMENTED_SERVICES:
+            environment = services[name]["environment"]
+            assert environment["OTEL_TRACES_SAMPLER"] == TRACES_SAMPLER, name
+            assert str(environment["OTEL_TRACES_SAMPLER_ARG"]) == DEV_SAMPLER_ARG, name
+
+    def test_dev_keeps_every_span(self) -> None:
+        """Dev volumes are small and a dropped span is a debugging dead end."""
+        assert float(DEV_SAMPLER_ARG) == 1.0
+
     def test_no_groovemap_specific_telemetry_variables(self) -> None:
         """Only the SDK's own variables are allowed to configure telemetry."""
         allowed = {
@@ -109,6 +128,9 @@ class TestEveryInstrumentedServiceExports:
             "OTEL_RESOURCE_ATTRIBUTES",
             "OTEL_METRICS_EXPORTER",
             "OTEL_METRIC_EXPORT_INTERVAL",
+            "OTEL_TRACES_EXPORTER",
+            "OTEL_TRACES_SAMPLER",
+            "OTEL_TRACES_SAMPLER_ARG",
         }
         services = _base_compose()["services"]
         for name in INSTRUMENTED_SERVICES:
@@ -116,9 +138,10 @@ class TestEveryInstrumentedServiceExports:
             assert telemetry_keys <= allowed, (name, sorted(telemetry_keys - allowed))
 
     def test_third_party_services_are_not_wired_for_otlp(self) -> None:
-        """rabbitmq/postgres/neo4j/redis and the exporters carry no OTEL SDK."""
+        """rabbitmq/postgres/neo4j/redis, the exporters, and the telemetry
+        backends themselves carry no OTEL SDK."""
         services = _base_compose()["services"]
-        for name in ("rabbitmq", "postgres", "neo4j", "redis", *EXPORTERS):
+        for name in ("rabbitmq", "postgres", "neo4j", "redis", "victoria-metrics", "victoria-traces", *EXPORTERS):
             environment = services[name].get("environment", {}) or {}
             assert not [key for key in environment if key.startswith("OTEL_")], name
 
@@ -149,6 +172,18 @@ class TestProdOverlayRetagsTheEnvironment:
             environment = services[name]["environment"]
             assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in environment, name
             assert "OTEL_SERVICE_NAME" not in environment, name
+
+    def test_prod_cuts_the_sampling_rate(self) -> None:
+        services = _prod_compose()["services"]
+        for name in INSTRUMENTED_SERVICES:
+            assert str(services[name]["environment"]["OTEL_TRACES_SAMPLER_ARG"]) == PROD_SAMPLER_ARG, name
+
+    def test_prod_leaves_the_sampler_itself_alone(self) -> None:
+        """Only the head rate changes between environments; changing the
+        sampler would change whether a trace stays whole across services."""
+        services = _prod_compose()["services"]
+        for name in INSTRUMENTED_SERVICES:
+            assert "OTEL_TRACES_SAMPLER" not in services[name]["environment"], name
 
 
 class TestRabbitMqPrometheusPlugin:
@@ -257,10 +292,41 @@ class TestCollectorScrapesInfrastructure:
         assert scraped.isdisjoint(INSTRUMENTED_SERVICES)
 
 
+class TestCollectorTracesPipeline:
+    """Spans ride the same receiver as metrics and take their own pipeline."""
+
+    def test_the_traces_pipeline_exists_and_reuses_the_otlp_receiver(self) -> None:
+        pipeline = _collector_config()["service"]["pipelines"]["traces"]
+        assert pipeline["receivers"] == ["otlp"]
+
+    def test_spans_reach_victoria_traces(self) -> None:
+        pipeline = _collector_config()["service"]["pipelines"]["traces"]
+        assert "otlphttp/victoria_traces" in pipeline["exporters"]
+        exporter = _collector_config()["exporters"]["otlphttp/victoria_traces"]
+        assert exporter["traces_endpoint"].startswith("http://victoria-traces:10428/")
+
+    def test_span_metrics_rejoin_the_metrics_pipeline(self) -> None:
+        pipelines = _collector_config()["service"]["pipelines"]
+        assert "spanmetrics" in pipelines["traces"]["exporters"]
+        assert "spanmetrics" in pipelines["metrics"]["receivers"]
+
+    def test_no_application_service_is_scraped_for_spans(self) -> None:
+        """Spans are pushed, exactly like metrics; nothing pulls them."""
+        assert "traces" not in _collector_config()["receivers"]["prometheus"]["config"]
+
+
 class TestWiringDocumentation:
     def test_env_var_table_and_exporter_inventory_are_documented(self) -> None:
         doc = (REPO_ROOT / "docs" / "observability.md").read_text()
-        for token in ("OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES", "postgres-exporter", "redis-exporter", "15692"):
+        for token in (
+            "OTEL_SERVICE_NAME",
+            "OTEL_RESOURCE_ATTRIBUTES",
+            "OTEL_TRACES_SAMPLER",
+            "OTEL_TRACES_SAMPLER_ARG",
+            "postgres-exporter",
+            "redis-exporter",
+            "15692",
+        ):
             assert token in doc, f"docs/observability.md does not document {token}"
 
     def test_every_instrumented_service_appears_in_the_env_table(self) -> None:

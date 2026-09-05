@@ -69,10 +69,21 @@ class TestProvisioning:
         config = yaml.safe_load((PROVISIONING / "datasources" / "prometheus.yaml").read_text())
         assert config["apiVersion"] == 1
         datasource = config["datasources"][0]
+        # VictoriaMetrics serves the Prometheus query API, so the name, type,
+        # and uid outlive the server swap and every dashboard keeps resolving.
+        assert datasource["name"] == "Prometheus"
         assert datasource["uid"] == "prometheus"
         assert datasource["type"] == "prometheus"
-        assert datasource["url"] == "http://prometheus:9090"
+        assert datasource["url"] == "http://victoria-metrics:8428"
         assert datasource["editable"] is False, "datasources are code; UI edits would be silently reverted"
+
+    def test_the_tempo_datasource_reads_victoria_traces(self) -> None:
+        config = yaml.safe_load((PROVISIONING / "datasources" / "prometheus.yaml").read_text())
+        tempo = next(entry for entry in config["datasources"] if entry["uid"] == "tempo")
+        assert tempo["name"] == "Tempo"
+        assert tempo["type"] == "tempo"
+        assert tempo["url"] == "http://victoria-traces:10428/select/tempo"
+        assert tempo["editable"] is False
 
     def test_dashboard_provider_loads_the_mounted_directory(self) -> None:
         config = yaml.safe_load((PROVISIONING / "dashboards" / "groovemap.yaml").read_text())

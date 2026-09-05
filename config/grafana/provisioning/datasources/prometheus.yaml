@@ -1,17 +1,21 @@
 ---
 
-# Grafana datasource provisioning. The uid is fixed at `prometheus` because
-# dashboards resolve it through the ${DS_PROMETHEUS} variable — a generated uid
-# would break every panel on a rebuild.
+# Grafana datasource provisioning. Both uids are fixed because dashboards
+# resolve them through the ${DS_PROMETHEUS} and ${DS_TEMPO} variables — a
+# generated uid would break every panel on a rebuild.
 
 apiVersion: 1
 
 datasources:
+  # VictoriaMetrics serves the Prometheus query API, so the name, type, and uid
+  # stay `Prometheus` even though the server behind them changed. Every
+  # existing dashboard keeps working untouched; the victoriametrics-datasource
+  # plugin is deliberately not used.
   - name: Prometheus
     uid: prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    url: http://victoria-metrics:8428
     isDefault: true
     # Datasources are code. Editing this one in the UI would drift from the
     # repository and be silently reverted on the next restart.
@@ -22,3 +26,12 @@ datasources:
       # interval, so $__rate_interval resolves to something sane by default.
       timeInterval: 15s
       manageAlerts: false
+
+  # VictoriaTraces implements the Tempo HTTP API under /select/tempo, so
+  # Grafana's built-in Tempo datasource reads it with no plugin.
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://victoria-traces:10428/select/tempo
+    editable: false
