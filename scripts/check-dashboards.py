@@ -5,17 +5,23 @@ them read-only, and nobody edits them in the UI. Nothing else notices when one
 rots — a panel that references a renamed metric renders an empty graph, not an
 error — so this gate runs in ``just source-check``.
 
-It enforces five things:
+It enforces six things:
 
 1. every dashboard parses, carries a ``schemaVersion``, and has a ``uid`` and a
    ``title`` unique across the folder;
 2. every datasource reference is the ``${DS_PROMETHEUS}`` variable, so a
    dashboard never pins a datasource uid that only exists on one machine;
-3. every metric named in a PromQL ``expr`` is either in the catalog in
+3. the ``${DS_TEMPO}`` variable is the one exception, and only inside a panel
+   that renders traces — a metric panel that reaches for the trace datasource is
+   a mistake, and a panel that pins the raw ``tempo`` uid is the same portability
+   bug as pinning the raw Prometheus one;
+4. every metric named in a PromQL ``expr`` is either in the catalog in
    ``docs/observability.md`` or in the exporter/collector allowlist below;
-4. the provisioning files that make the variable resolvable still exist and
-   still point at the mounted dashboard directory;
-5. every PromQL query in the Verification runbook in ``docs/observability.md``
+5. the provisioning files that make the variables resolvable still exist, still
+   declare both datasource uids, and still point at the mounted dashboard
+   directory — and, once the alert rules exist, that every expression in them is
+   catalogued exactly like a panel query;
+6. every PromQL query in the Verification runbook in ``docs/observability.md``
    names catalogued metrics too — the runbook is how an operator proves the
    dashboards have data, so a query that can never match is worse than useless.
 
@@ -38,11 +44,23 @@ ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = ROOT / "config" / "grafana" / "dashboards"
 DATASOURCE_FILE = ROOT / "config" / "grafana" / "provisioning" / "datasources" / "prometheus.yaml"
 PROVIDER_FILE = ROOT / "config" / "grafana" / "provisioning" / "dashboards" / "groovemap.yaml"
+# Provisioned by gm-deployment-dqh.4. Absent until then, and the gate stays
+# quiet about it rather than failing a repository that has no alert rules yet.
+ALERTING_FILE = ROOT / "config" / "grafana" / "provisioning" / "alerting" / "groovemap.yaml"
 CATALOG_FILE = ROOT / "docs" / "observability.md"
 
 DATASOURCE_VARIABLE = "${DS_PROMETHEUS}"
 DATASOURCE_UID = "prometheus"
+TRACE_DATASOURCE_VARIABLE = "${DS_TEMPO}"
+TRACE_DATASOURCE_UID = "tempo"
+DATASOURCE_VARIABLES = frozenset({DATASOURCE_VARIABLE, TRACE_DATASOURCE_VARIABLE})
 PROVISIONED_DASHBOARD_PATH = "/var/lib/grafana/dashboards"
+
+# Panel types that render spans. Only these may resolve ${DS_TEMPO}: the trace
+# store answers TraceQL, not PromQL, so a timeseries panel pointed at it renders
+# nothing. A TraceQL search returns a list of traces, which Grafana draws in a
+# table; `traces` draws one trace; `nodeGraph` draws a service graph.
+TRACE_PANEL_TYPES = frozenset({"nodeGraph", "table", "traces"})
 
 # Series that Prometheus and the OTEL collector derive from a histogram or a
 # counter. The catalog names the base metric; these are the suffixes a panel may
@@ -271,6 +289,46 @@ def collect_datasource_uids(dashboard: dict[str, Any]) -> set[str]:
     return uids
 
 
+def iter_panels(dashboard: dict[str, Any]) -> Any:
+    """Yield every panel, including the ones nested inside a collapsed row."""
+    for panel in dashboard.get("panels") or []:
+        if not isinstance(panel, dict):
+            continue
+        yield panel
+        for nested in panel.get("panels") or []:
+            if isinstance(nested, dict):
+                yield nested
+
+
+def _without_nested_panels(node: dict[str, Any]) -> dict[str, Any]:
+    """Return the node without its ``panels`` key, so a walk stays out of children."""
+    return {key: value for key, value in node.items() if key != "panels"}
+
+
+def check_trace_datasource(name: str, dashboard: dict[str, Any]) -> list[str]:
+    """Confine ${DS_TEMPO} to the panels that can actually render a trace.
+
+    The trace datasource answers TraceQL. A metric panel pointed at it renders
+    an empty graph rather than an error, which is the failure mode this whole
+    script exists to prevent.
+    """
+    problems: list[str] = []
+
+    if TRACE_DATASOURCE_VARIABLE in collect_datasource_uids(_without_nested_panels(dashboard)):
+        problems.append(f"{name}: {TRACE_DATASOURCE_VARIABLE} is referenced outside a panel")
+
+    for panel in iter_panels(dashboard):
+        if TRACE_DATASOURCE_VARIABLE not in collect_datasource_uids(_without_nested_panels(panel)):
+            continue
+        kind = panel.get("type")
+        if kind not in TRACE_PANEL_TYPES:
+            title = panel.get("title", "<untitled>")
+            allowed = ", ".join(sorted(TRACE_PANEL_TYPES))
+            problems.append(f"{name}: panel {title!r} has type {kind!r} and uses {TRACE_DATASOURCE_VARIABLE}; only trace panels ({allowed}) may")
+
+    return problems
+
+
 def check_dashboard(path: Path, dashboard: dict[str, Any], allowed_metrics: set[str]) -> list[str]:
     """Validate one parsed dashboard, returning a list of human-readable problems."""
     problems: list[str] = []
@@ -284,9 +342,17 @@ def check_dashboard(path: Path, dashboard: dict[str, Any], allowed_metrics: set[
     if "DS_PROMETHEUS" not in variables:
         problems.append(f"{name}: does not define the DS_PROMETHEUS datasource variable")
 
-    for uid in sorted(collect_datasource_uids(dashboard)):
-        if uid != DATASOURCE_VARIABLE:
-            problems.append(f"{name}: hard-coded datasource uid {uid!r}; use {DATASOURCE_VARIABLE}")
+    uids = collect_datasource_uids(dashboard)
+    if TRACE_DATASOURCE_VARIABLE in uids and "DS_TEMPO" not in variables:
+        problems.append(f"{name}: uses {TRACE_DATASOURCE_VARIABLE} without defining the DS_TEMPO datasource variable")
+
+    for uid in sorted(uids):
+        if uid not in DATASOURCE_VARIABLES:
+            problems.append(
+                f"{name}: hard-coded datasource uid {uid!r}; use {DATASOURCE_VARIABLE} or, for a trace panel, {TRACE_DATASOURCE_VARIABLE}"
+            )
+
+    problems.extend(check_trace_datasource(name, dashboard))
 
     expressions = collect_expressions(dashboard)
     if not expressions:
@@ -310,12 +376,68 @@ def check_provisioning() -> list[str]:
         return [f"missing {_display(PROVIDER_FILE)}"]
 
     datasources = yaml.safe_load(DATASOURCE_FILE.read_text(encoding="utf-8"))["datasources"]
-    if not any(entry.get("uid") == DATASOURCE_UID for entry in datasources):
-        problems.append(f"no provisioned datasource with uid {DATASOURCE_UID!r}")
+    for uid in (DATASOURCE_UID, TRACE_DATASOURCE_UID):
+        if not any(entry.get("uid") == uid for entry in datasources):
+            problems.append(f"no provisioned datasource with uid {uid!r}")
 
     providers = yaml.safe_load(PROVIDER_FILE.read_text(encoding="utf-8"))["providers"]
     if not any(provider.get("options", {}).get("path") == PROVISIONED_DASHBOARD_PATH for provider in providers):
         problems.append(f"no dashboard provider loading {PROVISIONED_DASHBOARD_PATH}")
+
+    return problems
+
+
+def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None) -> list[str]:
+    """Validate the provisioned Grafana-managed alert rules, when there are any.
+
+    An alert rule is a saved query with a threshold on it, so it rots the same
+    way a panel does and is linted the same way. The file is optional: it is
+    provisioned by ``gm-deployment-dqh.4`` and a repository without it is not
+    broken, so absence is silence rather than a failure.
+    """
+    path = alerting_file if alerting_file is not None else ALERTING_FILE
+    if not path.is_file():
+        return []
+
+    name = _display(path)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        return [f"{name}: is not a provisioning document"]
+
+    problems: list[str] = []
+    if document.get("apiVersion") != 1:
+        problems.append(f"{name}: apiVersion must be 1")
+
+    groups = document.get("groups")
+    if not isinstance(groups, list) or not groups:
+        return [*problems, f"{name}: provisions no alert rule groups"]
+
+    for group in groups:
+        if not group.get("name"):
+            problems.append(f"{name}: an alert rule group has no name")
+        if not group.get("folder"):
+            problems.append(f"{name}: alert rule group {group.get('name')!r} names no folder")
+        rules = group.get("rules") or []
+        if not rules:
+            problems.append(f"{name}: alert rule group {group.get('name')!r} has no rules")
+        for rule in rules:
+            if not rule.get("title"):
+                problems.append(f"{name}: an alert rule in group {group.get('name')!r} has no title")
+
+    # A rule names its datasource by uid, in `datasourceUid` as well as in the
+    # `datasource` block a query model carries. `__expr__` and `-100` are
+    # Grafana's built-in server-side expression datasource.
+    referenced = collect_datasource_uids(document) | {node["datasourceUid"] for node in _walk(document) if isinstance(node.get("datasourceUid"), str)}
+    for uid in sorted(referenced):
+        if uid not in {DATASOURCE_UID, TRACE_DATASOURCE_UID, "__expr__", "-100"}:
+            problems.append(f"{name}: alert rule reads unknown datasource uid {uid!r}")
+
+    # Alert rules are provisioned server-side, so they name the datasource uid
+    # directly; only their expressions are shared with the dashboards.
+    for expr in collect_expressions(document):
+        for metric in sorted(extract_metric_names(expr)):
+            if metric not in allowed_metrics:
+                problems.append(f"{name}: metric {metric!r} is not in the catalog or the exporter allowlist ({expr})")
 
     return problems
 
@@ -329,6 +451,7 @@ def main() -> int:
 
     allowed_metrics = load_catalog() | EXPORTER_METRICS
     problems.extend(check_runbook(allowed_metrics))
+    problems.extend(check_alerting(allowed_metrics))
 
     seen_uids: dict[str, str] = {}
     seen_titles: dict[str, str] = {}
