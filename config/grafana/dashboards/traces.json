@@ -632,7 +632,7 @@
             "uid": "${DS_TEMPO}"
           },
           "limit": 20,
-          "query": "{resource.service.name=~\"$service\"}",
+          "query": "{resource.service.name=~\"${service:regex}\"}",
           "queryType": "traceql",
           "refId": "A",
           "tableType": "traces"

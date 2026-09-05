@@ -91,8 +91,26 @@ class TestRunbookQueriesAreCatalogued:
 class TestRunbookQueriesTrackTheDashboards:
     """A runbook query is only evidence if it is the query a panel actually runs."""
 
-    def test_there_is_one_query_per_dashboard(self) -> None:
-        assert len(QUERIES) == len(sorted(DASHBOARD_DIR.glob("*.json")))
+    def test_every_dashboard_has_at_least_one_runbook_query(self) -> None:
+        """gm-deployment-dqh.5 replaced an equality with this.
+
+        The count used to be exactly one query per dashboard, which was true
+        while step 5 was the only step that queried anything. Step 6 then added
+        the per-series checks the wave-2 acceptance calls for, so an equality
+        would now forbid the very queries it was meant to guarantee. Covering
+        every dashboard is the property that mattered; the count never was.
+        """
+        for path in sorted(DASHBOARD_DIR.glob("*.json")):
+            dashboard = json.loads(path.read_text(encoding="utf-8"))
+            panel_metrics: set[str] = set()
+            for expr in checker.collect_expressions(dashboard):
+                panel_metrics |= checker.extract_metric_names(expr)
+            assert any(checker.extract_metric_names(query) & panel_metrics for query in QUERIES), (
+                f"no runbook query names a metric the {dashboard['title']} dashboard charts"
+            )
+
+    def test_there_are_at_least_as_many_queries_as_dashboards(self) -> None:
+        assert len(QUERIES) >= len(sorted(DASHBOARD_DIR.glob("*.json")))
 
     def test_every_dashboard_is_named_in_the_runbook(self) -> None:
         section = _verification_section()
@@ -294,3 +312,266 @@ class TestFirstExecutionRecord:
         record = self._record()
         assert "Unauthorized" in record
         assert "never confirmed" in record
+
+
+class TestWaveTwoRunbookSteps:
+    """The checks gm-deployment-dqh.5 added, one per wave-2 signal.
+
+    Each is a step an operator can be told to run. Pinning them here is what
+    stops the runbook quietly losing a signal when someone edits the section:
+    a missing query looks like nothing at all in a markdown document.
+    """
+
+    def _section(self) -> str:
+        return _verification_section()
+
+    def test_the_runtime_series_are_checked(self) -> None:
+        section = self._section()
+        for metric in (
+            "process_cpu_time_seconds_total",
+            "process_cpu_utilization_ratio",
+            "process_memory_virtual_bytes",
+            "process_thread_count",
+            "process_open_file_descriptor_count",
+            "process_context_switches_total",
+            "cpython_gc_collections_total",
+            "groovemap_runtime_event_loop_lag_seconds_bucket",
+            "groovemap_runtime_tokio_workers",
+            "groovemap_runtime_tokio_alive_tasks",
+            "groovemap_runtime_tokio_global_queue_depth",
+        ):
+            assert metric in section, f"the runbook never queries {metric}"
+
+    def test_the_neo4j_gauges_are_checked(self) -> None:
+        section = self._section()
+        for metric in (
+            "groovemap_neo4j_up",
+            "groovemap_neo4j_transactions_active",
+            "groovemap_neo4j_relationships",
+            "groovemap_neo4j_store_size_bytes",
+        ):
+            assert metric in section, f"the runbook never queries {metric}"
+
+    def test_the_span_metrics_are_checked(self) -> None:
+        section = self._section()
+        assert "traces_span_metrics_calls_total" in section
+        assert "traces_span_metrics_duration_seconds_bucket" in section
+
+    def test_the_container_and_host_series_are_checked(self) -> None:
+        section = self._section()
+        for metric in (
+            "container_last_seen",
+            "container_memory_working_set_bytes",
+            "node_load1",
+            "node_cpu_seconds_total",
+            "node_memory_MemAvailable_bytes",
+            "node_filesystem_avail_bytes",
+        ):
+            assert metric in section, f"the runbook never queries {metric}"
+
+    def test_up_is_checked_per_scrape_job(self) -> None:
+        """Every no-data canary rests on `up`, so the runbook proves it directly."""
+        section = self._section()
+        assert "min by (job) (up)" in section
+        for job in ("cadvisor", "node-exporter", "otelcol-contrib", "postgres-exporter", "rabbitmq", "redis-exporter"):
+            assert f"`{job}`" in section, f"{job} is missing from the expected scrape-job list"
+
+    def test_the_trace_check_uses_the_tempo_api_and_not_promql(self) -> None:
+        """TraceQL is not PromQL; a `query=` here would be linted as a metric name."""
+        section = self._section()
+        assert "10428/select/tempo/api/search" in section
+        assert "10428/select/tempo/api/traces" in section
+        assert "--data-urlencode 'q={" in section
+
+    def test_the_trace_check_names_both_ends_of_the_trace(self) -> None:
+        section = self._section()
+        assert "PRODUCER" in section
+        assert "CONSUMER" in section
+        assert "traceparent" in section
+
+    def test_the_traceql_syntax_traps_are_recorded(self) -> None:
+        """Both cost real time on the running stack."""
+        section = self._section()
+        assert "{span:kind=producer}" in section
+        assert "${service:regex}" in section
+
+    def test_the_alert_rules_are_checked(self) -> None:
+        section = self._section()
+        assert "/api/v1/provisioning/alert-rules" in section
+        assert "/api/prometheus/grafana/api/v1/rules" in section
+        assert "seventeen" in section
+
+    def test_the_extractor_download_trap_is_recorded(self) -> None:
+        """It destroyed the first execution's stack; nothing else in the doc warns."""
+        section = self._section()
+        assert "downloading real monthly dumps" in section
+        assert "docker compose stop extractor-discogs extractor-musicbrainz" in section
+
+
+class TestSecondExecutionRecord:
+    """The dated evidence from the wave-2 run, and what that run still did not prove.
+
+    Pinned for the same reason the first record is: the value of an execution
+    record is its negative list, and a negative list is the first thing to rot
+    when someone updates the numbers above it and leaves the table alone.
+    """
+
+    SECTION_HEADING = "### Second execution, 2026-09-05"
+
+    def _record(self) -> str:
+        section = _verification_section()
+        return section[section.index(self.SECTION_HEADING) :]
+
+    def test_the_record_exists_inside_the_verification_section(self) -> None:
+        assert self.SECTION_HEADING in _verification_section()
+
+    def test_it_comes_after_the_first_execution_record(self) -> None:
+        section = _verification_section()
+        assert section.index("### First execution, 2026-09-03") < section.index(self.SECTION_HEADING)
+
+    def test_every_built_repository_is_recorded_with_a_commit_and_a_service(self) -> None:
+        record = self._record()
+        for repository, commit, service in (
+            ("database-schema", "91cbf6e", "schema-init"),
+            ("catalog-api", "acdf9be", "api"),
+            ("graph-explorer", "9ef18c8", "explore"),
+            ("analytics-engine", "ec733f2", "insights"),
+            ("operations-console", "b563f10", "dashboard"),
+            ("discogs-sql-loader", "c3fba8f", "tableinator"),
+            ("musicbrainz-sql-loader", "8b5f346", "brainztableinator"),
+            ("discogs-graph-enricher", "ab23f7b", "graphinator"),
+            ("musicbrainz-graph-enricher", "c6e3514", "brainzgraphinator"),
+            ("discogs-ingestion", "403e70f", "extractor-discogs"),
+            ("musicbrainz-ingestion", "0aa08e2", "extractor-musicbrainz"),
+        ):
+            assert f"`{repository}`" in record, f"{repository} is missing from the image table"
+            assert f"`{commit}`" in record, f"{repository} is recorded without commit {commit}"
+            assert f"`{service}`" in record, f"{repository} is recorded without its compose service {service}"
+
+    def test_the_images_are_recorded_as_local_and_unpublished(self) -> None:
+        """Claiming a registry digest for an image nobody pushed would be a lie."""
+        record = self._record()
+        assert "local image IDs, not" in record
+        assert "manifest digest" in record
+
+    def test_the_record_does_not_embed_a_registry_digest(self) -> None:
+        assert not re.search(r"@sha256:[0-9a-f]{64}", self._record())
+
+    def test_all_eleven_service_names_were_observed(self) -> None:
+        record = self._record()
+        for service in (
+            "api",
+            "brainzgraphinator",
+            "brainztableinator",
+            "dashboard",
+            "explore",
+            "extractor-discogs",
+            "extractor-musicbrainz",
+            "graphinator",
+            "insights",
+            "schema-init",
+            "tableinator",
+        ):
+            assert f"`{service}`" in record, f"{service} is missing from the observed roll call"
+
+    def test_up_being_queryable_is_recorded(self) -> None:
+        assert "min by (job) (up)" in self._record()
+
+    def test_the_per_language_runtime_split_is_recorded(self) -> None:
+        record = self._record()
+        assert "groovemap_runtime_tokio_" in record
+        assert "cpython_gc_collections_total" in record
+        assert "generation" in record
+
+    def test_the_neo4j_result_and_its_one_omission_are_recorded(self) -> None:
+        record = self._record()
+        assert "groovemap_neo4j_up" in record
+        assert "groovemap_neo4j_store_size_bytes" in record
+        assert "dbms.queryJmx" in record
+
+    def test_the_store_size_omission_names_jmx_as_the_cause(self) -> None:
+        """Not-available-on-Community was the guess; no JMX agent is the cause.
+
+        The distinction decides what to do about it: the first reads as a
+        limitation to accept, the second as one compose setting away.
+        """
+        record = self._record()
+        assert "zero beans" in record
+        assert "NEO4J_server_jvm_additional" in record
+
+    def test_the_trace_spanning_publish_and_process_is_recorded(self) -> None:
+        """The acceptance in one object; a record without it proves nothing new."""
+        record = self._record()
+        assert "PRODUCER" in record
+        assert "CONSUMER" in record
+        assert "publish groovemap-discogs-artists" in record
+        assert "traceparent" in record
+
+    def test_the_per_dashboard_panel_counts_are_recorded(self) -> None:
+        record = self._record()
+        table = record[record.index("**Panels with data**") :]
+        for dashboard in (
+            "Runtime",
+            "Containers & host",
+            "Consumers",
+            "Neo4j",
+            "Infrastructure",
+            "Pipeline overview",
+            "API services",
+            "Traces",
+            "Ingestion",
+        ):
+            assert f"| {dashboard} |" in table, f"{dashboard} has no panel count"
+        assert re.search(r"\| \d+ of \d+ \|", table), "the panel counts are not recorded as 'n of m'"
+
+    def test_the_alert_rules_are_recorded_with_their_state(self) -> None:
+        record = self._record()
+        assert "seventeen" in record
+        assert "`HostDiskLow`" in record
+        assert "`firing`" in record
+        assert "`inactive`" in record
+        assert "`Neo4jDown`" in record
+
+    def test_the_postgres_naming_defect_is_recorded_with_its_evidence(self) -> None:
+        """The first record blamed sampling; this one names the cause."""
+        record = self._record()
+        assert "pg_stat_database_xact_commit_total" in record
+        assert "rabbitmq_global_messages_received_total" in record
+        assert "was wrong" in record
+
+    def test_the_operations_console_rebuild_is_recorded(self) -> None:
+        """A service that had not adopted looked healthy and said nothing."""
+        record = self._record()
+        assert "41805b6" in record
+        assert "silent on every wave-2 series" in record
+
+    def test_the_unverified_table_is_present_with_a_cause_for_each_row(self) -> None:
+        record = self._record()
+        assert "Not verified in this run" in record
+        table = record[record.index("**Not verified in this run.**") :]
+        rows = [line for line in table.splitlines() if line.startswith("|") and "---" not in line]
+        assert len(rows) >= 7, "the not-verified table lost rows"
+        for row in rows[1:]:
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            assert len(cells) == 2, f"row is not item + cause: {row}"
+            assert cells[1], f"row {cells[0]!r} has no cause"
+
+    def test_the_unverified_table_names_the_known_gaps(self) -> None:
+        table = self._record()
+        for gap in ("mcp-server", "groovemap_neo4j_store_size_bytes", "production overlay", "Published images"):
+            assert gap in table, f"{gap} is missing from the not-verified table"
+
+    def test_the_follow_ups_are_recorded_with_their_evidence(self) -> None:
+        """A defect named without its evidence is re-litigated by the next reader."""
+        record = self._record()
+        assert "Follow-ups this run found" in record
+        table = record[record.index("**Follow-ups this run found.**") :]
+        rows = [line for line in table.splitlines() if line.startswith("|") and "---" not in line]
+        assert len(rows) >= 7, "the follow-up table lost rows"
+        for row in rows[1:]:
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            assert len(cells) == 2, f"row is not follow-up + evidence: {row}"
+            assert cells[1], f"follow-up {cells[0]!r} has no evidence"
+
+    def test_the_trace_size_follow_up_is_recorded(self) -> None:
+        assert "69,760" in self._record()
