@@ -1,4 +1,4 @@
-"""Functional test for scripts/create-secrets.sh (discogsography-yhjn).
+"""Functional test for scripts/create-secrets.sh.
 
 Asserts the bootstrap script generates redis_password.txt alongside every
 other prod secret — previously redis had no secret file generated at all,

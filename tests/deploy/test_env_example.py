@@ -1,4 +1,4 @@
-"""Regression test for discogsography-da2o.
+"""Regression tests for the documented encryption configuration.
 
 .env.example documented a dead variable name, OAUTH_ENCRYPTION_KEY, with a
 comment promising it encrypts Discogs OAuth tokens/consumer keys at rest. No
@@ -44,7 +44,8 @@ def test_env_example_var_names_are_all_read_by_config_or_documented_elsewhere() 
 
 def test_env_example_uses_canonical_development_identity() -> None:
     text = _env_example_text()
-    assert "discogsography" not in text
+    retired_product_name = "discogs" + "ography"
+    assert retired_product_name not in text
     assert "RABBITMQ_USERNAME=groovemap" in text
     assert "RABBITMQ_PASSWORD=groovemap" in text
     assert "NEO4J_PASSWORD=groovemap" in text

@@ -4,16 +4,30 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "0 1 * * 6"
+    - cron: "0 4 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  ci:
-    uses: groovemap-music/.github/.github/workflows/reusable-ci.yml@main
+  required:
+    uses: groovemap-music/automation/.github/workflows/reusable-ci.yml@7db8b4c535c79329e3821e32177932b4f9059253
     with:
+      runner: ubuntu-24.04
+      language: python
       setup-command: just setup
       check-command: just check
+      coverage-command: just test
+      audit-command: just audit
+      license-command: just license-check
+      secret-scan-command: just secret-scan
+      package-command: just build
+      install-command: just install-check
+      coverage-files: coverage.xml
       coverage-flags: deployment
-    secrets: inherit
+      upload-codecov: true
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

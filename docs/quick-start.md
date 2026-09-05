@@ -44,6 +44,11 @@ Apply the same pattern to all remaining image variables. Tags alone and
 `latest` are rejected. See [Container image standards](dockerfile-standards.md)
 for the complete ownership map.
 
+The reviewed release for each variable is recorded in `RELEASED_IMAGE_DIGESTS`
+in `scripts/check-images.py`, with the release tag beside each digest. Once
+`.env` promotes them, `just smoke-released` verifies it against that set before
+it starts anything.
+
 ## 3. Review the rendered configuration
 
 The base stack contains deliberate local-development credentials. Render and
