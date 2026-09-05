@@ -141,6 +141,13 @@ include:
 Major database upgrades may require a purpose-built migration plan. A passing
 Compose render does not prove on-disk compatibility.
 
+RabbitMQ 4.3 dropped the Mnesia metadata store: a node whose `rabbitmq_data`
+volume was created under an earlier 4.x release must have every feature flag
+from 4.0 through 4.2 enabled (`rabbitmqctl enable_feature_flag all`, which
+includes `khepri_db`) before its image is moved to a 4.3 digest. A fresh volume
+needs nothing. Redis 8 loads 7.x AOF and RDB files unchanged, but the upstream
+licence changed to a tri-licence (RSALv2, SSPLv1, or AGPLv3) with 8.0.
+
 ## Secrets
 
 `just secrets-bootstrap` creates missing local files but deliberately does not

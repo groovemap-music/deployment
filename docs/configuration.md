@@ -579,7 +579,7 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 **Notes**:
 
 - Supported version line: Python 3.14
-- Managed runtime pins use Python 3.14.5
+- Managed runtime pins use Python 3.14.7
 - Older and newer minor versions are not supported
 
 ## Service-Specific Settings
