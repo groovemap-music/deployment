@@ -384,7 +384,7 @@ def test_recipe_exists_renders_and_stays_out_of_the_credential_free_gate() -> No
     assert gate == "check: source-check typecheck test", "the credential-free gate must not start containers"
 
     render = (REPO_ROOT / "scripts" / "check-compose.sh").read_text()
-    assert "-f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet" in render
+    assert "check_compose docker-compose.yml docker-compose.media-smoke.yml" in render
 
     workflows = REPO_ROOT / ".github" / "workflows"
     for workflow in workflows.glob("*.yml"):

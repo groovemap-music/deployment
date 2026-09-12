@@ -1,36 +1,8 @@
-"""Validate the provisioned Grafana dashboards.
+"""Validate dashboards, alert rules, provisioning, and runbook PromQL.
 
-Dashboards are code: they live in ``config/grafana/dashboards``, Grafana loads
-them read-only, and nobody edits them in the UI. Nothing else notices when one
-rots — a panel that references a renamed metric renders an empty graph, not an
-error — so this gate runs in ``just source-check``.
-
-It enforces six things:
-
-1. every dashboard parses, carries a ``schemaVersion``, and has a ``uid`` and a
-   ``title`` unique across the folder;
-2. every datasource reference is the ``${DS_PROMETHEUS}`` variable, so a
-   dashboard never pins a datasource uid that only exists on one machine;
-3. the ``${DS_TEMPO}`` variable is the one exception, and only inside a panel
-   that renders traces — a metric panel that reaches for the trace datasource is
-   a mistake, and a panel that pins the raw ``tempo`` uid is the same portability
-   bug as pinning the raw Prometheus one;
-4. every metric named in a PromQL ``expr`` is either in the catalog in
-   ``docs/observability.md`` or in the exporter/collector allowlist below;
-5. the provisioning files that make the variables resolvable still exist, still
-   declare both datasource uids, and still point at the mounted dashboard
-   directory — and that every expression in the provisioned alert rules is
-   catalogued exactly like a panel query, that each rule carries a ``summary``,
-   a ``description``, a ``severity`` label, a unique Grafana-legal uid, and a
-   ``condition`` that names one of its own refIds, and that a rule names its
-   datasource uid directly instead of reaching for a dashboard variable it
-   cannot resolve;
-6. every PromQL query in the Verification runbook in ``docs/observability.md``
-   names catalogued metrics too — the runbook is how an operator proves the
-   dashboards have data, so a query that can never match is worse than useless.
-
-Run directly (``uv run python scripts/check-dashboards.py``) or import
-``main()``.
+All PromQL shares one catalog policy. Dashboard datasource variables remain
+portable, while server-side alert rules use the provisioned concrete UIDs.
+The checker reports every problem in one run and is part of ``source-check``.
 """
 
 from __future__ import annotations
@@ -281,12 +253,16 @@ def check_runbook(allowed_metrics: set[str], catalog_file: Path | None = None) -
     queries = load_runbook_queries(catalog_file)
     if not queries:
         return ["docs/observability.md: the Verification runbook names no PromQL queries"]
+    return check_metric_expressions("runbook", queries, allowed_metrics)
 
+
+def check_metric_expressions(name: str, expressions: list[str], allowed_metrics: set[str]) -> list[str]:
+    """Return unknown metrics from a named collection of PromQL expressions."""
     problems: list[str] = []
-    for query in queries:
-        for metric in sorted(extract_metric_names(query)):
+    for expression in expressions:
+        for metric in sorted(extract_metric_names(expression)):
             if metric not in allowed_metrics:
-                problems.append(f"runbook: metric {metric!r} is not in the catalog or the exporter allowlist ({query})")
+                problems.append(f"{name}: metric {metric!r} is not in the catalog or the exporter allowlist ({expression})")
     return problems
 
 
@@ -387,10 +363,7 @@ def check_dashboard(path: Path, dashboard: dict[str, Any], allowed_metrics: set[
     if not expressions:
         problems.append(f"{name}: has no panel queries")
 
-    for expr in expressions:
-        for metric in sorted(extract_metric_names(expr)):
-            if metric not in allowed_metrics:
-                problems.append(f"{name}: metric {metric!r} is not in the catalog or the exporter allowlist ({expr})")
+    problems.extend(check_metric_expressions(name, expressions, allowed_metrics))
 
     return problems
 
@@ -460,13 +433,43 @@ def check_alert_rule(name: str, title: str, rule: dict[str, Any], seen_uids: set
     return problems
 
 
+def check_alert_group(name: str, group: dict[str, Any], seen_uids: set[str]) -> list[str]:
+    """Validate one alert group and each rule it owns."""
+    problems: list[str] = []
+    group_name = group.get("name")
+    if not group_name:
+        problems.append(f"{name}: an alert rule group has no name")
+    if not group.get("folder"):
+        problems.append(f"{name}: alert rule group {group_name!r} names no folder")
+
+    rules = group.get("rules") or []
+    if not rules:
+        problems.append(f"{name}: alert rule group {group_name!r} has no rules")
+    for rule in rules:
+        title = rule.get("title")
+        if not title:
+            problems.append(f"{name}: an alert rule in group {group_name!r} has no title")
+        problems.extend(check_alert_rule(name, title or "<untitled>", rule, seen_uids))
+    return problems
+
+
+def check_alert_datasources(name: str, document: dict[str, Any]) -> list[str]:
+    """Validate the server-side datasource identifiers used by alert rules."""
+    problems: list[str] = []
+    referenced = collect_datasource_uids(document) | {node["datasourceUid"] for node in _walk(document) if isinstance(node.get("datasourceUid"), str)}
+    for uid in sorted(referenced):
+        if uid in DATASOURCE_VARIABLES:
+            problems.append(f"{name}: alert rule uses the dashboard variable {uid}; a rule is evaluated server-side and must name the uid directly")
+        elif uid not in {DATASOURCE_UID, TRACE_DATASOURCE_UID, "__expr__", "-100"}:
+            problems.append(f"{name}: alert rule reads unknown datasource uid {uid!r}")
+    return problems
+
+
 def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None) -> list[str]:
     """Validate the provisioned Grafana-managed alert rules, when there are any.
 
-    An alert rule is a saved query with a threshold on it, so it rots the same
-    way a panel does and is linted the same way. The file is optional: it is
-    provisioned by ``gm-deployment-dqh.4`` and a repository without it is not
-    broken, so absence is silence rather than a failure.
+    An alert rule is a saved query with a threshold on it, so it is linted by
+    the same metric policy as a dashboard. Absence remains optional.
     """
     path = alerting_file if alerting_file is not None else ALERTING_FILE
     if not path.is_file():
@@ -487,18 +490,7 @@ def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None)
 
     seen_rule_uids: set[str] = set()
     for group in groups:
-        if not group.get("name"):
-            problems.append(f"{name}: an alert rule group has no name")
-        if not group.get("folder"):
-            problems.append(f"{name}: alert rule group {group.get('name')!r} names no folder")
-        rules = group.get("rules") or []
-        if not rules:
-            problems.append(f"{name}: alert rule group {group.get('name')!r} has no rules")
-        for rule in rules:
-            title = rule.get("title")
-            if not title:
-                problems.append(f"{name}: an alert rule in group {group.get('name')!r} has no title")
-            problems.extend(check_alert_rule(name, title or "<untitled>", rule, seen_rule_uids))
+        problems.extend(check_alert_group(name, group, seen_rule_uids))
 
     # A rule names its datasource by uid, in `datasourceUid` as well as in the
     # `datasource` block a query model carries. `__expr__` and `-100` are
@@ -512,20 +504,29 @@ def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None)
     # there is an unresolvable string, not a portable reference. The uid is safe
     # to hard-code precisely because provisioning fixes it — `prometheus` and
     # `tempo` are pinned in the datasource file for exactly this reason.
-    referenced = collect_datasource_uids(document) | {node["datasourceUid"] for node in _walk(document) if isinstance(node.get("datasourceUid"), str)}
-    for uid in sorted(referenced):
-        if uid in DATASOURCE_VARIABLES:
-            problems.append(f"{name}: alert rule uses the dashboard variable {uid}; a rule is evaluated server-side and must name the uid directly")
-        elif uid not in {DATASOURCE_UID, TRACE_DATASOURCE_UID, "__expr__", "-100"}:
-            problems.append(f"{name}: alert rule reads unknown datasource uid {uid!r}")
+    problems.extend(check_alert_datasources(name, document))
 
     # Alert rules are provisioned server-side, so they name the datasource uid
     # directly; only their expressions are shared with the dashboards.
-    for expr in collect_expressions(document):
-        for metric in sorted(extract_metric_names(expr)):
-            if metric not in allowed_metrics:
-                problems.append(f"{name}: metric {metric!r} is not in the catalog or the exporter allowlist ({expr})")
+    problems.extend(check_metric_expressions(name, collect_expressions(document), allowed_metrics))
 
+    return problems
+
+
+def check_unique_dashboard_identity(
+    path: Path,
+    dashboard: dict[str, Any],
+    seen_uids: dict[str, str],
+    seen_titles: dict[str, str],
+) -> list[str]:
+    """Track and report duplicate dashboard identifiers and titles."""
+    problems: list[str] = []
+    for field, seen in (("uid", seen_uids), ("title", seen_titles)):
+        value = dashboard.get(field)
+        if isinstance(value, str) and value in seen:
+            problems.append(f"{path.name}: {field} {value!r} is already used by {seen[value]}")
+        elif isinstance(value, str):
+            seen[value] = path.name
     return problems
 
 
@@ -553,18 +554,7 @@ def main() -> int:
             continue
 
         problems.extend(check_dashboard(path, dashboard, allowed_metrics))
-
-        uid = dashboard.get("uid")
-        if isinstance(uid, str) and uid in seen_uids:
-            problems.append(f"{path.name}: uid {uid!r} is already used by {seen_uids[uid]}")
-        elif isinstance(uid, str):
-            seen_uids[uid] = path.name
-
-        title = dashboard.get("title")
-        if isinstance(title, str) and title in seen_titles:
-            problems.append(f"{path.name}: title {title!r} is already used by {seen_titles[title]}")
-        elif isinstance(title, str):
-            seen_titles[title] = path.name
+        problems.extend(check_unique_dashboard_identity(path, dashboard, seen_uids, seen_titles))
 
     if problems:
         print("Dashboard check failed:")

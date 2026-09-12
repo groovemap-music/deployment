@@ -1,39 +1,10 @@
-"""Assert the ADR 0007 canonical media block end to end on a disposable smoke stack.
+"""Assert the canonical media block on a disposable smoke stack.
 
-`scripts/smoke-media.sh` brings up the schema initializer, the broker, both stores, both
-SQL loaders, and both graph enrichers, then runs this module. The extractors never run: a
-smoke stack has no dumps to download, so the release events come from the producers'
-contract fixtures promoted verbatim into `config/media-smoke/` (`config/provenance.json`
-records the owning repository, commit, and upstream digest of each).
-
-The module publishes those fixtures as contract-shaped `data` events onto the durable
-fanout exchanges the producers own, waits for the four consumers to persist them, and then
-asserts the canonical block survived the whole path:
-
-- PostgreSQL `releases.media` is populated for the Discogs fixture and its `families`
-  match the fixture's block;
-- PostgreSQL `musicbrainz.releases.media` is populated for the MusicBrainz fixture and its
-  `families` match the fixture's block;
-- Neo4j carries the `Medium` and `MediaFamily` nodes the event names, joined by
-  `IN_FAMILY`, and the Discogs release is joined to its medium by
-  `ISSUED_ON {source: 'discogs'}`;
-- the Discogs release node's `media_families` list property matches the event's families;
-- the MusicBrainz enricher's `ISSUED_ON {source: 'musicbrainz'}` edge reaches the same
-  release, which is what proves both catalogs' media reconcile onto one release node.
-
-Every graph assertion is scoped to an id the run's own event carries. An unscoped node
-count would be satisfied by whatever a reused volume already held, so a run that wrote
-nothing at all would still report a pass.
-
-Identity fields are the one thing the fixtures cannot supply as published. The stores
-constrain them: `musicbrainz.releases.mbid` is a UUID, `musicbrainz.releases`
-`discogs_release_id` is a BIGINT, and the MusicBrainz enricher matches a release by that
-Discogs identifier. The fixtures' documentation ids (`contract-discogs-releases`,
-`contract-musicbrainz-releases`) satisfy none of that, so the run overrides `id` and
-`discogs_release_id` with fixed, reserved values and leaves every media field untouched.
-
-Every assertion is polled to a deadline rather than checked once, because both loaders and
-both enrichers batch their writes behind a flush interval.
+The run publishes promoted producer fixtures, waits for both SQL loaders and
+both graph enrichers, and checks each store using reserved run-owned IDs. Those
+IDs prevent stale data in a reused volume from satisfying the assertions.
+Polling accounts for consumer batch intervals; stack lifecycle remains in the
+operator-approved ``smoke-media.sh`` adapter.
 """
 
 from __future__ import annotations
