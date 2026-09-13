@@ -111,8 +111,8 @@ placing a production password directly on a shared command line.
 
 ## Port conflicts
 
-The base stack publishes ports 5433, 5672, 6379, 7474, 7687, 8003-8007, and
-15672. Identify a local listener before changing Compose:
+The base stack publishes ports 3000, 5433, 5672, 6379, 7474, 7687, 8003-8007,
+8428, 10428, and 15672. Identify a local listener before changing Compose:
 
 ```bash
 lsof -nP -iTCP -sTCP:LISTEN

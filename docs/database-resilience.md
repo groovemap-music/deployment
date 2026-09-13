@@ -181,17 +181,17 @@ When databases undergo nightly maintenance:
 
 ### Health Endpoints
 
-Each service exposes health data including connection status:
+Each application exposes health data, but only three probes are published by
+the base Compose file:
 
-- Extractor: `http://localhost:8000/health`
-- Graphinator: `http://localhost:8001/health`
-- Tableinator: `http://localhost:8002/health`
 - Dashboard: `http://localhost:8003/health`
 - API: `http://localhost:8005/health`
 - Explore: `http://localhost:8007/health`
-- Insights: `http://localhost:8009/health`
-- Brainztableinator: `http://localhost:8010/health`
-- Brainzgraphinator: `http://localhost:8011/health`
+
+Both extractors (8000), Graphinator (8001), Tableinator (8002), Insights
+(8009), Brainztableinator (8010), and Brainzgraphinator (8011) are
+internal-only. Use `docker compose ps` for their Compose health status; those
+ports are not mapped to localhost.
 
 ### Logging
 

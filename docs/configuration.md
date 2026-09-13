@@ -10,13 +10,19 @@
 
 ## Overview
 
-GrooveMap uses environment variables for all configuration. This approach provides flexibility for different deployment environments (development, staging, production) without code changes.
+GrooveMap's deployment inputs are the digest-pinned image variables and local
+development defaults in `.env.example`, plus the file-backed secrets declared
+by `docker-compose.prod.yml`. Compose also sets source-owned runtime variables
+on each service. Treat the rendered Compose model, rather than this prose or a
+source repository's example environment, as the final value presented to a
+container.
 
 ## Configuration Methods
 
 ### 1. Environment File (.env) — Development
 
-The recommended approach for local development is a `.env` file:
+The required approach for image promotion and host-side Compose interpolation
+is an untracked `.env` file:
 
 ```bash
 # Copy the example file
@@ -26,30 +32,42 @@ cp .env.example .env
 nano .env
 ```
 
-> **Production**: Do not use `.env` files with real credentials in production. Use Docker Compose runtime secrets instead — see [Production Secrets](#production-secrets) below.
+Only values referenced as `${NAME}` in the Compose files are interpolated from
+this file. Entries such as `RABBITMQ_HOST` and `POSTGRES_HOST` are useful when
+running a source-owned process directly, but they do not override the literal
+container environment in `docker-compose.yml`. Use a Compose override for that.
 
-### 2. Direct Environment Variables — Development
+> **Production**: Do not put real credentials in `.env`. The file still carries
+> required image references and non-secret interpolation inputs; use Docker
+> Compose runtime secrets for credentials — see [Production Secrets](#production-secrets).
 
-Export variables in your shell:
+### 2. Direct Compose interpolation — development
+
+Shell variables override matching `.env` interpolation inputs, such as an image
+reference or host UID:
 
 ```bash
-export RABBITMQ_HOST="localhost"
-export RABBITMQ_USERNAME="groovemap"
-export RABBITMQ_PASSWORD="groovemap"
-export NEO4J_HOST="localhost"
-# ... other variables
+export CATALOG_API_IMAGE="ghcr.io/groovemap-music/catalog-api@sha256:<digest>"
+env UID="$(id -u)" GID="$(id -g)" docker compose config
 ```
+
+This does not replace `services.api.environment.POSTGRES_HOST`, for example,
+because that value is declared directly in Compose rather than interpolated.
 
 ### 3. Docker Compose Runtime Secrets — Production
 
-In production, credentials are mounted as in-memory tmpfs files via `docker-compose.prod.yml`. Secret values are never visible in `docker inspect`, never written to disk, and flushed when the container stops.
+In production, credentials are mounted at `/run/secrets/*` via
+`docker-compose.prod.yml`, so their values are not embedded in container
+environment variables or normal `docker inspect` output. The source files
+under untracked `secrets/` still exist on the Docker host: protect and remove
+them according to the environment's secret-management policy.
 
 ```bash
 # Generate secrets once (idempotent)
-bash scripts/create-secrets.sh
+just secrets-bootstrap
 
-# Start with production overlay
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Render the production overlay without starting it
+just config-prod
 ```
 
 See [Production Secrets](#production-secrets) below and [Docker Security](docker-security.md) for full details.
@@ -67,6 +85,25 @@ services:
 ```
 
 ## Core Settings
+
+### Effective Compose inputs
+
+The following groups are interpolated by the executable stack:
+
+| Inputs | Purpose |
+| --- | --- |
+| `DATABASE_SCHEMA_IMAGE`, `CATALOG_API_IMAGE`, `DISCOGS_INGESTION_IMAGE`, `MUSICBRAINZ_INGESTION_IMAGE`, `DISCOGS_GRAPH_ENRICHER_IMAGE`, `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE`, `DISCOGS_SQL_LOADER_IMAGE`, `MUSICBRAINZ_SQL_LOADER_IMAGE`, `OPERATIONS_CONSOLE_IMAGE`, `GRAPH_EXPLORER_IMAGE`, `ANALYTICS_ENGINE_IMAGE` | Required immutable source-owned images |
+| `UID`, `GID` | Host identity stamped on internal-image containers |
+| `APP_BASE_URL`, `DB_PROFILING`, `ENCRYPTION_MASTER_KEY`, `INSIGHTS_INTERNAL_SECRET`, `NLQ_ENABLED`, `NLQ_API_KEY`, `NLQ_MODEL`, `RESEND_API_KEY`, `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Optional base-stack application settings |
+| `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` | Production overlay sizing |
+| `GM_EXTRACTION_RULES_FILE` | Optional host path for the promoted Discogs extraction rules |
+| `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
+
+`docker compose config --environment` shows interpolation inputs, while
+`just config` and `just config-prod` show the complete effective container
+configuration. The sections below describe service runtime contracts; change a
+literal Compose value with a reviewed override file, not by assuming every
+source-level variable is an `.env` interpolation.
 
 ### RabbitMQ Configuration
 
@@ -109,12 +146,14 @@ RABBITMQ_PASSWORD=mypassword
 
 ### Data Storage
 
-| Variable              | Description           | Default         | Required |
-| --------------------- | --------------------- | --------------- | -------- |
-| `DISCOGS_ROOT`        | Data storage path     | `/discogs-data` | Yes      |
-| `PERIODIC_CHECK_DAYS` | Update check interval | `15`            | No       |
+| Variable              | Description                      | Effective Compose value | Required |
+| --------------------- | -------------------------------- | ----------------------- | -------- |
+| `DISCOGS_ROOT`        | Discogs producer data path       | `/discogs-data`         | Yes      |
+| `MUSICBRAINZ_ROOT`    | MusicBrainz producer data path   | `/musicbrainz-data`     | Yes      |
+| `PERIODIC_CHECK_DAYS` | Per-source update check interval | `5` Discogs / `3` MusicBrainz | No |
 
-**Used By**: Extractor
+**Used By**: `extractor-discogs` and `extractor-musicbrainz`, with separate
+named volumes (`discogs_data` and `musicbrainz_data`).
 
 **DISCOGS_ROOT Details**:
 
@@ -135,7 +174,8 @@ RABBITMQ_PASSWORD=mypassword
 
 - How often to check for new data dumps
 - Set to `0` to disable automatic checks
-- Recommended: `15` (checks twice per month)
+- The source-level default is 15 days; Compose deliberately overrides it per
+  producer as shown above
 
 ## Database Connections
 
@@ -331,9 +371,11 @@ REDIS_PASSWORD_FILE="/run/secrets/redis_password"
 **Cache Configuration**:
 
 - Default TTL: 3600 seconds (1 hour)
-- Max memory: 512MB (configurable in docker-compose.yml)
+- Max memory: 512MB in the base file (change through a reviewed Compose override)
 - Eviction policy: allkeys-lru
-- Persistence: Disabled (cache only)
+- Persistence: append-only file enabled (`--appendonly yes`) on the
+  `redis_data` volume; Redis is used as a cache, but container replacement does
+  not discard the volume automatically
 
 ## JWT Configuration
 
@@ -572,9 +614,11 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 | ---------------- | ------------------------- | ------- | ------------- |
 | `PYTHON_VERSION` | Python version for builds | `3.14`  | Docker, CI/CD |
 
-**Used By**: Build systems, CI/CD pipelines
+**Used By**: Source-repository build systems, not this repository's Compose
+services. Deployment consumes already-built images.
 
-**Purpose**: Ensure consistent Python version across environments
+**Purpose**: Compatibility metadata retained in `.env.example`; it does not
+select the Python interpreter inside a promoted image.
 
 **Notes**:
 
@@ -630,17 +674,18 @@ JWT_EXPIRE_MINUTES=1440
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8004/health (service), http://localhost:8005/health (health check port)
+Published endpoints: <http://localhost:8004> (service) and
+<http://localhost:8005/health> (health probe).
 
 **Notes**: After startup, set Discogs app credentials using the `discogs-setup` CLI bundled in the API container:
 
 ```bash
-docker exec <api-container> discogs-setup \
+docker compose exec api discogs-setup \
   --consumer-key YOUR_CONSUMER_KEY \
   --consumer-secret YOUR_CONSUMER_SECRET
 
 # Verify (values are masked)
-docker exec <api-container> discogs-setup --show
+docker compose exec api discogs-setup --show
 ```
 
 See the [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md) for full setup instructions.
@@ -687,7 +732,8 @@ FORCE_REPROCESS=false            # Force reprocess even if already extracted (de
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8000/health (each extractor container exposes port 8000 internally)
+Internal health port: 8000 on each extractor. It is not published to the host;
+use `docker compose ps` for status.
 
 ### Graphinator
 
@@ -719,7 +765,8 @@ STARTUP_DELAY=15                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8001/health
+Internal health port: 8001. It is not published to the host; use
+`docker compose ps` for status.
 
 ### Tableinator
 
@@ -752,7 +799,8 @@ STARTUP_DELAY=20                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8002/health
+Internal health port: 8002. It is not published to the host; use
+`docker compose ps` for status.
 
 ### Explore
 
@@ -765,7 +813,7 @@ CORS_ORIGINS="http://localhost:3000,http://localhost:8003"  # comma-separated or
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8007/health
+Published health endpoint: <http://localhost:8007/health>.
 
 ### Dashboard
 
@@ -796,7 +844,7 @@ CACHE_WEBHOOK_SECRET=              # Secret for cache invalidation webhooks
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8003/health
+Published health endpoint: <http://localhost:8003/health>.
 
 ### Insights
 
@@ -832,7 +880,8 @@ STARTUP_DELAY=10                              # Seconds to wait before starting 
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8009/health
+Internal health port: 8009. It is not published to the host; use
+`docker compose ps` for status.
 
 **Notes**: The Insights service uses Redis for caching computed results (cache-aside pattern). The cache TTL matches the `INSIGHTS_SCHEDULE_HOURS` interval and is invalidated after each computation run. If Redis is unavailable, the service operates without caching.
 
@@ -865,7 +914,8 @@ STARTUP_DELAY=20                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8011/health
+Internal health port: 8011. It is not published to the host; use
+`docker compose ps` for status.
 
 **Notes**: Brainzgraphinator enriches existing Neo4j nodes with MusicBrainz metadata (properties, relationships, cross-references). It skips entities without Discogs matches. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges.
 
@@ -898,7 +948,8 @@ STARTUP_DELAY=25                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Health check: http://localhost:8010/health
+Internal health port: 8010. It is not published to the host; use
+`docker compose ps` for status.
 
 **Notes**: Brainztableinator stores all MusicBrainz data in the `musicbrainz` PostgreSQL schema — including entities without Discogs matches — with relationships and external links. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges. Unlike Graphinator/Tableinator/Brainzgraphinator, it does **not** batch writes — it commits one PostgreSQL transaction per message and instead sets RabbitMQ prefetch (channel-global QoS) equal to its connection-pool maximum, so in-flight message handlers never exceed pool capacity.
 
@@ -913,7 +964,12 @@ API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API
 
 ## Environment Templates
 
-### Development (.env.development)
+### Development example
+
+The repository ships `.env.example`; it does not ship `.env.development`.
+Start from the former so all eleven required image variables remain present.
+The fragment below illustrates optional runtime overrides only and is not a
+complete Compose input.
 
 ```bash
 # RabbitMQ (built from components)
@@ -977,10 +1033,13 @@ This creates `secrets/` with these files (all `chmod 600`, directory `chmod 700`
 | `rabbitmq_username.txt` | `groovemap` |
 | `redis_password.txt` | `openssl rand -base64 24` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
+| `grafana_admin_password.txt` | `openssl rand -base64 24`; Grafana admin login |
 
 See `secrets.example/` for reference placeholders and generation commands.
 
-**Step 2 — Set non-secret production environment** (safe to commit, no credentials):
+**Step 2 — Set non-secret production environment** in the target environment.
+The values are non-secret, but this repository still forbids committing `.env`
+or rendered environment configuration:
 
 ```bash
 # RabbitMQ (hostname only — credentials come from Docker secrets)
@@ -1012,7 +1071,8 @@ CONSUMER_CANCEL_DELAY=300
 QUEUE_CHECK_INTERVAL=3600
 ```
 
-**Step 3 — Start with the production overlay**:
+**Step 3 — after reviewing the render and obtaining operator approval, start
+with the production overlay**:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -1080,23 +1140,16 @@ POSTGRES_USERNAME=groovemap_app
 Verify all services are configured correctly:
 
 ```bash
-# Check all health endpoints
-curl http://localhost:8000/health  # Extractor
-curl http://localhost:8001/health  # Graphinator
-curl http://localhost:8002/health  # Tableinator
-curl http://localhost:8003/health  # Dashboard
-curl http://localhost:8005/health  # API (health check port)
-curl http://localhost:8007/health  # Explore
-curl http://localhost:8009/health  # Insights
-curl http://localhost:8010/health  # Brainztableinator
-curl http://localhost:8011/health  # Brainzgraphinator
+docker compose ps
+curl --fail http://localhost:8003/health  # Dashboard
+curl --fail http://localhost:8005/health  # API health port
+curl --fail http://localhost:8007/health  # Explore health port
 ```
 
-Expected response for all:
-
-```json
-{"status": "healthy"}
-```
+Only those three HTTP probes are published. Compose runs the remaining health
+checks inside containers; some are HTTP, while databases and other
+infrastructure use their native commands. Inspect the exact commands with
+`docker compose config` rather than assuming every check returns the same JSON.
 
 ## Troubleshooting
 
@@ -1141,4 +1194,4 @@ See [Troubleshooting Guide](troubleshooting.md) for more solutions.
 
 ______________________________________________________________________
 
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-09-12
