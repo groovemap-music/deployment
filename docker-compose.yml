@@ -236,7 +236,7 @@ services:
 
   # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
   redis-exporter:
-    image: oliver006/redis_exporter:v1.90.0@sha256:a129504e65b87c54f79bc92f1afc403475e8ff646a3d7512de469904ceddf986
+    image: oliver006/redis_exporter:v1.91.0@sha256:b01dcb400d6a0c14513fc0f7af26908f2d6b6aca1e47debdb9d303f92c37963d
     container_name: groovemap-redis-exporter
     hostname: redis-exporter
     environment:

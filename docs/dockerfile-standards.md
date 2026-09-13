@@ -95,7 +95,7 @@ and pinned by digest:
 | `neo4j` | `neo4j:2026-community` |
 | `redis` | `redis:8-alpine` |
 | `postgres-exporter` | `prometheuscommunity/postgres-exporter:v0.20.1` |
-| `redis-exporter` | `oliver006/redis_exporter:v1.90.0` |
+| `redis-exporter` | `oliver006/redis_exporter:v1.91.0` |
 | `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` |
 | `node-exporter` | `prom/node-exporter:v1.12.1` |
 | `victoria-metrics` | `victoriametrics/victoria-metrics:v1.151.0` |
