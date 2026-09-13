@@ -16,25 +16,25 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 
 ### Service components
 
-| Source repository | Compose service | Purpose | Port(s) |
+| Source repository | Compose service | Purpose | Stack port(s) |
 | --- | --- | --- | --- |
-| [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `api` | User auth, graph queries, and sync triggers | 8004 (external), 8005 |
-| [`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) | `extractor-discogs` | Discogs XML extraction | 8000 (health) |
-| [`musicbrainz-ingestion`](https://github.com/groovemap-music/musicbrainz-ingestion) | `extractor-musicbrainz` | MusicBrainz JSONL extraction | 8000 (health) |
+| [`catalog-api`](https://github.com/groovemap-music/catalog-api) | `api` | User auth, graph queries, and sync triggers | 8004 and 8005 (published) |
+| [`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) | `extractor-discogs` | Discogs XML extraction | 8000 (internal health) |
+| [`musicbrainz-ingestion`](https://github.com/groovemap-music/musicbrainz-ingestion) | `extractor-musicbrainz` | MusicBrainz JSONL extraction | 8000 (internal health) |
 | [`database-schema`](https://github.com/groovemap-music/database-schema) | `schema-init` | One-shot database schema initialization | — |
-| [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `graphinator` | Build the Discogs-backed Neo4j graph | 8001 (health) |
-| [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `tableinator` | Load Discogs data into PostgreSQL | 8002 (health) |
-| [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `explore` | Browser graph exploration application | 8006, 8007 (external) |
-| [`operations-console`](https://github.com/groovemap-music/operations-console) | `dashboard` | Runtime monitoring and administration | 8003 (external) |
-| [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `insights` | Precomputed analytics and music trends | 8008, 8009 (internal) |
+| [`discogs-graph-enricher`](https://github.com/groovemap-music/discogs-graph-enricher) | `graphinator` | Build the Discogs-backed Neo4j graph | 8001 (internal health) |
+| [`discogs-sql-loader`](https://github.com/groovemap-music/discogs-sql-loader) | `tableinator` | Load Discogs data into PostgreSQL | 8002 (internal health) |
+| [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `explore` | Browser graph exploration application | 8006 and 8007 (published) |
+| [`operations-console`](https://github.com/groovemap-music/operations-console) | `dashboard` | Runtime monitoring and administration | 8003 (published) |
+| [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `insights` | Precomputed analytics and music trends | 8008 and 8009 (internal) |
 | [`mcp-server`](https://github.com/groovemap-music/mcp-server) | Not in this Compose stack | Expose catalog tools to AI assistants | stdio / streamable HTTP |
 
 ### MusicBrainz Enrichment Services
 
 | Source repository | Compose service | Purpose | Port(s) |
 | --- | --- | --- | --- |
-| [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `brainzgraphinator` | Enrich the Neo4j graph with MusicBrainz metadata | 8011 (health) |
-| [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `brainztableinator` | Store MusicBrainz data in PostgreSQL | 8010 (health) |
+| [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `brainzgraphinator` | Enrich the Neo4j graph with MusicBrainz metadata | 8011 (internal health) |
+| [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `brainztableinator` | Store MusicBrainz data in PostgreSQL | 8010 (internal health) |
 
 ### Infrastructure Components
 
@@ -44,11 +44,32 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | Neo4j | `neo4j` | Graph database for relationships | 7474, 7687 |
 | PostgreSQL | `postgres` | Relational database for analytics | 5433 (mapped) |
 | Redis | `redis` | Cache for queries, sessions, and analytics | 6379 |
+| VictoriaMetrics | `victoria-metrics` | Metrics store and Prometheus-compatible query API | 8428 (published in base; loopback in production) |
+| VictoriaTraces | `victoria-traces` | Trace store and Tempo-compatible query API | 10428 (published in base; loopback in production) |
+| OpenTelemetry Collector | `otel-collector` | OTLP ingest, infrastructure scrapes, and backend export | 4317, 4318, 8888, 13133 (internal) |
+| Grafana | `grafana` | Provisioned metrics and trace dashboards | 3000 |
 
 Compose service, hostname, container, exchange, and queue names are retained
 compatibility identifiers. Canonical product and image identities come from
 the source repository names. See the [complete identifier
 map](dockerfile-standards.md#compatibility-identifiers).
+
+### Persistent volumes
+
+Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
+(`postgres_data`), Redis (`redis_data`), Grafana (`grafana_data`),
+VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
+(`victoria_traces_data`). Neo4j separates `neo4j_data`, `neo4j_logs`,
+`neo4j_import`, and `neo4j_plugins`. The producers persist downloads in
+`discogs_data` and `musicbrainz_data`; the API mounts both read-only. The
+source-owned log volumes are `schema_init_logs`, `api_logs`,
+`extractor_discogs_logs`, `extractor_musicbrainz_logs`, `graphinator_logs`,
+`brainzgraphinator_logs`, `tableinator_logs`, `brainztableinator_logs`,
+`dashboard_logs`, `explore_logs`, and `insights_logs`.
+
+Removing a container does not remove these volumes. Any `down --volumes` or
+volume replacement is a destructive, approval-gated operation with an explicit
+backup/rollback decision.
 
 ## System Architecture Diagrams
 
@@ -942,20 +963,32 @@ for the vocabulary and storage decision, and the
 
 ### Container Security
 
-- Non-root users (UID 1000)
-- Read-only root filesystems
-- Dropped capabilities
-- No new privileges flag
-- Resource limits (CPU, memory)
+- Source-owned containers run as the configured UID/GID and drop all
+  capabilities.
+- Schema-init, API, consumers, Dashboard, Explore, and Insights use read-only
+  root filesystems; the two extractor roots remain writable while their data
+  and logs use explicit volumes.
+- Every service except RabbitMQ sets `no-new-privileges`; exporter and telemetry
+  containers apply additional least-privilege controls where their upstream
+  images permit them.
+- The production overlay bounds Neo4j memory; other service capacity remains an
+  environment-level limit rather than an undocumented Compose promise.
 
 See [Docker Security](docker-security.md) for details.
 
 ### Network Security
 
-- Only user-facing services and infrastructure UIs publish host ports (API, Dashboard, Explore, plus RabbitMQ, Neo4j, PostgreSQL, Redis); pipeline consumers (Extractor, Graphinator, Tableinator, Brainzgraphinator, Brainztableinator, Schema-Init, Insights) are internal-only
+- The base stack publishes API, Dashboard, Explore, RabbitMQ, Neo4j,
+  PostgreSQL, Redis, VictoriaMetrics, VictoriaTraces, and Grafana ports. The
+  production overlay loopback-binds Redis and both Victoria backends; other
+  exposure is an environment-level responsibility.
+- Pipeline consumers, extractors, Schema-Init, Insights, exporters, and the
+  OpenTelemetry Collector are internal-only.
 - Internal Docker network for services
-- Encrypted connections to databases
-- Secrets via environment variables
+- Database traffic is plaintext on the private Compose bridge unless an
+  operator supplies a reviewed TLS-capable external endpoint.
+- Development credentials are literal Compose values; the production overlay
+  replaces credentials with file-backed Docker Compose secrets.
 
 ### Code Security
 
@@ -968,22 +1001,18 @@ See [Docker Security](docker-security.md) for details.
 
 ### Health Checks
 
-All services expose HTTP health endpoints:
+Only the application probes explicitly published by Compose are reachable on
+the host. Use these without entering a container:
 
 ```bash
-# Externally accessible (Docker Compose)
 curl http://localhost:8003/health  # Dashboard
 curl http://localhost:8005/health  # API health check port
-
-# Internal only (available from within Docker network, or local dev)
-curl http://localhost:8000/health  # Extractor
-curl http://localhost:8001/health  # Graphinator
-curl http://localhost:8002/health  # Tableinator
 curl http://localhost:8007/health  # Explore
-curl http://localhost:8009/health  # Insights
-curl http://localhost:8010/health  # Brainztableinator
-curl http://localhost:8011/health  # Brainzgraphinator
 ```
+
+Compose checks the internal-only application and infrastructure probes inside
+their containers. `docker compose ps` is the authoritative health summary;
+`docker compose config` shows each exact probe without requiring a live stack.
 
 ### Logging
 
@@ -1105,22 +1134,14 @@ docker compose up -d
 - Limited scalability
 - Single point of failure
 
-### Kubernetes (Production)
+### Docker Compose production overlay
 
-**Recommended for**:
-
-- Production deployments
-- High availability requirements
-- Auto-scaling needs
-- Multi-node clusters
-
-**Components**:
-
-- Deployments for stateless services
-- StatefulSets for databases
-- Services for load balancing
-- ConfigMaps and Secrets
-- Persistent volumes
+`docker-compose.prod.yml` is the production-shaped configuration owned here.
+It replaces literal development credentials with file-backed secrets, changes
+restart policies and database tuning, applies the production telemetry resource
+attributes and trace sample rate, and loopback-binds unauthenticated Redis and
+Victoria endpoints. Render it with `just config-prod` and review the full merge
+before any approved start. This repository does not ship Kubernetes manifests.
 
 ## Related Documentation
 
@@ -1132,4 +1153,4 @@ docker compose up -d
 
 ______________________________________________________________________
 
-**Last Updated**: 2026-04-03
+**Last Updated**: 2026-09-12

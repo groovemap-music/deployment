@@ -36,20 +36,9 @@ if [ ! -f "${GM_RELEASED_STACK_ENV_FILE}" ]; then
   exit 2
 fi
 
-# The reviewed release set lives in scripts/check-images.py. Read the literal rather
-# than executing the checker, so the gate answers the same on any working tree.
-GM_APPROVED_DIGESTS=$(
-  python3 - <<'GM_PY'
-import ast
-import pathlib
-
-module = ast.parse(pathlib.Path("scripts/check-images.py").read_text())
-for node in module.body:
-    if isinstance(node, ast.Assign) and any(getattr(target, "id", "") == "RELEASED_IMAGE_DIGESTS" for target in node.targets):
-        for key, value in zip(node.value.keys, node.value.values):
-            print(key.value, value.value)
-GM_PY
-)
+# Use the image policy's read-only export so this adapter cannot drift from the
+# reviewed release set or duplicate its source-code parsing.
+GM_APPROVED_DIGESTS=$(python3 scripts/check-images.py --released-digests)
 if [ -z "${GM_APPROVED_DIGESTS}" ]; then
   echo "error: scripts/check-images.py declares no RELEASED_IMAGE_DIGESTS to validate against" >&2
   exit 2

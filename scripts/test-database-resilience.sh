@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Test script for database resilience during maintenance windows
-# This script simulates database outages to verify the resilience features
+# Operator-driven database outage and recovery rehearsal.
 
 set -e
 
@@ -13,14 +12,12 @@ echo "Make sure all services are running before starting."
 echo ""
 read -r -p "Press Enter to continue or Ctrl+C to cancel..."
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to check service health
 check_health() {
   local service=$1
   local port=$2
@@ -35,7 +32,6 @@ check_health() {
   fi
 }
 
-# Function to count messages in RabbitMQ queue
 get_queue_depth() {
   local queue=$1
   local depth
@@ -43,7 +39,17 @@ get_queue_depth() {
   echo "$depth"
 }
 
-# Function to simulate database outage
+report_queue_depths() {
+  local data_type graphinator_queue tableinator_queue g_depth t_depth
+  for data_type in artists labels masters releases; do
+    graphinator_queue="groovemap-discogs-graphinator-${data_type}"
+    tableinator_queue="groovemap-discogs-tableinator-${data_type}"
+    g_depth=$(get_queue_depth "$graphinator_queue")
+    t_depth=$(get_queue_depth "$tableinator_queue")
+    echo "Queue ${data_type}: graphinator=${g_depth:-0}, tableinator=${t_depth:-0}"
+  done
+}
+
 simulate_outage() {
   local service=$1
   local duration=$2
@@ -57,12 +63,10 @@ simulate_outage() {
   echo -e "${GREEN}🔄 Restarting ${service}...${NC}"
   docker compose start "$service"
 
-  # Wait for service to be ready
   echo -e "${BLUE}⏳ Waiting for ${service} to be ready...${NC}"
   sleep 10
 }
 
-# Function to monitor service logs
 monitor_logs() {
   local service=$1
   local duration=$2
@@ -71,108 +75,73 @@ monitor_logs() {
   timeout "$duration" docker compose logs -f "$service" 2>&1 | grep -E "(Circuit breaker|Retrying|connection|Connection|Failed|failed|established|resilient)" || true
 }
 
-# Initial health check
 echo -e "\n${BLUE}🏥 Initial Health Check${NC}"
 echo "========================"
 check_health "Dashboard" 8003
 check_health "API" 8004
 
-# Get initial queue depths
 echo -e "\n${BLUE}📊 Initial Queue Depths${NC}"
 echo "======================="
-for data_type in artists labels masters releases; do
-  graphinator_queue="groovemap-discogs-graphinator-${data_type}"
-  tableinator_queue="groovemap-discogs-tableinator-${data_type}"
+report_queue_depths
 
-  g_depth=$(get_queue_depth "$graphinator_queue")
-  t_depth=$(get_queue_depth "$tableinator_queue")
-
-  echo "Queue ${data_type}: graphinator=${g_depth:-0}, tableinator=${t_depth:-0}"
-done
-
-# Test 1: Neo4j Outage
 echo -e "\n${YELLOW}🧪 Test 1: Neo4j Outage (30 seconds)${NC}"
 echo "====================================="
 echo "Simulating Neo4j maintenance window..."
 
-# Start monitoring graphinator in background
 monitor_logs "graphinator" 60 &
 MONITOR_PID=$!
 
-# Simulate outage
 simulate_outage "neo4j" 30
 
-# Kill monitor
-kill $MONITOR_PID 2>/dev/null || true
+kill "$MONITOR_PID" 2>/dev/null || true
 
-# Check recovery
 echo -e "\n${BLUE}🔍 Checking Neo4j Recovery${NC}"
 sleep 5
 check_health "Graphinator" 8001
 
-# Test 2: PostgreSQL Outage
 echo -e "\n${YELLOW}🧪 Test 2: PostgreSQL Outage (30 seconds)${NC}"
 echo "=========================================="
 echo "Simulating PostgreSQL maintenance window..."
 
-# Start monitoring tableinator in background
 monitor_logs "tableinator" 60 &
 MONITOR_PID=$!
 
-# Simulate outage
 simulate_outage "postgres" 30
 
-# Kill monitor
-kill $MONITOR_PID 2>/dev/null || true
+kill "$MONITOR_PID" 2>/dev/null || true
 
-# Check recovery
 echo -e "\n${BLUE}🔍 Checking PostgreSQL Recovery${NC}"
 sleep 5
 check_health "Tableinator" 8002
 
-# Test 3: RabbitMQ Outage (More Critical)
 echo -e "\n${YELLOW}🧪 Test 3: RabbitMQ Outage (20 seconds)${NC}"
 echo "========================================"
 echo "Simulating RabbitMQ maintenance window..."
 echo -e "${RED}⚠️  This is more disruptive as it affects message flow${NC}"
 
-# Start monitoring all services
 MONITOR_PIDS=()
 for service in extractor-discogs extractor-musicbrainz graphinator tableinator; do
   monitor_logs "$service" 50 &
   MONITOR_PIDS+=($!)
 done
 
-# Simulate outage
 simulate_outage "rabbitmq" 20
 
-# Wait for monitors to finish, then clean up
 sleep 30
 for pid in "${MONITOR_PIDS[@]}"; do
   kill "$pid" 2>/dev/null || true
 done
 
-# Check recovery
 echo -e "\n${BLUE}🔍 Checking RabbitMQ Recovery${NC}"
 sleep 10
-# Final health check
 echo -e "\n${BLUE}🏥 Final Health Check${NC}"
 echo "====================="
 check_health "Dashboard" 8003
 check_health "API" 8004
 
-# Final queue check
 echo -e "\n${BLUE}📊 Final Queue Depths${NC}"
 echo "===================="
-for data_type in artists labels masters releases; do
-  graphinator_queue="groovemap-discogs-graphinator-${data_type}"
-  tableinator_queue="groovemap-discogs-tableinator-${data_type}"
-
-  g_depth=$(get_queue_depth "$graphinator_queue")
-  t_depth=$(get_queue_depth "$tableinator_queue")
-
-  echo "Queue ${data_type}: graphinator=${g_depth:-0}, tableinator=${t_depth:-0}"
-done
+report_queue_depths
 
 echo -e "\n${GREEN}✅ Resilience tests completed!${NC}"
 echo ""

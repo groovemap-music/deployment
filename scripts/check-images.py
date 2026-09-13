@@ -1,11 +1,18 @@
 """Enforce immutable image inputs and repository ownership boundaries."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,9 +51,6 @@ IMAGE_OWNERS = {
     "ANALYTICS_ENGINE_IMAGE": "analytics-engine",
 }
 
-assert set(INTERNAL_IMAGES.values()) == set(IMAGE_OWNERS), "every required image variable needs a declared owning repository"
-assert len(set(INTERNAL_IMAGES.values())) == len(INTERNAL_IMAGES), "each service must promote its own source-owned image"
-
 # Image variable -> the manifest digest of the release this deployment has reviewed. The
 # released-stack smoke (`just smoke-released`) refuses an operator env file that promotes
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
@@ -64,11 +68,6 @@ RELEASED_IMAGE_DIGESTS = {
     "GRAPH_EXPLORER_IMAGE": "546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b",  # graph-explorer v0.1.1  gitleaks:allow
     "ANALYTICS_ENGINE_IMAGE": "a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69",  # analytics-engine v0.1.1  gitleaks:allow
 }
-
-assert set(RELEASED_IMAGE_DIGESTS) == set(IMAGE_OWNERS), "every owned image variable needs a reviewed release digest"
-assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
-    "a reviewed release digest must be a full manifest digest"
-)
 
 # Compose service -> the exact third-party image reference it runs. These are public
 # registry images nobody here publishes, so the manifest digest is the whole review: a
@@ -90,61 +89,100 @@ THIRD_PARTY_IMAGES = {
     "victoria-traces": "victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd",  # gitleaks:allow
 }
 
-assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_IMAGES), "a service runs either a released GrooveMap image or a public one"
-assert all(DIGEST.search(reference) for reference in THIRD_PARTY_IMAGES.values()), "every third-party reference must be digest pinned"
 
-
-compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-services = compose["services"]
-assert not any("build" in service for service in services.values()), "deployment must consume images, not sibling build contexts"
-
-for service_name, variable in INTERNAL_IMAGES.items():
-    image = services[service_name]["image"]
-    assert image.startswith(f"${{{variable}:?"), f"{service_name} must require {variable}"
-
-third_party_services = sorted(set(services) - set(INTERNAL_IMAGES))
-assert third_party_services == sorted(THIRD_PARTY_IMAGES), (
-    f"THIRD_PARTY_IMAGES does not match the compose services: {sorted(set(third_party_services) ^ set(THIRD_PARTY_IMAGES))}"
-)
-for service_name in third_party_services:
-    image = services[service_name]["image"]
-    assert DIGEST.search(image), f"{service_name} image is not digest-pinned: {image}"
-    assert image == THIRD_PARTY_IMAGES[service_name], (
-        f"{service_name} runs {image}, which is not the reviewed reference {THIRD_PARTY_IMAGES[service_name]}"
+def check_declarations() -> None:
+    """Validate the static ownership and reviewed-release policy tables."""
+    assert set(INTERNAL_IMAGES.values()) == set(IMAGE_OWNERS), "every required image variable needs a declared owning repository"
+    assert len(set(INTERNAL_IMAGES.values())) == len(INTERNAL_IMAGES), "each service must promote its own source-owned image"
+    assert set(RELEASED_IMAGE_DIGESTS) == set(IMAGE_OWNERS), "every owned image variable needs a reviewed release digest"
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
+        "a reviewed release digest must be a full manifest digest"
     )
+    assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_IMAGES), "a service runs either a released GrooveMap image or a public one"
+    assert all(DIGEST.search(reference) for reference in THIRD_PARTY_IMAGES.values()), "every third-party reference must be digest pinned"
 
-assert ":latest" not in (ROOT / "docker-compose.yml").read_text()
 
-# Documented image references must name their owning repository. `.env.example` carries a
-# placeholder digest and `config/validation.env` a non-published one; neither is a
-# deployment input, but both teach the operator which repository each variable promotes.
-for env_name in (".env.example", "config/validation.env"):
-    assignments = dict(line.split("=", 1) for line in (ROOT / env_name).read_text().splitlines() if "=" in line and not line.startswith("#"))
-    for variable, repository in IMAGE_OWNERS.items():
-        assert variable in assignments, f"{env_name} is missing {variable}"
-        reference = assignments[variable]
-        assert reference.startswith(f"{REGISTRY}/{repository}@sha256:"), (
-            f"{env_name}: {variable} must promote {REGISTRY}/{repository} by digest, got {reference}"
+def parse_assignments(text: str) -> dict[str, str]:
+    """Parse the simple, unquoted assignments used by repository env templates."""
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#"))
+
+
+def check_compose(compose_text: str, env_templates: Mapping[str, str]) -> None:
+    """Validate image ownership and immutability without reading the filesystem."""
+    import yaml  # noqa: PLC0415
+
+    compose: dict[str, Any] = yaml.safe_load(compose_text)
+    services = compose["services"]
+    assert not any("build" in service for service in services.values()), "deployment must consume images, not sibling build contexts"
+
+    for service_name, variable in INTERNAL_IMAGES.items():
+        image = services[service_name]["image"]
+        assert image.startswith(f"${{{variable}:?"), f"{service_name} must require {variable}"
+
+    third_party_services = sorted(set(services) - set(INTERNAL_IMAGES))
+    assert third_party_services == sorted(THIRD_PARTY_IMAGES), (
+        f"THIRD_PARTY_IMAGES does not match the compose services: {sorted(set(third_party_services) ^ set(THIRD_PARTY_IMAGES))}"
+    )
+    for service_name in third_party_services:
+        image = services[service_name]["image"]
+        assert DIGEST.search(image), f"{service_name} image is not digest-pinned: {image}"
+        assert image == THIRD_PARTY_IMAGES[service_name], (
+            f"{service_name} runs {image}, which is not the reviewed reference {THIRD_PARTY_IMAGES[service_name]}"
         )
 
-# Every promoted upstream artifact under `config/` records where it came from, so drift
-# against the owning repository is a check failure rather than a silent divergence. The
-# promoted extraction rules and the producers' promoted contract fixtures share one record.
-provenance = json.loads((ROOT / "config/provenance.json").read_text())
-assert "extraction-rules.yaml" in provenance, "the promoted extraction rules must stay recorded"
-for relative_path, record in sorted(provenance.items()):
-    promoted = ROOT / "config" / relative_path
-    assert promoted.is_file(), f"config/provenance.json records {relative_path}, which is not a promoted file"
-    assert hashlib.sha256(promoted.read_bytes()).hexdigest() == record["promoted_sha256"], (
-        f"config/{relative_path} drifted from its recorded promoted digest"
-    )
-    assert record["owner"].startswith("groovemap-music/"), f"config/{relative_path} must name its owning repository"
-    assert len(record["producer_commit"]) == 40, f"config/{relative_path} must record a full producer commit"
-    assert len(record["source_sha256"]) == 64, f"config/{relative_path} must record the upstream source digest"
-    assert record["source_path"], f"config/{relative_path} must record its path in the owning repository"
+    assert ":latest" not in compose_text
 
-# The promoted contract fixtures are the smoke stack's only release inputs, so they must be
-# byte-identical to the producers' fixtures rather than a locally edited copy.
-for relative_path in ("media-smoke/discogs-releases.data.json", "media-smoke/musicbrainz-releases.data.json"):
-    record = provenance[relative_path]
-    assert record["promoted_sha256"] == record["source_sha256"], f"config/{relative_path} must be promoted verbatim from {record['owner']}"
+    for env_name, env_text in env_templates.items():
+        assignments = parse_assignments(env_text)
+        for variable, repository in IMAGE_OWNERS.items():
+            assert variable in assignments, f"{env_name} is missing {variable}"
+            reference = assignments[variable]
+            assert reference.startswith(f"{REGISTRY}/{repository}@sha256:"), (
+                f"{env_name}: {variable} must promote {REGISTRY}/{repository} by digest, got {reference}"
+            )
+
+
+def check_provenance(provenance: Mapping[str, Mapping[str, str]], promoted_files: Mapping[str, bytes]) -> None:
+    """Validate promoted artifact metadata against supplied file content."""
+    assert "extraction-rules.yaml" in provenance, "the promoted extraction rules must stay recorded"
+    for relative_path, record in sorted(provenance.items()):
+        assert relative_path in promoted_files, f"config/provenance.json records {relative_path}, which is not a promoted file"
+        assert hashlib.sha256(promoted_files[relative_path]).hexdigest() == record["promoted_sha256"], (
+            f"config/{relative_path} drifted from its recorded promoted digest"
+        )
+        assert record["owner"].startswith("groovemap-music/"), f"config/{relative_path} must name its owning repository"
+        assert len(record["producer_commit"]) == 40, f"config/{relative_path} must record a full producer commit"
+        assert len(record["source_sha256"]) == 64, f"config/{relative_path} must record the upstream source digest"
+        assert record["source_path"], f"config/{relative_path} must record its path in the owning repository"
+
+    for relative_path in ("media-smoke/discogs-releases.data.json", "media-smoke/musicbrainz-releases.data.json"):
+        record = provenance[relative_path]
+        assert record["promoted_sha256"] == record["source_sha256"], f"config/{relative_path} must be promoted verbatim from {record['owner']}"
+
+
+def check_repository(root: Path = ROOT) -> None:
+    """Read repository inputs and apply every image and provenance policy."""
+    check_declarations()
+    env_names = (".env.example", "config/validation.env")
+    check_compose(
+        (root / "docker-compose.yml").read_text(),
+        {name: (root / name).read_text() for name in env_names},
+    )
+    provenance: dict[str, dict[str, str]] = json.loads((root / "config/provenance.json").read_text())
+    promoted_files = {
+        relative_path: (root / "config" / relative_path).read_bytes() for relative_path in provenance if (root / "config" / relative_path).is_file()
+    }
+    check_provenance(provenance, promoted_files)
+
+
+def released_digest_lines() -> str:
+    """Render the reviewed release set for the released-stack shell adapter."""
+    check_declarations()
+    return "\n".join(f"{variable} {digest}" for variable, digest in RELEASED_IMAGE_DIGESTS.items())
+
+
+if __name__ == "__main__":
+    if "--released-digests" in sys.argv[1:]:
+        print(released_digest_lines())
+    else:
+        check_repository()

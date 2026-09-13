@@ -967,8 +967,10 @@ class TestCheckerEntryPoint:
     def test_the_gate_is_wired_into_source_check(self) -> None:
         justfile = (REPO_ROOT / "Justfile").read_text()
         assert "scripts/check-dashboards.py" in justfile
-        source_check = justfile.partition("source-check:")[2].partition("\n\ncheck:")[0]
-        assert "check-dashboards.py" in source_check, "the gate must run in just source-check, not somewhere else"
+        source_check = next(line for line in justfile.splitlines() if line.startswith("source-check:"))
+        source_analysis = justfile.partition("_source-analysis:")[2].partition("\n\n_compose-check:")[0]
+        assert "_source-analysis" in source_check
+        assert "check-dashboards.py" in source_analysis, "the gate must run in just source-check, not somewhere else"
 
 
 class TestDashboardDocumentation:
