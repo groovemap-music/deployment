@@ -6,16 +6,16 @@ default:
 setup:
     uv sync --dev --frozen
 
-source-check:
+_source-analysis:
     uvx --from ruff==0.16.4 ruff format --check .
     uvx --from ruff==0.16.4 ruff check .
     uv run python scripts/check-images.py
     uv run python scripts/check-dashboards.py
-    uv run python scripts/check-licenses.py
-    uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"
+
+_compose-check:
     bash scripts/check-compose.sh
-    gitleaks git --config .gitleaks.toml --redact --no-banner
-    gitleaks dir . --config .gitleaks.toml --redact --no-banner
+
+source-check: _source-analysis license-check _compose-check secret-scan
 
 check: source-check typecheck test
 
@@ -25,8 +25,7 @@ typecheck:
 test:
     uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml
 
-coverage:
-    uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml
+coverage: test
 
 audit:
     uv run pip-audit
@@ -39,11 +38,9 @@ secret-scan:
     gitleaks git --config .gitleaks.toml --redact --no-banner
     gitleaks dir . --config .gitleaks.toml --redact --no-banner
 
-build:
-    bash scripts/check-compose.sh
+build: _compose-check
 
-install-check:
-    bash scripts/check-compose.sh
+install-check: _compose-check
 
 # Requires an approved, published catalog-api performance image and a running environment.
 performance:
