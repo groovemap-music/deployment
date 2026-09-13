@@ -201,9 +201,11 @@ Each of them also declares `depends_on: otel-collector` with condition
 an application down. A service that starts before the collector is ready loses
 at most its first export interval.
 
-`OTEL_METRICS_EXPORTER` and `OTEL_METRIC_EXPORT_INTERVAL` are left at their SDK
-defaults (`otlp`, 15000 ms). Setting `OTEL_METRICS_EXPORTER=none` on a single
-service is the supported way to mute it without touching its code.
+`OTEL_METRICS_EXPORTER` and `OTEL_METRIC_EXPORT_INTERVAL` are left unset by
+Compose. The SDK defaults are `otlp` and 60000 ms. Setting
+`OTEL_METRICS_EXPORTER=none` on a single service is the supported way to mute it
+without touching its code; an operator can override the interval through
+`OTEL_METRIC_EXPORT_INTERVAL`.
 
 ### Infrastructure exporters
 
@@ -301,7 +303,7 @@ GrooveMap service molecule instruments against them.
   metrics.
 - Standard env vars only, read by the SDK: `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_METRICS_EXPORTER`
-  (`otlp`|`none`), `OTEL_METRIC_EXPORT_INTERVAL` (default 15000 ms). No
+  (`otlp`|`none`), `OTEL_METRIC_EXPORT_INTERVAL` (default 60000 ms). No
   GrooveMap-specific telemetry env vars.
 - When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset or `OTEL_METRICS_EXPORTER=none`
   the bootstrap installs a no-op `MeterProvider`. Telemetry must **never** fail

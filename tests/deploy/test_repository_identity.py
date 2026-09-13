@@ -60,6 +60,25 @@ def test_readme_links_repository_local_details() -> None:
         assert f"]({link})" in readme
 
 
+def test_public_repository_identity_preserves_the_private_operational_boundary() -> None:
+    readme = (ROOT / "README.md").read_text()
+    agents = (ROOT / "AGENTS.md").read_text()
+    assert "Public whole-stack deployment configuration" in readme
+    assert "This public repository owns" in agents
+    for document in (readme, agents):
+        assert "operational values and secrets remain private" in document
+        assert "private repository" not in document.casefold()
+
+
+def test_database_resilience_describes_the_operator_json_endpoint() -> None:
+    document = (ROOT / "docs" / "database-resilience.md").read_text()
+    metrics = document.split("### Metrics", maxsplit=1)[1].split("## Testing Database Outages", maxsplit=1)[0]
+    assert "`operations-console`" in metrics
+    assert "`/api/metrics`" in metrics
+    assert "operator-facing JSON" in metrics
+    assert "not a Prometheus scrape endpoint" in metrics
+
+
 def test_repository_local_markdown_links_resolve() -> None:
     problems: list[str] = []
     for source in _markdown_files():
