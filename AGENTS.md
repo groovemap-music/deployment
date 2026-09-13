@@ -1,6 +1,7 @@
 # Agent instructions
 
-This private repository owns GrooveMap whole-stack deployment configuration.
+This public repository owns GrooveMap whole-stack deployment configuration.
+Environment-specific operational values and secrets remain private and untracked.
 
 - Never add service source or sibling build contexts. Consume independently
   released, digest-pinned images.

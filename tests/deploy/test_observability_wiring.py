@@ -465,6 +465,16 @@ class TestCollectorTracesPipeline:
 
 
 class TestWiringDocumentation:
+    def test_metric_export_interval_uses_the_sdk_default_unless_overridden(self) -> None:
+        services = _base_compose()["services"]
+        for name in INSTRUMENTED_SERVICES:
+            assert "OTEL_METRIC_EXPORT_INTERVAL" not in services[name]["environment"], name
+
+        doc = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "`OTEL_METRICS_EXPORTER` and `OTEL_METRIC_EXPORT_INTERVAL` are left unset by\nCompose" in doc
+        assert "`OTEL_METRIC_EXPORT_INTERVAL` (default 60000 ms)" in doc
+        assert "15000 ms" not in doc
+
     def test_env_var_table_and_exporter_inventory_are_documented(self) -> None:
         doc = (REPO_ROOT / "docs" / "observability.md").read_text()
         for token in (
