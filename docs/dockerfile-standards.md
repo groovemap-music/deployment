@@ -85,10 +85,28 @@ its documentation evolve together.
 
 ## Base infrastructure images
 
-Images not built by GrooveMap, such as PostgreSQL, Neo4j, RabbitMQ, and Redis,
-are declared directly in `docker-compose.yml` and pinned by digest. Upgrading
-one requires reviewing its release notes, updating both the human-readable tag
-and digest, and rerunning the deployment gate.
+Images not built by GrooveMap are declared directly in `docker-compose.yml`
+and pinned by digest:
+
+| Compose service | Reviewed image tag |
+| --- | --- |
+| `rabbitmq` | `rabbitmq:4-management` |
+| `postgres` | `postgres:18-alpine` |
+| `neo4j` | `neo4j:2026-community` |
+| `redis` | `redis:8-alpine` |
+| `postgres-exporter` | `prometheuscommunity/postgres-exporter:v0.20.1` |
+| `redis-exporter` | `oliver006/redis_exporter:v1.90.0` |
+| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` |
+| `node-exporter` | `prom/node-exporter:v1.12.1` |
+| `victoria-metrics` | `victoriametrics/victoria-metrics:v1.151.0` |
+| `victoria-traces` | `victoriametrics/victoria-traces:v0.11.0` |
+| `otel-collector` | `otel/opentelemetry-collector-contrib:0.160.0` |
+| `grafana` | `grafana/grafana:13.2.1` |
+
+The executable reference appends the reviewed `@sha256:` manifest digest;
+`scripts/check-images.py` is the exact duplicate-policy authority. Upgrading an
+image requires reviewing its release notes, updating the readable tag and
+digest together, and rerunning the deployment gate.
 
 ## Validation
 

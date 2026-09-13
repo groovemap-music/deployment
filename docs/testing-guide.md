@@ -31,12 +31,24 @@ iterating:
 
 | Command | Purpose | Starts containers |
 | --- | --- | --- |
+| `just default` | List the public recipe surface | No |
+| `just setup` | Synchronize the locked development toolchain; may use the package network | No |
 | `just source-check` | Static, policy, Compose-render, and secret checks | No |
 | `just typecheck` | Type-check Python validation scripts | No |
 | `just test` | Run deployment regression tests and collect script coverage | No |
+| `just coverage` | Alias of `just test` | No |
+| `just license-check` | Validate repository and dependency license policy | No |
+| `just secret-scan` | Scan Git history and the worktree with redacted output | No |
+| `just audit` | Query dependency vulnerability data; network-aware and scheduled separately | No |
 | `just build` | Render all supported Compose combinations | No |
+| `just install-check` | Alias of `just build`; deployment has no installable artifact | No |
 | `just config` | Render the base configuration using the operator's `.env` | No |
 | `just config-prod` | Render the production overlay using the operator's `.env` and secret paths | No |
+| `just secrets-bootstrap` | Create missing untracked host secret files; changes local state | No |
+
+`just config` and `just config-prod` can include sensitive effective values in
+their output. Review them locally and do not attach an unredacted render to a
+ticket or commit it.
 
 ## Validation flow
 
@@ -86,6 +98,7 @@ resources:
 
 | Command | Requirement |
 | --- | --- |
+| `just secrets-bootstrap` | Local authorization to create missing files under untracked `secrets/`; it never overwrites existing values |
 | `just smoke` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-media` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-infra` | Operator approval to start the infrastructure smoke stack |

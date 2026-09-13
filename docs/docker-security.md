@@ -6,7 +6,7 @@ This document describes the security measures implemented in the groovemap Docke
 
 ### 1. Non-Root User Execution
 
-All services run as a non-root user with configurable UID/GID:
+Every source-owned application image is assigned the configurable host UID/GID:
 
 ```yaml
 user: "${UID:-1000}:${GID:-1000}"
@@ -15,10 +15,14 @@ user: "${UID:-1000}:${GID:-1000}"
 - Default: UID=1000, GID=1000
 - Customize by setting `UID` and `GID` environment variables
 - Matches host user to avoid permission issues with volumes
+- Third-party infrastructure images keep their image-defined user; Compose
+  does not falsely override a UID their entrypoint may require
 
 ### 2. Capability Dropping
 
-All application containers drop all Linux capabilities:
+All source-owned application containers drop all Linux capabilities. The
+collector and metrics/exporter containers do too; cAdvisor then adds back only
+`DAC_READ_SEARCH` and `SYSLOG` for host filesystem and OOM observation.
 
 ```yaml
 cap_drop:
@@ -34,7 +38,8 @@ This prevents containers from:
 
 ### 3. No New Privileges
 
-Prevents privilege escalation:
+Every service except RabbitMQ declares this option to prevent privilege
+escalation:
 
 ```yaml
 security_opt:
@@ -43,7 +48,8 @@ security_opt:
 
 ### 4. Read-Only Root Filesystem
 
-Application containers use read-only root filesystems:
+Schema-init, API, every consumer, Dashboard, Explore, and Insights use read-only
+root filesystems with an explicit temporary filesystem:
 
 ```yaml
 read_only: true
@@ -54,10 +60,16 @@ tmpfs:
 - Prevents malicious writes to the container filesystem
 - `/tmp` is mounted as tmpfs for temporary files
 - Application data uses explicit volumes
+- The two extractor containers are exceptions: they drop all capabilities and
+  write their source-specific data/log volumes, but their root filesystems are
+  not marked read-only in the current Compose contract
 
 ### 5. Health Checks
 
-All services implement HTTP health endpoints:
+Health checks match what each image can execute. Application services use HTTP
+probes, databases use native clients, Grafana and some exporters use HTTP, and
+the distroless collector/trace images validate their own binaries or config.
+For example:
 
 ```yaml
 healthcheck:
@@ -97,7 +109,12 @@ deploy:
 
 ### Security-Sensitive Variables
 
-These secrets are **never passed as plain environment variables in production**. Instead, they are mounted as in-memory tmpfs files via Docker Compose runtime secrets and read through the `_FILE` convention. See [Production Secrets Setup](#production-secrets-setup) below.
+These secrets are **never passed as plain environment variables in production**.
+Instead, the production overlay mounts them at `/run/secrets/*` and services
+read them through the `_FILE` convention. With this repository's local
+Compose `file:` provider, the source files remain on the Docker host under the
+untracked `secrets/` directory; they are not ephemeral Swarm secrets. See
+[Production Secrets Setup](#production-secrets-setup) below.
 
 | Secret                 | `_FILE` env var                     | Plain env var (dev only)       |
 | ---------------------- | ----------------------------------- | ------------------------------ |
@@ -109,6 +126,10 @@ These secrets are **never passed as plain environment variables in production**.
 | JWT secret key         | `JWT_SECRET_KEY_FILE`               | `JWT_SECRET_KEY`               |
 | Encryption master key  | `ENCRYPTION_MASTER_KEY_FILE`        | `ENCRYPTION_MASTER_KEY`        |
 | Resend API key         | `RESEND_API_KEY_FILE`               | `RESEND_API_KEY`               |
+| NLQ API key            | `NLQ_API_KEY_FILE`                  | `NLQ_API_KEY`                  |
+| Redis password         | `REDIS_PASSWORD_FILE`               | `REDIS_PASSWORD`               |
+| Insights internal key  | `INSIGHTS_INTERNAL_SECRET_FILE`     | `INSIGHTS_INTERNAL_SECRET`     |
+| Grafana admin password | `GF_SECURITY_ADMIN_PASSWORD__FILE`  | `GF_SECURITY_ADMIN_PASSWORD`   |
 
 The Dashboard's RabbitMQ management-API access reuses the same `RABBITMQ_USERNAME`/`RABBITMQ_PASSWORD` (or `_FILE`) credentials above — there is no separate management-only credential pair.
 
@@ -118,16 +139,23 @@ Plain env vars work in development. The production overlay (`docker-compose.prod
 
 Set these to match your host user:
 
-```bash
-export UID=$(id -u)
-export GID=$(id -g)
+```dotenv
+UID=1000
+GID=1000
 ```
+
+Use the output of `id -u` and `id -g` for the values in the untracked `.env`
+copied from `.env.example`; `UID` is read-only in common shells.
 
 ## Production Secrets Setup
 
 ### 8. Runtime Secrets via `docker-compose.prod.yml`
 
-The production overlay mounts secrets as in-memory tmpfs files at `/run/secrets/<name>`. Secret values are **never visible in `docker inspect`**, never written to disk, and flushed when the container stops.
+The production overlay mounts secrets at `/run/secrets/<name>`. Secret values
+are not embedded in container environment variables or normal
+`docker inspect` output, but the backing files are written to the Docker host's
+untracked `secrets/` directory. Protect, rotate, and remove those files through
+the approved host secret-management process.
 
 **Step 1 — Generate secrets** (idempotent, skips existing files):
 
@@ -150,6 +178,7 @@ This creates `secrets/` (mode `700`) with one file per secret (mode `600`):
 | `neo4j_password.txt` | `openssl rand -base64 24` |
 | `redis_password.txt` | `openssl rand -base64 24` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
+| `grafana_admin_password.txt` | `openssl rand -base64 24`; required because production disables anonymous access |
 
 Use `secrets.example/` as a reference for each file's format and generation command.
 
@@ -164,6 +193,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 **Redis note**: Redis does not natively support the `_FILE` convention either. The production overlay overrides Redis's entrypoint with `scripts/redis-entrypoint.sh`, which reads `/run/secrets/redis_password` and appends `--requirepass <password>` before delegating to the official Redis entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Redis is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces.
 
 ### Running Securely
+
+The commands below change environment state. Run them only after reviewing the
+rendered configuration and obtaining approval for the exact target.
 
 **Development**:
 
@@ -180,7 +212,7 @@ docker compose up -d
 
 ```bash
 # 1. Generate secrets (first time only — safe to re-run)
-bash scripts/create-secrets.sh
+just secrets-bootstrap
 
 # 2. Start with production overlay (secrets + restart policies)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -236,12 +268,12 @@ docker inspect groovemap-extractor-discogs | jq '.[0].HostConfig.SecurityOpt'
 ### Security Scanning
 
 ```bash
-# Scan images for vulnerabilities
-# (extractor-discogs and extractor-musicbrainz are two Docker Compose services
-# running the same groovemap/extractor image with different EXTRACTOR_SOURCE
-# values, so scanning the one image tag covers both)
+# Scan each promoted source-owned extractor image by its exact approved digest;
+# the two Compose services do not share an image.
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy image groovemap/extractor:latest
+  aquasec/trivy image "${DISCOGS_INGESTION_IMAGE:?set the approved digest}"
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy image "${MUSICBRAINZ_INGESTION_IMAGE:?set the approved digest}"
 
 # Check for misconfigurations
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \

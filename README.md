@@ -22,7 +22,8 @@ digest policy, base and production Compose merges, deployment regression tests,
 and secret leaks. `config/validation.env` pins the reviewed released-image
 manifests used for static Compose validation without starting the stack.
 
-`just build` validates both Compose configurations without starting containers.
+`just build` validates the base, production, infrastructure-smoke, and
+media-smoke Compose combinations without starting containers.
 The [quick start](docs/quick-start.md) explains the complete local workflow.
 
 ## Configure an environment

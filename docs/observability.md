@@ -9,20 +9,30 @@ against, and the metric catalog dashboards are allowed to reference.
 
 ## Architecture
 
-```text
-  application services                backend                    UI
-  ────────────────────                ───────                    ──
+```mermaid
+flowchart LR
+    APPS["Application services"]
+    RMQ["rabbitmq<br/>:15692"]
+    PGX["postgres-exporter<br/>:9187"]
+    REDISX["redis-exporter<br/>:9121"]
+    CADVISOR["cadvisor<br/>:8080"]
+    NODE["node-exporter<br/>:9100"]
+    COLLECTOR["otel-collector<br/>OTLP :4317/:4318<br/>self-metrics :8888"]
+    METRICS[("victoria-metrics<br/>:8428")]
+    TRACES[("victoria-traces<br/>:10428")]
+    GRAFANA["grafana<br/>:3000"]
 
-                                                  ──remote-write──▶ victoria-metrics ─┐
-  api, extractor-*, ...  ──OTLP/HTTP──▶ otel-collector                   :8428          ├▶ grafana
-                            :4318          :4317 :4318                                  │   :3000
-                                             │  ▲   └─────────OTLP──────▶ victoria-traces ┘
-  rabbitmq :15692                            │  │                          :10428
-  postgres-exporter :9187  ◀──── prometheus receiver (scrape)
-  redis-exporter :9121                       │
-  cadvisor :8080                             │
-  node-exporter :9100                        │
-  otel-collector :8888     ◀─────────────────┘
+    APPS -->|"OTLP/HTTP :4318"| COLLECTOR
+    RMQ -->|"Prometheus scrape"| COLLECTOR
+    PGX -->|"Prometheus scrape"| COLLECTOR
+    REDISX -->|"Prometheus scrape"| COLLECTOR
+    CADVISOR -->|"Prometheus scrape"| COLLECTOR
+    NODE -->|"Prometheus scrape"| COLLECTOR
+    COLLECTOR -->|"self-scrape :8888"| COLLECTOR
+    COLLECTOR -->|"Prometheus remote write"| METRICS
+    COLLECTOR -->|"OTLP/HTTP traces"| TRACES
+    METRICS -->|"Prometheus query API"| GRAFANA
+    TRACES -->|"Tempo query API"| GRAFANA
 ```
 
 Three collection paths meet in one collector:
@@ -86,7 +96,7 @@ VictoriaMetrics is the organisation's metrics backend, and it is the only TSDB
 in this stack. It is not a drop-in that needs coaxing: it accepts Prometheus
 remote write with no flag and answers the Prometheus query API on the same
 port, which is why the Grafana datasource below keeps `type: prometheus` and
-uid `prometheus`, and why all five dashboards were unaffected by the swap. The
+uid `prometheus`, and why all nine dashboards were unaffected by the swap. The
 `victoriametrics-datasource` plugin is deliberately not used.
 
 The `victoria-traces` image is distroless — no shell, no `wget`, no `curl` —
@@ -97,13 +107,29 @@ reachable from any other container on the `groovemap` network.
 
 ### Collector pipeline
 
-```text
-metrics: otlp, prometheus, spanmetrics ─▶ memory_limiter ─▶ batch ─▶ prometheusremotewrite
-                                                                    ─▶ http://victoria-metrics:8428/api/v1/write
+```mermaid
+flowchart LR
+    OTLP_METRICS["OTLP metrics"]
+    PROMETHEUS["Prometheus receiver"]
+    SPANMETRICS["spanmetrics connector"]
+    METRICS_LIMITER["memory_limiter"]
+    METRICS_BATCH["batch"]
+    REMOTE_WRITE["prometheusremotewrite"]
+    VICTORIA_METRICS[("victoria-metrics<br/>/api/v1/write")]
 
-traces:  otlp ─▶ memory_limiter ─▶ batch ─▶ spanmetrics
-                                          ─▶ otlphttp/victoria_traces
-                                             ─▶ http://victoria-traces:10428/insert/opentelemetry/v1/traces
+    OTLP_TRACES["OTLP traces"]
+    TRACES_LIMITER["memory_limiter"]
+    TRACES_BATCH["batch"]
+    VICTORIA_TRACES[("victoria-traces<br/>/insert/opentelemetry/v1/traces")]
+
+    OTLP_METRICS --> METRICS_LIMITER
+    PROMETHEUS --> METRICS_LIMITER
+    SPANMETRICS --> METRICS_LIMITER
+    METRICS_LIMITER --> METRICS_BATCH --> REMOTE_WRITE --> VICTORIA_METRICS
+
+    OTLP_TRACES --> TRACES_LIMITER --> TRACES_BATCH
+    TRACES_BATCH --> SPANMETRICS
+    TRACES_BATCH -->|"otlphttp/victoria_traces"| VICTORIA_TRACES
 ```
 
 `memory_limiter` runs first in both pipelines so back-pressure is applied
@@ -1523,8 +1549,9 @@ the services.
 
 ## Rollout
 
-The program rolls out in three stages, which are cross-hive and therefore not
-expressible as bead dependencies:
+The original telemetry program rolled out in three stages, which were
+cross-repository and therefore not expressible as deployment bead
+dependencies:
 
 1. `python-libraries` (`common.telemetry`), this repository (backend and env
    wiring), `design` (ADR), and `discogs-ingestion` and `musicbrainz-ingestion`
@@ -1534,6 +1561,11 @@ expressible as bead dependencies:
    `groovemap-runtime` rev to that commit and adopts `common.telemetry`.
 3. Dashboards and end-to-end verification run last, against released images.
 
-Until stage 2 lands, the collector accepts connections but no application series
-arrive. The backend and the infrastructure exporters are still fully useful on
-their own.
+That sequence is retained as historical context for the execution records
+above. Current environments consume released, digest-pinned images. For a new
+telemetry rollout, update one source-owned image digest at a time, render both
+Compose configurations, obtain approval, and verify the expected
+`service_name`, metrics, spans, dashboards, and alerts before proceeding.
+Record the previous digest as the rollback target. A rollback restores that
+exact digest; it never substitutes `latest`, a tag-only reference, or a local
+build.
