@@ -1,10 +1,11 @@
 # GrooveMap deployment
 
-Private whole-stack deployment configuration for GrooveMap. This repository
+Public whole-stack deployment configuration for GrooveMap. This repository
 owns Compose topology, production hardening, secret-file bootstrap, runtime
 configuration promotion, and stack-level validation. Each service's source,
 Dockerfile, release version, and image publication remain in its own source
-repository.
+repository. Environment-specific operational values and secrets remain private
+and untracked.
 
 Current source is licensed under the [MIT License](LICENSE). Historical license
 states remain in retained Git history.

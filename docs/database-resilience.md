@@ -209,7 +209,8 @@ Enhanced logging for connection events:
 
 ### Metrics
 
-The dashboard service (`/metrics` endpoint) provides Prometheus metrics for monitoring.
+The `operations-console` dashboard exposes operator-facing JSON at `/api/metrics`
+for its monitoring UI. This is not a Prometheus scrape endpoint.
 
 ## Testing Database Outages
 
