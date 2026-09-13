@@ -16,6 +16,7 @@
 - [Database resilience](database-resilience.md)
 - [Docker security](docker-security.md)
 - [Dockerfile standards](dockerfile-standards.md)
+- [Transactional email live verification](transactional-email-verification.md)
 - [Testing](testing-guide.md)
 - [Performance](performance-guide.md)
 - [Platform targeting](platform-targeting.md)
