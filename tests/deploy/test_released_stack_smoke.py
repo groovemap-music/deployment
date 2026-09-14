@@ -109,7 +109,7 @@ def test_recipe_exists_and_stays_out_of_the_credential_free_gate() -> None:
 def test_maintenance_runbook_lists_the_recipe_as_approval_gated() -> None:
     runbook = (ROOT / "docs" / "maintenance.md").read_text()
     approvals = next(line for line in runbook.splitlines() if line.startswith("- `just smoke`"))
-    for recipe in ("just smoke", "just smoke-infra", "just smoke-media", "just smoke-released", "just down"):
+    for recipe in ("just smoke", "just smoke-infra", "just smoke-media", "just smoke-released", "just smoke-released-fixture", "just down"):
         assert f"`{recipe}`" in approvals, f"{recipe} changes live state and must require approval"
 
 

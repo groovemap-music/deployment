@@ -66,6 +66,11 @@ smoke:
 smoke-media:
     bash scripts/smoke-media.sh
 
+# Runs the digest-pinned Discogs extractor against the packaged v1 tiny dump and
+# asserts its RabbitMQ writes in both databases. Operator-gated and disposable.
+smoke-released-fixture:
+    bash scripts/smoke-released-fixture.sh
+
 # Credential-free infrastructure smoke; uses validation-only service image
 # values because Compose resolves all variables before selecting services.
 smoke-infra:

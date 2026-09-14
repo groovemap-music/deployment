@@ -46,6 +46,11 @@ CONSUMER_QUEUES = (
     "groovemap-musicbrainz-brainztableinator-releases",
     "groovemap-musicbrainz-brainzgraphinator-releases",
 )
+DISCOGS_CONSUMER_QUEUES = (
+    "groovemap-discogs-tableinator-releases",
+    "groovemap-discogs-graphinator-releases",
+)
+PACKAGED_EXTRACTOR_EXPECTED_EVENTS = "/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/expected-events.ndjson"
 
 # Non-production development credentials from docker-compose.yml. The smoke stack is
 # disposable and unpublished; an operator's real environment uses file-backed secrets.
@@ -176,17 +181,40 @@ def run(command: Sequence[str], stdin: str | None = None, timeout: float = 120.0
 class Stack:
     """The disposable smoke stack, addressed through Compose and the management API."""
 
-    def __init__(self, project: str, compose_files: Sequence[str], broker_port: int) -> None:
+    def __init__(self, project: str, compose_files: Sequence[str], broker_port: int, env_file: str | None = None) -> None:
         self.project = project
         self.compose_files = list(compose_files)
+        self.env_file = env_file
         self.broker_url = f"http://127.0.0.1:{broker_port}/api"
+
+    def compose_argv(self) -> list[str]:
+        """Return the common Compose invocation for this isolated stack."""
+        argv = ["docker", "compose", "--project-name", self.project]
+        if self.env_file is not None:
+            argv += ["--env-file", self.env_file]
+        for compose_file in self.compose_files:
+            argv += ["-f", compose_file]
+        return argv
 
     def compose_exec(self, service: str, command: Sequence[str], timeout: float = 120.0) -> str:
         """Run a command inside one of the stack's containers."""
-        argv = ["docker", "compose", "--project-name", self.project]
-        for compose_file in self.compose_files:
-            argv += ["-f", compose_file]
+        argv = self.compose_argv()
         argv += ["exec", "-T", service, *command]
+        return run(argv, timeout=timeout)
+
+    def compose_run(
+        self,
+        service: str,
+        command: Sequence[str] = (),
+        *,
+        entrypoint: str | None = None,
+        timeout: float = 120.0,
+    ) -> str:
+        """Run one disposable service container without starting its dependencies."""
+        argv = [*self.compose_argv(), "run", "--rm", "--no-deps"]
+        if entrypoint is not None:
+            argv += ["--entrypoint", entrypoint]
+        argv += [service, *command]
         return run(argv, timeout=timeout)
 
     def psql(self, sql: str) -> str:
@@ -241,13 +269,13 @@ class Stack:
             raise SmokeError(f"{exchange} accepted the event but routed it to no queue; the consumers have not bound yet")
 
 
-def wait_for_consumers(stack: Stack, deadline: float) -> None:
+def wait_for_consumers(stack: Stack, deadline: float, queues: Sequence[str] = CONSUMER_QUEUES) -> None:
     """Block until every contract queue exists with a live consumer.
 
     A fanout exchange drops a message that reaches no bound queue, so publishing before the
     loaders and enrichers have declared and bound their queues would silently prove nothing.
     """
-    pending = [queue for queue in CONSUMER_QUEUES if stack.queue_consumers(queue) < 1]
+    pending = [queue for queue in queues if stack.queue_consumers(queue) < 1]
     while pending and time.monotonic() < deadline:
         time.sleep(2.0)
         pending = [queue for queue in pending if stack.queue_consumers(queue) < 1]
@@ -410,6 +438,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project", required=True, help="Compose project name of the disposable smoke stack")
     parser.add_argument("--compose-file", action="append", required=True, dest="compose_files", help="Compose file, repeatable and order-significant")
     parser.add_argument("--broker-port", type=int, required=True, help="Published loopback port of the RabbitMQ management API")
+    parser.add_argument("--env-file", help="Environment file used to resolve digest-pinned Compose images")
+    parser.add_argument("--extractor-service", help="Run this one-shot extractor instead of publishing promoted event fixtures")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each stage before failing")
     return parser.parse_args(argv)
 
@@ -417,7 +447,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """Publish the fixture events, wait for both stores, and report every assertion."""
     args = parse_args(argv)
-    stack = Stack(args.project, args.compose_files, args.broker_port)
+    stack = Stack(args.project, args.compose_files, args.broker_port, args.env_file)
+
+    if args.extractor_service:
+        print(f"waiting for {len(DISCOGS_CONSUMER_QUEUES)} Discogs contract queues to bind a consumer")
+        wait_for_consumers(stack, time.monotonic() + args.timeout, DISCOGS_CONSUMER_QUEUES)
+        expected_stream = stack.compose_run(
+            args.extractor_service,
+            [PACKAGED_EXTRACTOR_EXPECTED_EVENTS],
+            entrypoint="cat",
+        )
+        expected_events = [json.loads(line) for line in expected_stream.splitlines() if line]
+        data_events = [event for event in expected_events if event.get("type") == "data"]
+        if len(data_events) != 1:
+            raise SmokeError(f"packaged extractor fixture declared {len(data_events)} data events; expected exactly one")
+        discogs = data_events[0]
+        if not isinstance(discogs.get("media"), dict):
+            raise SmokeError("packaged extractor fixture data event carries no canonical media block")
+
+        print(f"running {args.extractor_service} against its packaged v1 local manifest")
+        stack.compose_run(args.extractor_service, timeout=args.timeout)
+        results = wait_for(discogs_probes(stack, discogs), time.monotonic() + args.timeout)
+        print(render(results))
+        return exit_code(results)
 
     discogs = discogs_event(load_fixture("discogs-releases.data.json"))
     musicbrainz = musicbrainz_event(load_fixture("musicbrainz-releases.data.json"))
