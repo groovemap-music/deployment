@@ -71,11 +71,11 @@ MusicBrainz, or vice versa, unless an independent incident calls for both.
 
 ### Recorded release digests
 
-First per-source producer images (`v0.2.1`):
+Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:4a961aab647bb830074414b30e121d927c8287d2a1b2e4d61a34f42a1b50e94b` |
+| `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 
 Matching consumer and schema images (`v0.2.0`):
@@ -207,7 +207,7 @@ commit; `scripts/check-images.py` rejects a mismatched promoted hash.
 The following operations require explicit approval because they change live
 state:
 
-- `just smoke`, `just smoke-infra`, `just smoke-media`, `just smoke-released`, or `just down`;
+- `just smoke`, `just smoke-infra`, `just smoke-media`, `just smoke-released`, `just smoke-released-fixture`, or `just down`;
 - `docker compose up`, `restart`, `stop`, `down`, or `scale`;
 - database restore, vacuum policy changes, queue deletion, or cache flush;
 - data migration with `--apply`;

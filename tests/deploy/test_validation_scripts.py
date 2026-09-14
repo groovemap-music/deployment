@@ -74,6 +74,7 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --quiet",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.smoke.yml config --quiet",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
+        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
     ]
 
 
