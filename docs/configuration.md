@@ -98,6 +98,7 @@ The following groups are interpolated by the executable stack:
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` | Production overlay sizing |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the promoted Discogs extraction rules |
 | `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
+| `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
 
 `docker compose config --environment` shows interpolation inputs, while
 `just config` and `just config-prod` show the complete effective container

@@ -71,6 +71,7 @@ flowchart LR
 | --- | --- |
 | Compose topology, overlays, secrets wiring, and migration-script safeguards | `deployment/tests/deploy/` |
 | The media assertion's fixtures, event translation, and isolation | `deployment/tests/deploy/test_media_smoke.py` |
+| The erasure assertion's export parsing, absence probes, and isolation | `deployment/tests/deploy/test_erasure_smoke.py` |
 | Image naming, digest pinning, and promoted-artifact provenance | `deployment/scripts/check-images.py` |
 | Compose rendering for supported overlays | `deployment/scripts/check-compose.sh` |
 | Service behavior, package behavior, and service Dockerfiles | The corresponding source repository |
@@ -102,6 +103,7 @@ resources:
 | `just secrets-bootstrap` | Local authorization to create missing files under untracked `secrets/`; it never overwrites existing values |
 | `just smoke` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-media` | Operator approval and real digest-pinned service images in `.env` |
+| `just smoke-erasure` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-infra` | Operator approval to start the infrastructure smoke stack |
 | `just smoke-released` | Operator approval and a reviewed `GM_RELEASED_STACK_ENV_FILE` containing approved digests for every internal image |
 | `just smoke-released-fixture` | Operator approval and a reviewed `SMOKE_RELEASED_FIXTURE_ENV_FILE`; runs the published Discogs tiny fixture through RabbitMQ and both stores |
@@ -183,6 +185,73 @@ broker port keep it away from a running environment.
 `SMOKE_MEDIA_SUBNET`, and `SMOKE_MEDIA_SERVICE_PLATFORM`. The last one matters when the
 workstation's architecture is not the one the internal images are published for; it applies
 only to those services, so the broker and both stores stay native.
+
+### The erasure and export assertion
+
+`just smoke-erasure` is the end-to-end proof that [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)'s
+export and deletion claims hold: a real account's activity can be exported as well-formed
+NDJSON, and after an erasure nothing keyed to that account survives in PostgreSQL, Neo4j, or
+Redis. Like `just smoke-media`, it is a versioned script rather than a runbook step, so the
+claim can be re-made on demand.
+
+**What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
+approved `ghcr.io/groovemap-music/<repository>@sha256:<manifest-digest>` reference, the same
+requirement [`just smoke-media`](#the-canonical-media-assertion) has.
+[Maintenance](maintenance.md) records the promoted digests. `scripts/smoke-erasure.sh` refuses
+to start if a variable still holds an `.env.example` placeholder, a `config/validation.env`
+digest, or anything not pinned by digest, and refuses an `.env` that declares no `*_IMAGE`
+assignment at all — an assertion against images no environment runs would prove nothing.
+`.env` is untracked and must never be committed.
+
+**What it starts**: the schema initializer, PostgreSQL, Neo4j, Redis, and the catalog API,
+under the Compose project `groovemap-erasure-smoke` with `docker-compose.erasure-smoke.yml`.
+Naming the API pulls in its declared dependencies, so no extractor and no broker consumer
+run: this assertion drives the API itself rather than a catalog ingest. PostgreSQL, Neo4j, and
+Redis stay unpublished; the assertions reach them through `docker compose exec`. Only the
+API's own health-gated port is published, on loopback.
+
+**What it seeds**: the run registers a throwaway account against the disposable stack's own
+API (email domain `smoke.invalid`, reserved by RFC 2606 so it can never be delivered to),
+grants both published consent purposes (`product_analytics` and `model_training`), then
+performs a search and a recommendation request so `activity.events` and
+`activity.impressions` rows exist for the account. It asserts each store holds the account's
+data *before* erasing — PostgreSQL for the activity, subject-link, and collection rows,
+Neo4j for the account's `User` node and `COLLECTED` edge, and Redis for its recommendation and
+snapshot keys — so an absence probe cannot later pass only because the seed silently never
+happened.
+
+**What it proves**:
+
+- the export endpoint returns `application/x-ndjson`, one JSON object per line shaped
+  `{"kind": …, "record": {…}}`, whose `kind` values are drawn from the documented export
+  vocabulary and appear in the documented order, with at least one `event` line and one
+  `impression` line;
+- after erasure, `activity.events`, `activity.impressions`, and `activity.user_subjects` hold
+  zero rows for the subject, and `activity.erasures` holds a row for it;
+- `user_collections`, `owned_copies`, and `observations` hold zero rows for the account;
+- the `users` row is soft-erased: its email carries the `erased+` prefix and `is_active` is
+  `false`;
+- no `User` node for the account remains in Neo4j;
+- no `recommend:*` or `snapshot:usercount` Redis key for the account remains.
+
+Every absence probe is scoped to the id this run created, never a bare count another run's
+leftover row could satisfy in reverse.
+
+**What it leaves behind**: nothing. `scripts/smoke-erasure.sh` tears the stack down with
+`docker compose --project-name groovemap-erasure-smoke down --volumes --remove-orphans` from
+an exit trap, including on failure, after printing container status and the API's logs for a
+failed run. Its own project name, its own subnet, and a loopback-only API port keep it away
+from a running environment, the same isolation `just smoke-media` uses.
+
+**Knobs**, all optional and all environment variables: `SMOKE_ERASURE_PROJECT`,
+`SMOKE_ERASURE_ENV_FILE`, `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_TIMEOUT`,
+`SMOKE_ERASURE_SUBNET`, and `SMOKE_ERASURE_SERVICE_PLATFORM`. The last one matters when the
+workstation's architecture is not the one the internal images are published for; it applies
+only to the schema initializer and the API, so PostgreSQL, Neo4j, and Redis stay native.
+
+`just check` and CI never run `just smoke-erasure`: it starts containers and mutates a live
+account's data, so it requires the same operator approval as `just smoke-media` and the other
+live checks below.
 
 ## Coverage
 
