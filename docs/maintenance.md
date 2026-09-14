@@ -32,6 +32,27 @@ merging.
 Never replace a digest with `latest` or a tag-only reference. Do not add a
 sibling build context to this repository.
 
+## Wave-2 image promotion (identity and activity)
+
+The native-identity and first-party-events program
+([ADR 0009](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md),
+[ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md))
+changed both `catalog-api` and `database-schema`, but neither has a promoted
+image carrying that work yet. The recorded
+`CATALOG_API_IMAGE` digest in `scripts/check-images.py` is `catalog-api`
+`v0.1.1`, and the recorded `DATABASE_SCHEMA_IMAGE` digest in
+[Recorded release digests](#recorded-release-digests) is `database-schema`
+`v0.2.0`; both tags predate the identity and activity changes and are stale
+relative to them.
+
+Promoting either service to a build that includes this work is a separate
+release step, not part of this documentation change: the owning repository
+cuts a new `v*` tag under its own release approval, and the
+[Promote a service release](#promote-a-service-release) procedure above
+resolves its digest and updates the environment `.env`. `scripts/check-images.py`'s
+`RELEASED_IMAGE_DIGESTS` and this file's recorded-digest tables are updated
+from that reviewed release, not before.
+
 ## Per-source extractor cutover
 
 `extractor-discogs` and `extractor-musicbrainz` consume separate, source-owned
@@ -125,6 +146,59 @@ After promoting the media-aware images, backfill deliberately:
 Run one source's force_reprocess to completion before starting the other, so a
 failure is attributable and the retry budget is not spent twice at once.
 
+## Activity partitions and retention
+
+`catalog-api` owns partition creation for the two append-only, month-partitioned
+tables [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)
+adds, `activity.events` and `activity.impressions`. At startup it ensures the
+current and next calendar month's partitions exist for both tables
+(`api.activity.ensure_startup_partitions`), and on every write it ensures the
+partition for that event's or impression's own month
+(`api.activity._ensure_partition`); both call the
+`activity.ensure_month_partition` function `database-schema` declares, so a
+write into a month with no partition creates it rather than failing or landing
+in the `_default` partition. No scheduler is involved: deployment has no
+periodic-job primitive today, and partition creation needs none.
+
+### Retention is deferred
+
+ADR 0010 explicitly defers retention periods per table and per purpose, and the
+partition-drop schedule that would implement them, to a future decision. Until
+that decision is filed and a bead cuts it, no partition is dropped on a
+schedule, and none should be dropped manually except by operator approval under
+the procedure below.
+
+### Manual partition drop procedure
+
+Once a retention period is decided, or a partition needs manual removal for
+another operator-approved reason:
+
+1. Identify the month partition by name: `activity.events_y<YYYY>m<MM>` or
+   `activity.impressions_y<YYYY>m<MM>` — the format
+   `activity.ensure_month_partition` builds, for example
+   `activity.events_y2026m01`.
+2. Verify the partition carries no retention hold: confirm the month is fully
+   outside the approved retention period and that no open erasure, export, or
+   legal-hold request references data in it.
+3. Obtain operator approval for the exact partition and environment.
+4. `DROP TABLE activity.<table>_y<YYYY>m<MM>;`. This is a DDL statement, not a
+   row-level `DELETE`, so the `activity_events_reject_mutation` /
+   `activity_impressions_reject_mutation` immutability trigger
+   (`BEFORE UPDATE OR DELETE ... FOR EACH ROW`, declared in
+   `database-schema`'s `postgres.py`) does not fire and does not block it: the
+   trigger guards row-level mutation of live rows, and dropping a whole
+   partition table is a schema operation it was never declared to intercept.
+   Partition-level removal, not row deletion, is the retention mechanism ADR
+   0010 describes.
+5. Record the dropped partition, its date range, its row count if known, and
+   the approval in the maintenance record.
+
+This procedure is independent of the per-user erasure path (see
+`just smoke-erasure` below): erasure hard-deletes a single subject's rows under
+a session-local trigger bypass regardless of retention status, while a
+partition drop removes a whole month for every subject once retention allows
+it.
+
 ## Update an infrastructure image
 
 PostgreSQL, Neo4j, RabbitMQ, and Redis images are declared directly in
@@ -207,7 +281,7 @@ commit; `scripts/check-images.py` rejects a mismatched promoted hash.
 The following operations require explicit approval because they change live
 state:
 
-- `just smoke`, `just smoke-infra`, `just smoke-media`, `just smoke-released`, `just smoke-released-fixture`, or `just down`;
+- `just smoke`, `just smoke-infra`, `just smoke-media`, `just smoke-erasure`, `just smoke-released`, `just smoke-released-fixture`, or `just down`;
 - `docker compose up`, `restart`, `stop`, `down`, or `scale`;
 - database restore, vacuum policy changes, queue deletion, or cache flush;
 - data migration with `--apply`;
@@ -217,6 +291,16 @@ state:
 
 Capture a pre-change snapshot, exact commands, image digests, validation
 results, and rollback outcome in the maintenance record.
+
+`just smoke-erasure` starts its own disposable Compose stack (own project
+name, own subnet), registers a throwaway account, exports and erases it, and
+asserts the ADR 0010 export and deletion claims hold across PostgreSQL,
+Neo4j, and Redis before tearing the stack and its volumes down. It needs an
+operator-approved `.env` with every `*_IMAGE` variable pinned to an approved
+digest, the same requirement `just smoke-media` has. See
+[The erasure and export assertion](testing-guide.md#the-erasure-and-export-assertion)
+for what it seeds, asserts, and its optional `SMOKE_ERASURE_*` knobs.
+`just check` and CI never run it.
 
 ## Review checklist
 
