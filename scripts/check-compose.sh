@@ -14,3 +14,4 @@ check_compose
 check_compose docker-compose.yml docker-compose.prod.yml
 check_compose docker-compose.yml docker-compose.smoke.yml
 check_compose docker-compose.yml docker-compose.media-smoke.yml
+check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml

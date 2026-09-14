@@ -1,0 +1,70 @@
+---
+
+# Disposable released-image assertion for the Discogs extractor's packaged v1
+# fixture. Internal services run on their released linux/amd64 platform; the
+# broker and stores remain host-native. Only RabbitMQ's management API is
+# exposed, on loopback, so the assertion can wait for both consumer bindings.
+x-released-fixture-platform: &released-fixture-platform "${SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM:-linux/amd64}"
+
+services:
+  rabbitmq:
+    container_name: !reset null
+    ports: !override
+      - "127.0.0.1:${SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT:-15674}:15672"
+    # The disposable lane needs no host bind: the reviewed *-management image
+    # already enables management and prometheus. Avoiding this bind also keeps
+    # the released smoke runnable from temporary/remote worktree mounts.
+    volumes: !override
+      - rabbitmq_data:/var/lib/rabbitmq
+  postgres:
+    container_name: !reset null
+    ports: !override []
+  neo4j:
+    container_name: !reset null
+    ports: !override []
+  schema-init:
+    container_name: !reset null
+    platform: *released-fixture-platform
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+  extractor-discogs:
+    container_name: !reset null
+    platform: *released-fixture-platform
+    environment:
+      DATA_QUALITY_RULES: !reset null
+      LOCAL_MANIFEST: /usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
+    volumes: !override
+      - discogs_data:/discogs-data
+      - extractor_discogs_logs:/logs
+    depends_on: !override
+      rabbitmq:
+        condition: service_healthy
+  tableinator:
+    container_name: !reset null
+    platform: *released-fixture-platform
+    depends_on: !override
+      schema-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  graphinator:
+    container_name: !reset null
+    platform: *released-fixture-platform
+    depends_on: !override
+      schema-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+networks:
+  groovemap:
+    ipam: !override
+      config:
+        - subnet: "${SMOKE_RELEASED_FIXTURE_SUBNET:-172.30.0.0/16}"

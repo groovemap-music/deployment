@@ -21,7 +21,8 @@ just check
 - checks the promoted extraction-rules and contract-fixture provenance records;
 - checks dependency license policy;
 - renders the base, production, infrastructure-smoke, and media-smoke Compose
-  configurations using validation-only image digests;
+  configurations, including the released-fixture overlay, using validation-only
+  image digests;
 - scans the Git history and worktree for leaked secrets;
 - type-checks the Python validation scripts;
 - runs deployment regression tests with coverage.
@@ -103,6 +104,7 @@ resources:
 | `just smoke-media` | Operator approval and real digest-pinned service images in `.env` |
 | `just smoke-infra` | Operator approval to start the infrastructure smoke stack |
 | `just smoke-released` | Operator approval and a reviewed `GM_RELEASED_STACK_ENV_FILE` containing approved digests for every internal image |
+| `just smoke-released-fixture` | Operator approval and a reviewed `SMOKE_RELEASED_FIXTURE_ENV_FILE`; runs the published Discogs tiny fixture through RabbitMQ and both stores |
 | `just performance` | Operator approval, a running target environment, and an approved performance-runner image |
 | `just down` | Operator approval because it changes the current environment |
 
@@ -112,6 +114,22 @@ environment, image digests, and outcome when an operator approves a live test.
 starting containers, runs the schema initializer twice before applications,
 waits for service health, exercises graceful consumer shutdown, and retains
 service status and logs on failure.
+
+`just smoke-released-fixture` is likewise outside pull-request CI: it pulls and
+runs published containers, starts RabbitMQ, PostgreSQL, and Neo4j, and therefore
+requires explicit operator approval. It creates the isolated Compose project
+`groovemap-released-fixture-smoke`, exposes only RabbitMQ's management API on a
+loopback port, and removes the project and its volumes on every exit. The run
+accepts only the complete reviewed release set from `RELEASED_IMAGE_DIGESTS`.
+
+The fixture itself is not duplicated in this repository. The digest-pinned
+`discogs-ingestion` v0.3.1 image packages the versioned v1 manifest at
+`/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json`.
+The harness waits for the released Discogs graph and SQL consumers to bind,
+runs that extractor manifest once, reads the image's pinned expected data event,
+and polls PostgreSQL and Neo4j for its release, canonical media values, and
+media relationships. This deployment slice complements rather than replaces
+each service repository's real-engine integration tests.
 
 ### The canonical media assertion
 

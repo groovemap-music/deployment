@@ -179,7 +179,7 @@ class TestCutoverRunbook:
 
     def test_runbook_records_the_published_producer_digests(self) -> None:
         runbook = (REPO_ROOT / "docs" / "maintenance.md").read_text()
-        assert "sha256:4a961aab647bb830074414b30e121d927c8287d2a1b2e4d61a34f42a1b50e94b" in runbook
+        assert "sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c" in runbook
         assert "sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37" in runbook
 
 

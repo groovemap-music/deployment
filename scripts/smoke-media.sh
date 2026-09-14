@@ -73,6 +73,7 @@ trap cleanup EXIT
 
 uv run python scripts/smoke_media.py \
   --project "$project" \
+  --env-file "$env_file" \
   --compose-file docker-compose.yml \
   --compose-file docker-compose.media-smoke.yml \
   --broker-port "$broker_port" \
