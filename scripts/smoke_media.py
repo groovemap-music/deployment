@@ -148,13 +148,17 @@ def media_medium_ids(event: dict[str, Any]) -> list[str]:
     return sorted({str(item["medium"]) for item in event["media"]["items"]})
 
 
-def render(checks: Sequence[Check]) -> str:
-    """Render the assertion report an operator records for the run."""
+def render(checks: Sequence[Check], subject: str = "media") -> str:
+    """Render the assertion report an operator records for the run.
+
+    `subject` names what was asserted, so a second smoke reusing this report reads as its
+    own run rather than as a media assertion.
+    """
     width = max((len(check.name) for check in checks), default=0)
     lines = [f"{'PASS' if check.passed else 'FAIL'}  {check.name.ljust(width)}  {check.detail}" for check in checks]
     failed = [check for check in checks if not check.passed]
     lines.append("")
-    lines.append(f"{len(checks) - len(failed)}/{len(checks)} media assertions passed")
+    lines.append(f"{len(checks) - len(failed)}/{len(checks)} {subject} assertions passed")
     return "\n".join(lines)
 
 
@@ -179,9 +183,14 @@ def run(command: Sequence[str], stdin: str | None = None, timeout: float = 120.0
 
 
 class Stack:
-    """The disposable smoke stack, addressed through Compose and the management API."""
+    """The disposable smoke stack, addressed through Compose and the management API.
 
-    def __init__(self, project: str, compose_files: Sequence[str], broker_port: int, env_file: str | None = None) -> None:
+    `broker_port` is optional because a smoke stack need not run a broker at all — the
+    erasure assertion drives the API instead of publishing catalog events, and never
+    addresses the management endpoint.
+    """
+
+    def __init__(self, project: str, compose_files: Sequence[str], broker_port: int = 0, env_file: str | None = None) -> None:
         self.project = project
         self.compose_files = list(compose_files)
         self.env_file = env_file
