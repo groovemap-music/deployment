@@ -66,6 +66,13 @@ smoke:
 smoke-media:
     bash scripts/smoke-media.sh
 
+# Starts a disposable stack under its own project name, registers a throwaway account,
+# exports it, erases it, and asserts every store is empty of it before destroying the
+# stack and its volumes. Requires approved, real digest-pinned .env images; asserts the
+# ADR 0010 erasure and export boundary end to end.
+smoke-erasure:
+    bash scripts/smoke-erasure.sh
+
 # Runs the digest-pinned Discogs extractor against the packaged v1 tiny dump and
 # asserts its RabbitMQ writes in both databases. Operator-gated and disposable.
 smoke-released-fixture:

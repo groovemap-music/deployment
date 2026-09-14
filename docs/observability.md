@@ -440,6 +440,8 @@ closed.
 | `groovemap.api.sync.duration` | `groovemap_api_sync_duration_seconds` | histogram (s) | `outcome` |
 | `groovemap.api.cache` | `groovemap_api_cache_total` | counter | `outcome` (`hit`\|`miss`), `cache` |
 | `groovemap.api.nlq.requests` | `groovemap_api_nlq_requests_total` | counter | `outcome` |
+| `groovemap.api.activity_events` | `groovemap_api_activity_events_total` | counter | `event_type` |
+| `groovemap.api.activity_failures` | `groovemap_api_activity_failures_total` | counter | `outcome` |
 | `groovemap.explore.proxy.duration` | `groovemap_explore_proxy_duration_seconds` | histogram (s) | `http.route`, `outcome` |
 | `groovemap.insights.computation.duration` | `groovemap_insights_computation_duration_seconds` | histogram (s) | `computation`, `outcome` |
 | `groovemap.insights.last_success` | `groovemap_insights_last_success_seconds` | gauge (unix s) | `computation` |
