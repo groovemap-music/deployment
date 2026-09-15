@@ -133,11 +133,18 @@ and polls PostgreSQL and Neo4j for its release, canonical media values, and
 media relationships. This deployment slice complements rather than replaces
 each service repository's real-engine integration tests.
 
-### The canonical media assertion
+### The canonical media and identifier assertion
 
 `just smoke-media` is the end-to-end proof that ADR 0007's canonical `media` block
-survives the whole path from a producer event to both stores. It is a versioned script
-rather than a runbook step, so the claim can be re-made on demand.
+survives the whole path from a producer event to both stores, and that
+[ADR 0011](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md)'s
+identifier path survives it as far as a barcode a person can look up. It is a versioned
+script rather than a runbook step, so both claims can be re-made on demand.
+
+The identifier probes assert behaviour no reviewed image carries yet.
+[Maintenance](maintenance.md#identifier-lookup-smoke-prerequisites) records which images
+have to be released and reviewed first; until then those probes fail, and the failure is a
+missing image rather than a broken stack.
 
 **What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
 approved `ghcr.io/groovemap-music/<repository>@sha256:<manifest-digest>` reference.
@@ -147,15 +154,21 @@ anything not pinned by digest — a media assertion against images no environmen
 prove nothing. `.env` is untracked and must never be committed.
 
 **What it starts**: the schema initializer, RabbitMQ, PostgreSQL, Neo4j, both SQL loaders,
-and both graph enrichers, under the Compose project `groovemap-media-smoke` with
-`docker-compose.media-smoke.yml`. The extractors never run. A smoke stack has no dumps to
-download, so the run publishes the release events itself.
+both graph enrichers, and the catalog API, under the Compose project
+`groovemap-media-smoke` with `docker-compose.media-smoke.yml`. The extractors never run. A
+smoke stack has no dumps to download, so the run publishes the release events itself. The
+API is there for one request: a minted alias is only worth having if something resolves
+through it, and the erasure smoke — the other stack that runs the API — has no broker and
+no loaders, so it could only look up a row it had inserted itself.
 
 **What it publishes**: the two producers' contract fixtures, promoted verbatim into
 `config/media-smoke/` with their upstream repository, commit, and digest recorded in
 `config/provenance.json`. The run rewrites only the identity fields the stores constrain —
 the Discogs release id, the MusicBrainz release UUID, and the Discogs id the MusicBrainz
-release matches on — and never the media block. Each event is published onto its producer's
+release matches on — and adds the Discogs release's country, which is a raw passthrough
+field rather than a canonical block and so is absent from the producer's representative
+fixture. It never edits the `media`, `identifiers`, or `companies` blocks. Each event is
+published onto its producer's
 durable fanout exchange through the RabbitMQ management API, after every contract queue has
 bound a consumer, because a fanout exchange drops a message that reaches no queue.
 
@@ -168,7 +181,19 @@ bound a consumer, because a fanout exchange drops a message that reaches no queu
 - Neo4j carries `Medium` and `MediaFamily` nodes joined by `IN_FAMILY`;
 - the release is joined to its medium by `ISSUED_ON {source: 'discogs'}`, and by
   `ISSUED_ON {source: 'musicbrainz'}` once the MusicBrainz enricher matches it — which is
-  what shows both catalogs' media reconciling onto one release node.
+  what shows both catalogs' media reconciling onto one release node;
+- exactly one currently valid `provider_aliases` row carries the normalized barcode, and
+  its `native_id` is the `releases.gm_item_id` the published release resolved to;
+- the release is credited to the pressing plant by
+  `CREDITED_TO {role_category: 'pressing', source: 'discogs'}` and the `Company` node
+  carries the name the event published;
+- `Release.country` is the country the event published;
+- `GET /api/lookup/barcode/<value as printed>` answers 200, normalises the value to the
+  same `external_id` the alias is keyed on, and names the release.
+
+The lookup probe deliberately sends the barcode **as printed**, grouping spaces and all.
+The endpoint normalises with the namespace's own rule, and sending an already normalized
+value would leave that rule untested.
 
 Every assertion is polled to a deadline, because both loaders and both enrichers batch
 their writes behind a flush interval. The run prints one `PASS`/`FAIL` line per assertion
@@ -177,11 +202,12 @@ and exits non-zero if any of them failed.
 **What it leaves behind**: nothing. The run tears its own stack down with
 `docker compose --project-name groovemap-media-smoke down --volumes --remove-orphans` from
 an exit trap, including on failure. Its own project name is what keeps it away from an
-operator's volumes; its own subnet, its own container names, and a single loopback-bound
-broker port keep it away from a running environment.
+operator's volumes; its own subnet, its own container names, and two loopback-bound ports —
+the broker's management API and the catalog API — keep it away from a running environment.
 
 **Knobs**, all optional and all environment variables: `SMOKE_MEDIA_PROJECT`,
-`SMOKE_MEDIA_ENV_FILE`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_TIMEOUT`,
+`SMOKE_MEDIA_ENV_FILE`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_API_PORT`,
+`SMOKE_MEDIA_TIMEOUT`,
 `SMOKE_MEDIA_SUBNET`, and `SMOKE_MEDIA_SERVICE_PLATFORM`. The last one matters when the
 workstation's architecture is not the one the internal images are published for; it applies
 only to those services, so the broker and both stores stay native.
@@ -196,7 +222,7 @@ claim can be re-made on demand.
 
 **What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
 approved `ghcr.io/groovemap-music/<repository>@sha256:<manifest-digest>` reference, the same
-requirement [`just smoke-media`](#the-canonical-media-assertion) has.
+requirement [`just smoke-media`](#the-canonical-media-and-identifier-assertion) has.
 [Maintenance](maintenance.md) records the promoted digests. `scripts/smoke-erasure.sh` refuses
 to start if a variable still holds an `.env.example` placeholder, a `config/validation.env`
 digest, or anything not pinned by digest, and refuses an `.env` that declares no `*_IMAGE`

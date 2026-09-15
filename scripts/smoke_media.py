@@ -1,10 +1,20 @@
-"""Assert the canonical media block on a disposable smoke stack.
+"""Assert the canonical media block and the identifier path on a disposable smoke stack.
 
 The run publishes promoted producer fixtures, waits for both SQL loaders and
 both graph enrichers, and checks each store using reserved run-owned IDs. Those
 IDs prevent stale data in a reused volume from satisfying the assertions.
 Polling accounts for consumer batch intervals; stack lifecycle remains in the
 operator-approved ``smoke-media.sh`` adapter.
+
+Two claims are asserted against the same published event. ADR 0007's canonical ``media``
+block reaching both stores is the first. ADR 0011's identifier path is the second: the
+release's ``identifiers`` and ``companies`` blocks and its country have to become a
+``provider_aliases`` row keyed on the release's native id, a ``CREDITED_TO`` edge to a
+``Company`` node, a ``Release.country`` property, and an answer from
+``GET /api/lookup/barcode/{value}``. That last hop is why this stack publishes the catalog
+API on loopback: the alias is only worth minting if something resolves through it, and the
+erasure smoke — the other stack that runs the API — has no broker and no loaders, so it
+could only assert a row it inserted itself.
 """
 
 from __future__ import annotations
@@ -18,6 +28,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +46,44 @@ FIXTURES = ROOT / "config" / "media-smoke"
 # smoke run can never be mistaken for, or collide with, promoted production data.
 DISCOGS_RELEASE_ID = "999000001"
 MUSICBRAINZ_RELEASE_MBID = "f0f0f0f0-0000-4000-8000-000000009001"
+
+# The release's country. Unlike `media`, `identifiers`, and `companies`, country is not a
+# canonical block the producer computes — it is the raw Discogs field carried through
+# untouched, which ADR 0011 projects onto `Release.country`. The producer's representative
+# contract fixture documents the blocks its mappers produce and so carries no country at
+# all, which is why the event builder supplies one here exactly as it supplies the reserved
+# release id, rather than this repository editing a promoted fixture.
+DISCOGS_RELEASE_COUNTRY = "UK"
+
+# ADR 0011 mints three of the seven identifier types into ADR 0009 alias namespaces. This
+# run resolves through `barcode`, the one a person holding the record can read off the
+# sleeve, and the only one whose normalized value — digits only — is identifier-shaped
+# enough for `quote_literal` to inline. `matrix` rides in the same block and is asserted as
+# part of the published event rather than as a store query.
+BARCODE_PROVIDER = "barcode"
+MATRIX_PROVIDER = "matrix"
+
+# Which canonical identifier type each alias namespace is minted from. The namespace and
+# the type are deliberately not the same word for matrix inscriptions, so the lookup probe
+# needs the mapping to find the value as printed rather than the value as normalized.
+ALIAS_IDENTIFIER_TYPES = {
+    BARCODE_PROVIDER: "barcode",
+    MATRIX_PROVIDER: "matrix_runout",
+    "catalog_number": "catalog_number",
+}
+
+# `provider_aliases` is keyed on (provider, entity_kind, external_id) over the currently
+# valid row. Every alias an identifiers block mints is a release alias.
+ALIAS_ENTITY_KIND = "release"
+
+# The manufacturing credit the CREDITED_TO probe asserts. The vendored company-role
+# vocabulary puts a pressing plant under `pressing`, which is the category the
+# pressing-chain lens is built on.
+PRESSING_ROLE_CATEGORY = "pressing"
+
+# The provenance the Discogs graph enricher stamps on every edge it writes, so a credit a
+# second catalog asserts on the same release is distinguishable from this one.
+COMPANY_SOURCE = "discogs"
 
 # The producers own these names; the promoted contracts pin them. `runtime_identifiers`
 # in each producer's contract.json is the source of truth reproduced here.
@@ -77,6 +126,58 @@ class Check:
     detail: str
 
 
+@dataclass(frozen=True)
+class Response:
+    """One answer from a disposable stack's API."""
+
+    status: int
+    body: str
+    media_type: str
+
+    def json(self) -> Any:
+        """Return the parsed body, refusing anything that is not JSON."""
+        try:
+            return json.loads(self.body)
+        except json.JSONDecodeError as error:
+            raise SmokeError(f"expected a JSON body, got {self.body[:200]!r}") from error
+
+
+class ApiClient:
+    """A disposable stack's catalog API, over the one loopback port its overlay publishes.
+
+    Every method returns the status rather than raising on it, because a wrong status is a
+    fact a run wants to report as a failed assertion, not an exception that loses it. Only
+    a transport failure raises, and a probe that expects the API to still be starting
+    catches it rather than letting it end the run.
+
+    It lives here beside `Stack` rather than in either asserter because both smokes drive
+    the same API over the same loopback shape: the erasure run registers and erases an
+    account, and the media run resolves a barcode through `GET /api/lookup`.
+    """
+
+    def __init__(self, base_url: str, timeout: float = 30.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def request(self, method: str, path: str, *, body: Any = None, token: str | None = None) -> Response:
+        """Perform one request against the stack's API and return its whole response."""
+        headers = {"Accept": "*/*"}
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)  # noqa: S310
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
+                return Response(response.status, response.read().decode(), response.headers.get_content_type())
+        except urllib.error.HTTPError as error:
+            return Response(error.code, error.read().decode(), error.headers.get_content_type() if error.headers else "")
+        except urllib.error.URLError as error:
+            raise SmokeError(f"{method} {path} could not reach the stack's API: {error.reason}") from error
+
+
 def quote_literal(value: str) -> str:
     """Return a value safe to inline into SQL and Cypher, refusing anything that is not.
 
@@ -111,10 +212,18 @@ def load_fixture(name: str) -> dict[str, Any]:
     return fixture
 
 
-def discogs_event(fixture: dict[str, Any], release_id: str = DISCOGS_RELEASE_ID) -> dict[str, Any]:
-    """Return the Discogs release event to publish, in the contract's envelope."""
+def discogs_event(fixture: dict[str, Any], release_id: str = DISCOGS_RELEASE_ID, country: str = DISCOGS_RELEASE_COUNTRY) -> dict[str, Any]:
+    """Return the Discogs release event to publish, in the contract's envelope.
+
+    `country` is added rather than promoted. The producer's contract fixture documents the
+    canonical blocks its mappers compute, and country is not one of them — it is a raw
+    Discogs field that travels untouched — so the fixture carries none and the graph
+    enricher would have nothing to project onto `Release.country`. The digest is taken
+    afterwards so it covers the country the same way it covers the blocks.
+    """
     event = dict(fixture)
     event["id"] = release_id
+    event["country"] = country
     event["sha256"] = payload_sha256(event)
     return event
 
@@ -146,6 +255,59 @@ def media_families(event: dict[str, Any]) -> list[str]:
 def media_medium_ids(event: dict[str, Any]) -> list[str]:
     """Return the canonical medium ids the event's media block asserts."""
     return sorted({str(item["medium"]) for item in event["media"]["items"]})
+
+
+def alias_external_id(event: dict[str, Any], provider: str) -> str:
+    """Return the normalized value the event's identifiers block mints in one namespace.
+
+    The producer derives the aliases at the normalization boundary and publishes them
+    beside the items, so this reads the value the loader will key a `provider_aliases` row
+    on rather than re-implementing the namespace's normalization rule here. A namespace the
+    block mints nothing into is an error: a probe built on an absent alias would assert
+    against an empty string and pass for the wrong reason.
+    """
+    for alias in event["identifiers"]["aliases"]:
+        if alias.get("provider") == provider:
+            return str(alias["external_id"])
+    raise SmokeError(f"the event's identifiers block mints no {provider} alias")
+
+
+def identifier_value(event: dict[str, Any], provider: str) -> str:
+    """Return the identifier as printed on the release for one alias namespace.
+
+    This is what a person reads off a sleeve and types into lookup — grouping spaces and
+    all — as opposed to the normalized `external_id` the alias row is keyed on.
+    """
+    item_type = ALIAS_IDENTIFIER_TYPES[provider]
+    for item in event["identifiers"]["items"]:
+        if item.get("type") == item_type:
+            return str(item["value"])
+    raise SmokeError(f"the event's identifiers block carries no {item_type} identifier")
+
+
+def pressing_credit(event: dict[str, Any]) -> dict[str, Any]:
+    """Return the manufacturing credit the `CREDITED_TO` probe asserts.
+
+    One entry, chosen by role category rather than by position, so a fixture that gains or
+    reorders credits upstream still names the pressing plant this run asserts.
+    """
+    for item in event["companies"]["items"]:
+        if item.get("role_category") == PRESSING_ROLE_CATEGORY:
+            return dict(item)
+    raise SmokeError(f"the event's companies block carries no {PRESSING_ROLE_CATEGORY} credit")
+
+
+def company_id(credit: dict[str, Any]) -> str:
+    """Return the `Company.id` the graph enricher keys one companies entry on.
+
+    The Discogs id is the identity whenever the source gives one, stringified: the dump
+    states it as element text and the API as a number, and the uniqueness constraint has to
+    see one value for both.
+    """
+    discogs_id = credit.get("discogs_id")
+    if not isinstance(discogs_id, int) or isinstance(discogs_id, bool) or discogs_id < 1:
+        raise SmokeError(f"the asserted company credit carries no usable Discogs id: {discogs_id!r}")
+    return str(discogs_id)
 
 
 def render(checks: Sequence[Check], subject: str = "media") -> str:
@@ -340,6 +502,27 @@ def _counts(stack: Stack, name: str, query: str, description: str) -> Callable[[
     return probe
 
 
+def _graph_value_matches(stack: Stack, name: str, query: str, expected: Any, subject: str) -> Callable[[], Check]:
+    """Return a probe asserting one Cypher answer is the value the event asserts.
+
+    The enricher having written nothing at all is a failure, not an absence the report can
+    shrug at: it is exactly what a run whose write never landed looks like.
+    """
+
+    def probe() -> Check:
+        value = stack.cypher(query)
+        try:
+            actual = json.loads(value) if value else None
+        except json.JSONDecodeError:
+            # cypher-shell renders strings and lists of strings as JSON, so anything else
+            # is a value worth reporting verbatim rather than discarding as a parse failure.
+            actual = value
+        rendered = value if value else "nothing"
+        return Check(name, actual == expected, f"{subject} = {rendered}, event asserts {json.dumps(expected)}")
+
+    return probe
+
+
 def _graph_families_match(stack: Stack, name: str, release_id: str, expected: list[str]) -> Callable[[], Check]:
     """Return a probe asserting the release node's `media_families` matches the event's.
 
@@ -348,19 +531,176 @@ def _graph_families_match(stack: Stack, name: str, release_id: str, expected: li
     same canonical block the SQL loader stores, which makes it the graph-side statement of
     the fact `releases.media->'families'` already asserts in PostgreSQL.
     """
+    return _graph_value_matches(
+        stack,
+        name,
+        f"MATCH (r:Release {{id: {release_id}}}) RETURN r.media_families AS value",
+        expected,
+        f"(:Release {{id: {release_id}}}).media_families",
+    )
+
+
+def _alias_row_minted(stack: Stack, name: str, provider: str, external_id: str) -> Callable[[], Check]:
+    """Return a probe asserting exactly one currently valid alias row carries this value.
+
+    Exactly one, not at least one: `provider_aliases` is unique over
+    (provider, entity_kind, external_id) among rows with `valid_to IS NULL`, so a second
+    row would mean the loader minted a duplicate the constraint was meant to prevent.
+    """
+    predicate = (
+        f"provider = {quote_literal(provider)} "
+        f"AND entity_kind = {quote_literal(ALIAS_ENTITY_KIND)} "
+        f"AND external_id = {quote_literal(external_id)} "
+        "AND valid_to IS NULL"
+    )
 
     def probe() -> Check:
-        value = stack.cypher(f"MATCH (r:Release {{id: {release_id}}}) RETURN r.media_families AS value")
-        try:
-            actual = json.loads(value) if value else None
-        except json.JSONDecodeError:
-            # cypher-shell renders a list of strings as JSON, so anything else is a value
-            # worth reporting verbatim rather than discarding as a parse failure.
-            actual = value
-        rendered = value if value else "nothing"
-        return Check(name, actual == expected, f"(:Release {{id: {release_id}}}).media_families = {rendered}, event asserts {json.dumps(expected)}")
+        value = stack.psql(f"SELECT count(*) FROM provider_aliases WHERE {predicate}")  # noqa: S608
+        count = int(value) if value.isdigit() else 0
+        return Check(name, count == 1, f"count(provider_aliases WHERE provider = {provider}, external_id = {external_id}) -> {count}, expected 1")
 
     return probe
+
+
+def _alias_points_at_the_release(stack: Stack, name: str, provider: str, external_id: str, release_key: str) -> Callable[[], Check]:
+    """Return a probe asserting the alias resolves to the release this run published.
+
+    A minted row proves the loader read the identifiers block; it does not prove the row
+    was attached to the right item. ADR 0009 makes `releases.gm_item_id` the native id the
+    Discogs release resolved to, so the alias is only useful if its `native_id` is that
+    same id. `gm_item_id IS NOT NULL` is asserted in the same expression because two NULLs
+    do not compare equal in SQL and would leave the comparison NULL rather than false.
+    """
+    predicate = (
+        f"a.provider = {quote_literal(provider)} "
+        f"AND a.entity_kind = {quote_literal(ALIAS_ENTITY_KIND)} "
+        f"AND a.external_id = {quote_literal(external_id)} "
+        "AND a.valid_to IS NULL"
+    )
+    sql = (
+        "SELECT a.native_id = r.gm_item_id AND r.gm_item_id IS NOT NULL "  # noqa: S608
+        f"FROM provider_aliases a CROSS JOIN releases r WHERE r.data_id = {release_key} AND {predicate}"
+    )
+
+    def probe() -> Check:
+        value = stack.psql(sql)
+        if value == "":
+            return Check(name, False, f"no {provider} alias for {external_id} beside a releases row for {release_key}")
+        return Check(name, value == "t", f"provider_aliases.native_id = releases.gm_item_id for {release_key} -> {value}")
+
+    return probe
+
+
+def _credited_to_company(stack: Stack, name: str, release_id: str, credit: dict[str, Any]) -> Callable[[], Check]:
+    """Return a probe asserting the release is credited to the company under its role.
+
+    The company id, the role category, and this provider's `source` are all in the match
+    pattern, so the traversal proves the edge ADR 0011 specifies rather than any edge; the
+    company's name is what comes back, so the node is asserted to be the right one and not
+    just a node bearing the right id.
+    """
+    identity = quote_literal(company_id(credit))
+    expected_name = str(credit["name"])
+    query = (
+        f"MATCH (:Release {{id: {release_id}}})"
+        f"-[:CREDITED_TO {{role_category: {quote_literal(PRESSING_ROLE_CATEGORY)}, source: {quote_literal(COMPANY_SOURCE)}}}]->"
+        f"(c:Company {{id: {identity}}}) RETURN c.name AS value"
+    )
+    return _graph_value_matches(
+        stack, name, query, expected_name, f"(:Release {{id: {release_id}}})-[:CREDITED_TO]->(:Company {{id: {identity}}}).name"
+    )
+
+
+def _release_country(stack: Stack, name: str, release_id: str, country: str) -> Callable[[], Check]:
+    """Return a probe asserting the release node carries the country the event published."""
+    return _graph_value_matches(
+        stack,
+        name,
+        f"MATCH (r:Release {{id: {release_id}}}) RETURN r.country AS value",
+        country,
+        f"(:Release {{id: {release_id}}}).country",
+    )
+
+
+def _lookup_resolves(api: ApiClient, name: str, provider: str, value: str, external_id: str, release_id: str) -> Callable[[], Check]:
+    """Return a probe asserting the API resolves the printed identifier to this release.
+
+    This is the hop that makes the alias worth minting: the two store probes above prove a
+    row and an edge exist, and only this one proves a person holding the record can get
+    back to it. ADR 0011 has the endpoint normalise the value with the namespace's own
+    rule, so the probe sends the value **as printed**, spaces and all, and asserts the
+    `normalized` field equals the `external_id` the producer derived — sending the already
+    normalized value would leave the endpoint's normalisation untested.
+
+    The `releases` entries are read tolerantly. The endpoint ships in wave 3 and its per
+    release shape is not pinned by a promoted contract this repository holds, so the probe
+    asserts the fact ADR 0011 states — the release comes back — without asserting a field
+    layout it would have to guess.
+    """
+    path = f"/api/lookup/{urllib.parse.quote(provider, safe='')}/{urllib.parse.quote(value, safe='')}"
+
+    def probe() -> Check:
+        try:
+            response = api.request("GET", path)
+        except SmokeError as error:
+            # The stack publishes the API without waiting on its healthcheck, so a refused
+            # connection is a not-yet rather than a verdict; `wait_for` re-evaluates.
+            return Check(name, False, f"GET {path} -> {error}")
+        if response.status != 200:
+            return Check(name, False, f"GET {path} -> {response.status}, expected 200")
+        try:
+            payload = response.json()
+        except SmokeError as error:
+            return Check(name, False, f"GET {path} -> {error}")
+        if not isinstance(payload, dict):
+            return Check(name, False, f"GET {path} -> {type(payload).__name__}, expected an object")
+        normalized = payload.get("normalized")
+        resolved = _release_ids(payload.get("releases"))
+        matched = normalized == external_id and bool(payload.get("gm_id")) and release_id in resolved
+        detail = (
+            f"GET {path} -> normalized {json.dumps(normalized)}, gm_id {json.dumps(payload.get('gm_id'))}, releases {json.dumps(sorted(resolved))}"
+        )
+        return Check(name, matched, f"{detail}; expected normalized {json.dumps(external_id)}, a gm_id, and release {release_id}")
+
+    return probe
+
+
+def _release_ids(releases: Any) -> set[str]:
+    """Return the release identifiers a lookup answer names, in whatever shape it names them."""
+    if not isinstance(releases, list):
+        return set()
+    found: set[str] = set()
+    for entry in releases:
+        if isinstance(entry, dict):
+            found.update(str(entry[key]) for key in ("id", "data_id", "discogs_id", "release_id") if entry.get(key) is not None)
+        elif entry is not None:
+            found.add(str(entry))
+    return found
+
+
+def identifier_probes(stack: Stack, api: ApiClient, event: dict[str, Any]) -> list[Callable[[], Check]]:
+    """Return every assertion ADR 0011's identifier path must satisfy for this event.
+
+    These are separate from `discogs_probes` because they are asserted only on the path
+    that publishes the promoted contract fixtures. The packaged extractor fixture the
+    released-fixture smoke replays documents the media block, its stack runs no API, and a
+    probe that quietly became a no-op there would be worse than one that is not offered.
+
+    Every probe names an id this run's own event carries — the release id, the barcode the
+    producer derived, or the credited company's Discogs id — for the same reason the media
+    probes do: an unscoped count is answered by whatever a reused volume already held.
+    """
+    release_id = quote_literal(str(event["id"]))
+    barcode = alias_external_id(event, BARCODE_PROVIDER)
+    printed_barcode = identifier_value(event, BARCODE_PROVIDER)
+    credit = pressing_credit(event)
+    return [
+        _alias_row_minted(stack, f"postgres {BARCODE_PROVIDER} alias row", BARCODE_PROVIDER, barcode),
+        _alias_points_at_the_release(stack, f"postgres {BARCODE_PROVIDER} alias native id", BARCODE_PROVIDER, barcode, release_id),
+        _credited_to_company(stack, f"neo4j CREDITED_TO {credit['name']}", release_id, credit),
+        _release_country(stack, "neo4j Release country", release_id, str(event["country"])),
+        _lookup_resolves(api, f"api lookup {BARCODE_PROVIDER}", BARCODE_PROVIDER, printed_barcode, barcode, str(event["id"])),
+    ]
 
 
 def discogs_probes(stack: Stack, event: dict[str, Any]) -> list[Callable[[], Check]]:
@@ -443,10 +783,11 @@ def musicbrainz_probes(stack: Stack, event: dict[str, Any], discogs_release_id: 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the arguments `scripts/smoke-media.sh` passes in."""
-    parser = argparse.ArgumentParser(description="Assert the ADR 0007 canonical media block end to end.")
+    parser = argparse.ArgumentParser(description="Assert the ADR 0007 canonical media block and the ADR 0011 identifier path end to end.")
     parser.add_argument("--project", required=True, help="Compose project name of the disposable smoke stack")
     parser.add_argument("--compose-file", action="append", required=True, dest="compose_files", help="Compose file, repeatable and order-significant")
     parser.add_argument("--broker-port", type=int, required=True, help="Published loopback port of the RabbitMQ management API")
+    parser.add_argument("--api-port", type=int, help="Published loopback port of the catalog API, required unless --extractor-service is given")
     parser.add_argument("--env-file", help="Environment file used to resolve digest-pinned Compose images")
     parser.add_argument("--extractor-service", help="Run this one-shot extractor instead of publishing promoted event fixtures")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each stage before failing")
@@ -480,6 +821,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(render(results))
         return exit_code(results)
 
+    if args.api_port is None:
+        # The identifier path ends at the API. A run that could not ask it would report a
+        # tidy set of store assertions and silently drop the one hop that makes the alias
+        # worth minting, so it refuses to start rather than assert less than it claims.
+        raise SmokeError("--api-port is required: the identifier assertion resolves a barcode through the stack's catalog API")
+    api = ApiClient(f"http://127.0.0.1:{args.api_port}", timeout=min(args.timeout, 120.0))
+
     discogs = discogs_event(load_fixture("discogs-releases.data.json"))
     musicbrainz = musicbrainz_event(load_fixture("musicbrainz-releases.data.json"))
 
@@ -491,9 +839,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Discogs enricher already put in the graph (ADR 0007, "Storage").
     print(f"publishing the promoted Discogs fixture as release {discogs['id']} onto {DISCOGS_EXCHANGE}")
     stack.publish(DISCOGS_EXCHANGE, discogs)
-    discogs_results = wait_for(discogs_probes(stack, discogs), time.monotonic() + args.timeout)
+    discogs_results = wait_for([*discogs_probes(stack, discogs), *identifier_probes(stack, api, discogs)], time.monotonic() + args.timeout)
     if not all(result.passed for result in discogs_results):
-        print(render(discogs_results))
+        print(render(discogs_results, "media and identifier"))
         return 1
 
     print(f"publishing the promoted MusicBrainz fixture as release {musicbrainz['id']} onto {MUSICBRAINZ_EXCHANGE}")
@@ -501,7 +849,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     musicbrainz_results = wait_for(musicbrainz_probes(stack, musicbrainz, str(discogs["id"])), time.monotonic() + args.timeout)
 
     results = discogs_results + musicbrainz_results
-    print(render(results))
+    print(render(results, "media and identifier"))
     return exit_code(results)
 
 

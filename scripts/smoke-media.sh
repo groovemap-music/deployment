@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Operator-approved, disposable end-to-end assertion that the ADR 0007 canonical media
-# block reaches both stores. It starts containers and destroys their volumes on exit, so
-# it never runs inside `just check` or CI. See docs/testing-guide.md.
+# block reaches both stores and that the ADR 0011 identifier path reaches the alias table,
+# the graph, and the lookup endpoint. It starts containers and destroys their volumes on
+# exit, so it never runs inside `just check` or CI. See docs/testing-guide.md.
 set -euo pipefail
 
 project="${SMOKE_MEDIA_PROJECT:-groovemap-media-smoke}"
 broker_port="${SMOKE_MEDIA_RABBITMQ_PORT:-15673}"
+api_port="${SMOKE_MEDIA_API_PORT:-18005}"
 timeout="${SMOKE_MEDIA_TIMEOUT:-300}"
 env_file="${SMOKE_MEDIA_ENV_FILE:-.env}"
 
 # The stack the assertion needs. Compose starts each service's declared dependencies, so
 # this pulls in the schema initializer, the broker, and both stores. The extractors are
 # deliberately absent: this run publishes the producers' promoted contract fixtures itself
-# instead of downloading a dump.
-services=(tableinator brainztableinator graphinator brainzgraphinator)
+# instead of downloading a dump. The catalog API is named because the identifier assertion
+# ends at `GET /api/lookup/barcode/...`, which nothing else in this stack would start.
+services=(tableinator brainztableinator graphinator brainzgraphinator api)
 
 compose=(
   docker compose
@@ -77,4 +80,5 @@ uv run python scripts/smoke_media.py \
   --compose-file docker-compose.yml \
   --compose-file docker-compose.media-smoke.yml \
   --broker-port "$broker_port" \
+  --api-port "$api_port" \
   --timeout "$timeout"

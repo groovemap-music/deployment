@@ -3,12 +3,19 @@
 # Disposable overlay for the ADR 0007 canonical-media assertion (`just smoke-media`).
 #
 # The run injects the producers' promoted contract fixture events instead of
-# downloading real dumps, so it needs one reachable broker endpoint and nothing
-# else. Everything here exists so the run cannot touch, or be blocked by, an
-# operator's environment: it takes its own Compose project name, its own subnet,
-# Compose's project-scoped container names instead of the fixed ones, and no
-# published port except the RabbitMQ management API on loopback. PostgreSQL and
-# Neo4j stay unpublished; the assertions reach them through `docker compose exec`.
+# downloading real dumps, so it needs the broker endpoint to publish them and the
+# catalog API's endpoint to resolve the barcode they carry (ADR 0011). Everything
+# here exists so the run cannot touch, or be blocked by, an operator's
+# environment: it takes its own Compose project name, its own subnet, Compose's
+# project-scoped container names instead of the fixed ones, and no published port
+# except the RabbitMQ management API and the API, both on loopback. PostgreSQL,
+# Neo4j, and Redis stay unpublished; the assertions reach them through
+# `docker compose exec`.
+#
+# The API is here rather than the barcode lookup being asserted in the erasure
+# smoke: that stack runs the API but no broker and no loaders, so it could only
+# look up an alias row it had inserted itself, which proves nothing about the
+# path from a published release event to a resolvable identifier.
 #
 # The internal images are published for one architecture, so the workstation
 # running the assertion is often not the architecture the services ship for.
@@ -57,6 +64,14 @@ services:
   brainzgraphinator:
     container_name: !reset null
     platform: *service-platform
+  # The catalog API, for the one lookup the identifier assertion ends at. The
+  # health port stays unpublished: Compose's own `--wait` reads the
+  # container-side healthcheck.
+  api:
+    container_name: !reset null
+    platform: *service-platform
+    ports: !override
+      - "127.0.0.1:${SMOKE_MEDIA_API_PORT:-18005}:8004"
 
 # The base network pins a fixed subnet so operators can reason about container
 # addresses. A smoke run under its own project name would ask for that same
