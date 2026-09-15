@@ -14,8 +14,8 @@ in reverse — and every store is asserted to hold the data *before* the erasure
 absence probe cannot pass because the arrangement silently never happened.
 
 The stack lifecycle stays in the operator-approved ``smoke-erasure.sh`` adapter; the
-Compose, PostgreSQL, and Neo4j plumbing, the ``Check`` record, and the report are reused
-from ``smoke_media`` so both assertions report a run the same way.
+Compose, PostgreSQL, and Neo4j plumbing, the loopback API client, the ``Check`` record, and
+the report are reused from ``smoke_media`` so both assertions report a run the same way.
 """
 
 from __future__ import annotations
@@ -25,14 +25,16 @@ import json
 import secrets
 import sys
 import time
-import urllib.error
-import urllib.request
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+# `ApiClient` and `Response` come from `smoke_media` beside `Stack`: both smokes drive the
+# same API over the same published loopback port, so the transport is shared plumbing
+# rather than this run's own. Importing them by name re-exports them here, which is where a
+# reader of the erasure assertion expects to find the client it uses.
 import smoke_media
-from smoke_media import Check, SmokeError, exit_code, quote_literal, render, wait_for
+from smoke_media import ApiClient, Check, Response, SmokeError, exit_code, quote_literal, render, wait_for
 
 
 if TYPE_CHECKING:
@@ -91,57 +93,11 @@ POSTGRES_DATABASE = "groovemap"
 
 
 @dataclass(frozen=True)
-class Response:
-    """One answer from the disposable stack's API."""
-
-    status: int
-    body: str
-    media_type: str
-
-    def json(self) -> Any:
-        """Return the parsed body, refusing anything that is not JSON."""
-        try:
-            return json.loads(self.body)
-        except json.JSONDecodeError as error:
-            raise SmokeError(f"expected a JSON body, got {self.body[:200]!r}") from error
-
-
-@dataclass(frozen=True)
 class ExportLine:
     """One NDJSON line of the export: a kind, and the row it carries."""
 
     kind: str
     record: dict[str, Any]
-
-
-class ApiClient:
-    """The disposable stack's catalog API, over the one loopback port the overlay publishes.
-
-    Every method returns the status rather than raising on it, because a wrong status is a
-    fact this run wants to report as a failed assertion, not an exception that loses it.
-    """
-
-    def __init__(self, base_url: str, timeout: float = 30.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-    def request(self, method: str, path: str, *, body: Any = None, token: str | None = None) -> Response:
-        """Perform one request against the stack's API and return its whole response."""
-        headers = {"Accept": "*/*"}
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-        if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)  # noqa: S310
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
-                return Response(response.status, response.read().decode(), response.headers.get_content_type())
-        except urllib.error.HTTPError as error:
-            return Response(error.code, error.read().decode(), error.headers.get_content_type() if error.headers else "")
-        except urllib.error.URLError as error:
-            raise SmokeError(f"{method} {path} could not reach the stack's API: {error.reason}") from error
 
 
 def expect(response: Response, status: int, what: str) -> Response:
