@@ -56,8 +56,8 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "35e1ef9fbd7506dd67f93f6733dbf689ac5f1bda4f2b7ff24859b8a2115218de",  # database-schema v0.2.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "3483fb912c94f79076b4010043fb074eda3cdbb1299d3080887d6709590501d7",  # catalog-api v0.1.1  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c",  # database-schema v0.3.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb",  # catalog-api v0.2.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c",  # discogs-ingestion v0.3.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37",  # musicbrainz-ingestion v0.2.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b",  # discogs-graph-enricher v0.2.0  gitleaks:allow
