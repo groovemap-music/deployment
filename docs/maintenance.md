@@ -37,21 +37,16 @@ sibling build context to this repository.
 The native-identity and first-party-events program
 ([ADR 0009](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md),
 [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md))
-changed both `catalog-api` and `database-schema`, but neither has a promoted
-image carrying that work yet. The recorded
-`CATALOG_API_IMAGE` digest in `scripts/check-images.py` is `catalog-api`
-`v0.1.1`, and the recorded `DATABASE_SCHEMA_IMAGE` digest in
-[Recorded release digests](#recorded-release-digests) is `database-schema`
-`v0.2.0`; both tags predate the identity and activity changes and are stale
-relative to them.
+changed both `catalog-api` and `database-schema`. Both releases are now cut:
+`database-schema` `v0.3.0` and `catalog-api` `v0.2.0` carry the identity and
+activity work, and their manifest digests are recorded as reviewed in
+`scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` and in
+[Recorded release digests](#recorded-release-digests) below.
 
-Promoting either service to a build that includes this work is a separate
-release step, not part of this documentation change: the owning repository
-cuts a new `v*` tag under its own release approval, and the
-[Promote a service release](#promote-a-service-release) procedure above
-resolves its digest and updates the environment `.env`. `scripts/check-images.py`'s
-`RELEASED_IMAGE_DIGESTS` and this file's recorded-digest tables are updated
-from that reviewed release, not before.
+Recording a digest as reviewed is not an instruction to deploy it. Applying
+either image to a live environment is a separate operator step: follow
+[Promote a service release](#promote-a-service-release) above to update the
+target environment's `.env` and obtain approval for that environment.
 
 ## Per-source extractor cutover
 
@@ -99,15 +94,22 @@ Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 
-Matching consumer and schema images (`v0.2.0`):
+Matching consumer and schema images (`v0.2.0`, except `database-schema`
+`v0.3.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:35e1ef9fbd7506dd67f93f6733dbf689ac5f1bda4f2b7ff24859b8a2115218de` |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c` |
 | `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c` |
 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
+
+Reviewed catalog API image (`v0.2.0`):
+
+| Variable | Image | Manifest digest |
+| --- | --- | --- |
+| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb` |
 
 These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
