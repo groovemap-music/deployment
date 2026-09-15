@@ -148,6 +148,46 @@ After promoting the media-aware images, backfill deliberately:
 Run one source's force_reprocess to completion before starting the other, so a
 failure is attributable and the retry budget is not spent twice at once.
 
+## Identifier lookup smoke prerequisites
+
+`just smoke-media` asserts two records against one published release event. The
+[ADR 0007](https://github.com/groovemap-music/design/blob/main/docs/adr/0007-canonical-media-taxonomy.md)
+media block reaching both stores is the first, and the catalog-identifiers path
+of
+[ADR 0011](https://github.com/groovemap-music/design/blob/main/docs/adr/0011-catalog-identifiers-and-manufacturing-credits.md)
+is the second: the event's `identifiers` and `companies` blocks and its country
+have to become a `provider_aliases` row keyed on the release's native id, a
+`CREDITED_TO` edge to a `Company` node, a `Release.country` property, and an
+answer from `GET /api/lookup/barcode/{value}`.
+
+The identifier probes therefore assert behaviour that no reviewed image carries
+yet. Until every image below is released **and** recorded as reviewed in
+[Recorded release digests](#recorded-release-digests), a `just smoke-media` run
+fails on those probes, and that failure is a missing image rather than a broken
+stack or a broken environment.
+
+| Wave | Variable | What the probes need from it |
+| --- | --- | --- |
+| 2 | `DATABASE_SCHEMA_IMAGE` | The `data->'identifiers'` and `data->'companies'` GIN indexes, and the `Release.country` range index. |
+| 2 | `DISCOGS_SQL_LOADER_IMAGE` | Minting the `barcode`, `catalog_number`, and `matrix` aliases against the release's `gm_item_id`. |
+| 2 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | The `Company` nodes, the `CREDITED_TO` edges, and `Release.country`. |
+| 3 | `CATALOG_API_IMAGE` | `GET /api/lookup/{provider}/{value}` for the `barcode` and `catalog_number` namespaces. |
+
+Two things this run does **not** need. It needs no producer image: it publishes
+the producers' promoted contract fixtures itself rather than extracting a dump,
+so the identifiers and companies blocks it asserts are the ones the promoted
+fixture in `config/media-smoke/` carries, recorded in `config/provenance.json`.
+And it needs no MusicBrainz-side change: ADR 0011's MusicBrainz work writes
+`mb_country` on releases the Discogs enricher already created, which these
+probes do not assert.
+
+The run publishes the catalog API on `127.0.0.1:18005` for the duration, because
+the lookup hop is the only thing that shows a minted alias actually resolves.
+Override the port with `SMOKE_MEDIA_API_PORT` when 18005 is taken. As with every
+smoke recipe here, the stack is disposable, runs under its own Compose project
+name, and is destroyed with its volumes on exit; recording a digest as reviewed
+is not an instruction to deploy it.
+
 ## Activity partitions and retention
 
 `catalog-api` owns partition creation for the two append-only, month-partitioned

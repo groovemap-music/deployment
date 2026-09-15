@@ -8,10 +8,10 @@
   },
   "media-smoke/discogs-releases.data.json": {
     "owner": "groovemap-music/discogs-ingestion",
-    "producer_commit": "e0d4d0271738ced4547e1410f86cb71f0228c700",
-    "promoted_sha256": "3778573004542c59ddcf2f47feab4228c34b13b6cdea01b11ef26d49b232928f",
+    "producer_commit": "4fec8dd08370dea0e1b54dbf53e920793a22cb3c",
+    "promoted_sha256": "fd7a31f74bd032c56eba782dcf56819bdc772d2d314b2b09bbf0dd37c6f4aaa2",
     "source_path": "contracts/catalog-events/v1/fixtures/discogs-releases.data.json",
-    "source_sha256": "3778573004542c59ddcf2f47feab4228c34b13b6cdea01b11ef26d49b232928f"
+    "source_sha256": "fd7a31f74bd032c56eba782dcf56819bdc772d2d314b2b09bbf0dd37c6f4aaa2"
   },
   "media-smoke/musicbrainz-releases.data.json": {
     "owner": "groovemap-music/musicbrainz-ingestion",
