@@ -43,7 +43,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852
+    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -129,7 +129,7 @@ services:
 
   # Neo4j graph database
   neo4j:
-    image: neo4j:2026-community@sha256:dbc377fb9cd8fe8dabc19d3041b197d5ca0ef8bae514cea175b8df265e5b7a76
+    image: neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -236,7 +236,7 @@ services:
 
   # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
   redis-exporter:
-    image: oliver006/redis_exporter:v1.91.0@sha256:b01dcb400d6a0c14513fc0f7af26908f2d6b6aca1e47debdb9d303f92c37963d
+    image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
     container_name: groovemap-redis-exporter
     hostname: redis-exporter
     environment:
@@ -367,7 +367,7 @@ services:
   # keeps working. It scrapes nothing itself; otel-collector owns all
   # collection and remote-writes here.
   victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd
+    image: victoriametrics/victoria-metrics:v1.152.0@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef
     container_name: groovemap-victoria-metrics
     hostname: victoria-metrics
     command:
@@ -438,7 +438,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
+    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -480,7 +480,7 @@ services:
   # never edited in the UI. Dev enables anonymous Viewer access; the production
   # overlay disables it and sources the admin password from a Docker secret.
   grafana:
-    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
     container_name: groovemap-grafana
     hostname: grafana
     environment:
