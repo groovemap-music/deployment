@@ -76,16 +76,16 @@ RELEASED_IMAGE_DIGESTS = {
 # must appear here.
 THIRD_PARTY_IMAGES = {
     "cadvisor": "gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57",  # gitleaks:allow
-    "grafana": "grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",  # gitleaks:allow
-    "neo4j": "neo4j:2026-community@sha256:dbc377fb9cd8fe8dabc19d3041b197d5ca0ef8bae514cea175b8df265e5b7a76",  # gitleaks:allow
+    "grafana": "grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0",  # gitleaks:allow
+    "neo4j": "neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad",  # gitleaks:allow
     "node-exporter": "prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",  # gitleaks:allow
-    "otel-collector": "otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6",  # gitleaks:allow
+    "otel-collector": "otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1",  # gitleaks:allow
     "postgres": "postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",  # gitleaks:allow
     "postgres-exporter": "prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e",  # gitleaks:allow
-    "rabbitmq": "rabbitmq:4-management@sha256:ffd1b50c522ad20172ffd6716a2f41db375c7269560c8f3fb9a694e210ef0852",  # gitleaks:allow
+    "rabbitmq": "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8",  # gitleaks:allow
     "redis": "redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",  # gitleaks:allow
-    "redis-exporter": "oliver006/redis_exporter:v1.91.0@sha256:b01dcb400d6a0c14513fc0f7af26908f2d6b6aca1e47debdb9d303f92c37963d",  # gitleaks:allow
-    "victoria-metrics": "victoriametrics/victoria-metrics:v1.151.0@sha256:6d164540a04f49ba4e696cbdb70f9fee78be1e94b8f2a1292743a0b1ab8275bd",  # gitleaks:allow
+    "redis-exporter": "oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836",  # gitleaks:allow
+    "victoria-metrics": "victoriametrics/victoria-metrics:v1.152.0@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef",  # gitleaks:allow
     "victoria-traces": "victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd",  # gitleaks:allow
 }
 
