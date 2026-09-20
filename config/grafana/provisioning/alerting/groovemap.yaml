@@ -116,7 +116,6 @@ groups:
         labels:
           severity: critical
 
-      # --- Ingestion and consumers ---------------------------------------
 
       - uid: groovemap-extractor-error-rate-high
         title: ExtractorErrorRateHigh
@@ -299,7 +298,6 @@ groups:
         labels:
           severity: critical
 
-      # --- Application services -------------------------------------------
 
       - uid: groovemap-insights-stale
         title: InsightsStale
@@ -443,7 +441,6 @@ groups:
         labels:
           severity: warning
 
-      # --- Datastores and broker ------------------------------------------
 
       - uid: groovemap-postgres-connections-near-max
         title: PostgresConnectionsNearMax
@@ -585,7 +582,6 @@ groups:
         labels:
           severity: critical
 
-      # --- Containers and host ---------------------------------------------
 
       - uid: groovemap-container-memory-near-limit
         title: ContainerMemoryNearLimit
