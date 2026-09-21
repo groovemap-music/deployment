@@ -641,6 +641,25 @@ def offline_stack(exec_output: str = "", consumers: int = 0, routed: bool = True
     return stack
 
 
+def test_compose_project_directory_is_opt_in_and_shared_by_stack_invocations() -> None:
+    default = smoke_media.Stack("isolated", ["/issue/docker-compose.yml"], env_file="/issue/.env")
+    assert "--project-directory" not in default.compose_argv()
+
+    shared = smoke_media.Stack("isolated", ["/issue/docker-compose.yml"], env_file="/issue/.env", project_directory="/shared")
+    assert shared.compose_argv() == [
+        "docker",
+        "compose",
+        "--project-name",
+        "isolated",
+        "--project-directory",
+        "/shared",
+        "--env-file",
+        "/issue/.env",
+        "-f",
+        "/issue/docker-compose.yml",
+    ]
+
+
 def test_store_output_is_read_as_a_single_scalar_or_nothing() -> None:
     assert offline_stack(exec_output="value\n1\n").cypher("RETURN 1 AS value") == "1"
     # cypher-shell prints the header even when the match found nothing.
@@ -792,6 +811,9 @@ def test_smoke_script_starts_the_api_and_hands_the_run_its_loopback_port() -> No
     assert "services=(tableinator brainztableinator graphinator brainzgraphinator api)" in script
     assert '--api-port "$api_port"' in script
     assert 'api_port="${SMOKE_MEDIA_API_PORT:-18005}"' in script, "the adapter and the overlay must default to one port"
+    assert 'project_directory="${SMOKE_MEDIA_PROJECT_DIRECTORY:-}"' in script
+    assert 'compose+=(--project-directory "$project_directory")' in script
+    assert 'smoke_args+=(--project-directory "$project_directory")' in script
 
 
 def test_maintenance_guide_records_the_images_the_identifier_probes_need() -> None:

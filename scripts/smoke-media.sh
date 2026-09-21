@@ -10,6 +10,8 @@ broker_port="${SMOKE_MEDIA_RABBITMQ_PORT:-15673}"
 api_port="${SMOKE_MEDIA_API_PORT:-18005}"
 timeout="${SMOKE_MEDIA_TIMEOUT:-300}"
 env_file="${SMOKE_MEDIA_ENV_FILE:-.env}"
+project_directory="${SMOKE_MEDIA_PROJECT_DIRECTORY:-}"
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The stack the assertion needs. Compose starts each service's declared dependencies, so
 # this pulls in the schema initializer, the broker, and both stores. The extractors are
@@ -21,10 +23,11 @@ services=(tableinator brainztableinator graphinator brainzgraphinator api)
 compose=(
   docker compose
   --project-name "$project"
-  --env-file "$env_file"
-  -f docker-compose.yml
-  -f docker-compose.media-smoke.yml
 )
+if [[ -n "$project_directory" ]]; then
+  compose+=(--project-directory "$project_directory")
+fi
+compose+=(--env-file "$env_file" -f "$repository_root/docker-compose.yml" -f "$repository_root/docker-compose.media-smoke.yml")
 
 [[ -f "$env_file" ]] || {
   echo "smoke-media: $env_file is missing. The operator provides it: copy .env.example and" >&2
@@ -74,11 +77,17 @@ trap cleanup EXIT
 "${compose[@]}" up -d "${services[@]}"
 "${compose[@]}" ps
 
+smoke_args=()
+if [[ -n "$project_directory" ]]; then
+  smoke_args+=(--project-directory "$project_directory")
+fi
+
 uv run python scripts/smoke_media.py \
+  "${smoke_args[@]}" \
   --project "$project" \
   --env-file "$env_file" \
-  --compose-file docker-compose.yml \
-  --compose-file docker-compose.media-smoke.yml \
+  --compose-file "$repository_root/docker-compose.yml" \
+  --compose-file "$repository_root/docker-compose.media-smoke.yml" \
   --broker-port "$broker_port" \
   --api-port "$api_port" \
   --timeout "$timeout"
