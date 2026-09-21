@@ -146,6 +146,12 @@ The required identifier-capable images are recorded in
 against those reviewed digests to verify the lookup path; this does not promote
 them to a live environment.
 
+If a disposable worktree is outside the Docker host's shared paths, set
+`SMOKE_MEDIA_PROJECT_DIRECTORY` to a host-shared checkout only after verifying
+that every bind-mounted config file needed by this smoke is byte-identical to
+the worktree's file. This opt-in changes Compose bind resolution, not the
+Compose files, images, fixture, project name, or assertion.
+
 **What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
 approved `ghcr.io/groovemap-music/<repository>@sha256:<manifest-digest>` reference.
 [Maintenance](maintenance.md) records the promoted digests. The script refuses to start if a

@@ -124,6 +124,50 @@ These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
 platform other than the one the release workflow published.
 
+### Identifier lookup verification (2026-09-21)
+
+The GHCR tag manifests for `linux/amd64` were checked before the disposable
+smoke. The changed image index digests were:
+
+| Released tag | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `discogs-sql-loader:v0.3.0` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` | `v0.2.0` — `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c` |
+| `discogs-graph-enricher:v0.3.0` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` | `v0.2.0` — `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
+| `catalog-api:v0.4.0` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` | `v0.2.0` — `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb` |
+
+`database-schema:v0.3.0` remained at
+`sha256:6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c`.
+Each tag resolved to its recorded index digest; each index contained a
+`linux/amd64` image manifest. The rollback tags were also re-resolved against
+GHCR, not just copied from an older document.
+
+Run command, from the issue worktree with an ignored, digest-pinned `.env`:
+
+```sh
+env -u DOCKER_DEFAULT_PLATFORM \
+  SMOKE_MEDIA_PROJECT=groovemap-id-87i1-smoke4 \
+  SMOKE_MEDIA_PROJECT_DIRECTORY=/Users/Robert/workspaces/github/groovemap-music/deployment \
+  SMOKE_MEDIA_ENV_FILE="$PWD/.env" just smoke-media
+```
+
+The shared project directory was used only to resolve two read-only Compose
+binds (`config/rabbitmq-enabled-plugins` and `config/otel-collector.yaml`),
+whose SHA-256 values matched the issue worktree byte-for-byte. The Compose
+files and `.env` came from the issue worktree. The smoke reported **15/15 PASS**,
+including `GET /api/lookup/barcode/5%20012394%20144777` (printed value
+`5 012394 144777`), normalized `5012394144777`, resolved to Discogs release
+`999000001` and `gm_id` `01a0c525-38a2-70bf-845f-f6e193f6516c`.
+`bh work check gm-deployment-87i.1` passed with 535 tests.
+
+An earlier attempt with global `DOCKER_DEFAULT_PLATFORM=linux/amd64` exited
+before probes because the pinned Neo4j image has no amd64 variant. The
+successful run instead used the overlay's existing per-service amd64 settings
+for internal images while infrastructure stayed native. The smoke's exit trap
+removed each attempt's containers, volumes, and network. Label-filtered
+`docker ps -a`, `docker volume ls`, and `docker network ls` returned no resources
+for projects `groovemap-id-87i1-smoke2`, `groovemap-id-87i1-smoke3`, or
+`groovemap-id-87i1-smoke4` after teardown. No live Compose project was changed.
+
 ## Media-aware loader upgrade
 
 Promoting the media-aware SQL loader and graph enricher images does not populate
