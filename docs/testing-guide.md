@@ -141,10 +141,10 @@ survives the whole path from a producer event to both stores, and that
 identifier path survives it as far as a barcode a person can look up. It is a versioned
 script rather than a runbook step, so both claims can be re-made on demand.
 
-The identifier probes assert behaviour no reviewed image carries yet.
-[Maintenance](maintenance.md#identifier-lookup-smoke-prerequisites) records which images
-have to be released and reviewed first; until then those probes fail, and the failure is a
-missing image rather than a broken stack.
+The required identifier-capable images are recorded in
+[Maintenance](maintenance.md#recorded-release-digests). Run the disposable smoke
+against those reviewed digests to verify the lookup path; this does not promote
+them to a live environment.
 
 **What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
 approved `ghcr.io/groovemap-music/<repository>@sha256:<manifest-digest>` reference.

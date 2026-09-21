@@ -94,22 +94,31 @@ Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 
-Matching consumer and schema images (`v0.2.0`, except `database-schema`
-`v0.3.0`):
+Matching consumer and schema images (Discogs SQL loader and graph enricher
+`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.3.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
 
-Reviewed catalog API image (`v0.2.0`):
+Reviewed catalog API image (`v0.4.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb` |
+| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` |
+
+The three changed entries resolve from their released tags for `linux/amd64`
+(the platform published by these release workflows). Their reviewed rollback
+targets are the previous index digests: `DISCOGS_SQL_LOADER_IMAGE`
+`sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c`,
+`DISCOGS_GRAPH_ENRICHER_IMAGE`
+`sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b`,
+and `CATALOG_API_IMAGE`
+`sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb`.
 
 These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
@@ -160,11 +169,10 @@ have to become a `provider_aliases` row keyed on the release's native id, a
 `CREDITED_TO` edge to a `Company` node, a `Release.country` property, and an
 answer from `GET /api/lookup/barcode/{value}`.
 
-The identifier probes therefore assert behaviour that no reviewed image carries
-yet. Until every image below is released **and** recorded as reviewed in
-[Recorded release digests](#recorded-release-digests), a `just smoke-media` run
-fails on those probes, and that failure is a missing image rather than a broken
-stack or a broken environment.
+The required identifier-capable images are now recorded in
+[Recorded release digests](#recorded-release-digests). Run `just smoke-media`
+against an untracked digest-pinned environment file in its disposable project
+to verify the probes before promoting any image to a live environment.
 
 | Wave | Variable | What the probes need from it |
 | --- | --- | --- |

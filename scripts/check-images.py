@@ -57,12 +57,12 @@ IMAGE_OWNERS = {
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
     "DATABASE_SCHEMA_IMAGE": "6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c",  # database-schema v0.3.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb",  # catalog-api v0.2.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43",  # catalog-api v0.4.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c",  # discogs-ingestion v0.3.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37",  # musicbrainz-ingestion v0.2.1  gitleaks:allow
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b",  # discogs-graph-enricher v0.2.0  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d",  # discogs-graph-enricher v0.3.0  gitleaks:allow
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e",  # musicbrainz-graph-enricher v0.2.0  gitleaks:allow
-    "DISCOGS_SQL_LOADER_IMAGE": "dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c",  # discogs-sql-loader v0.2.0  gitleaks:allow
+    "DISCOGS_SQL_LOADER_IMAGE": "09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6",  # discogs-sql-loader v0.3.0  gitleaks:allow
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027",  # musicbrainz-sql-loader v0.2.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1",  # operations-console v0.1.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b",  # graph-explorer v0.1.1  gitleaks:allow
