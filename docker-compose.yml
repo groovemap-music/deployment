@@ -43,7 +43,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    image: rabbitmq:4-management@sha256:a7faa436fbb827d5554ef3213de39bb0d858a8e7caf184179db568630b21c683
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -128,7 +128,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad
+    image: neo4j:2026.07.1-community@sha256:956faa5d14b6beaa629b80c718bfd389ec12064f97e276ed9a58b0c53b25a323
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -178,7 +178,7 @@ services:
       - no-new-privileges:true
 
   redis:
-    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    image: redis:8-alpine@sha256:bd999b5cfee25fb24b8320a31fddbd69f462df44c8138c66e369582937beebc0
     container_name: groovemap-redis
     hostname: redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -399,7 +399,7 @@ services:
   # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
   # API this server exposes under /select/tempo.
   victoria-traces:
-    image: victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd
+    image: victoriametrics/victoria-traces:v0.11.1@sha256:b8e13852fa320debb9c1124f7987f62a1fd048c9de50a2ed840c390e21e232ed
     container_name: groovemap-victoria-traces
     hostname: victoria-traces
     command:
