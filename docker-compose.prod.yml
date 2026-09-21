@@ -75,7 +75,6 @@ services:
       - "maintenance_work_mem=512MB"
       - "-c"
       - "huge_pages=try"
-      # --- WAL / Checkpoints ---
       - "-c"
       - "wal_buffers=64MB"
       - "-c"
@@ -190,13 +189,10 @@ services:
       # --- Query Logging ---
       NEO4J_db_logs_query_threshold: '5s'
       NEO4J_db_logs_query_plan__description__enabled: 'true'
-      # --- Transaction ---
       NEO4J_db_transaction_timeout: '600s'
       NEO4J_db_transaction_bookmark__ready__timeout: '30s'
-      # --- Cypher Runtime ---
       NEO4J_dbms_cypher_min__replan__interval: '5s'
       NEO4J_dbms_cypher_statistics__divergence__threshold: '0.1'
-      # --- Bolt Thread Pool ---
       NEO4J_server_bolt_thread__pool__min__size: '10'
       NEO4J_server_bolt_thread__pool__max__size: '400'
       NEO4J_server_bolt_connection__keep__alive__for__requests: 'ALL'

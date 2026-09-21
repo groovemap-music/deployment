@@ -127,7 +127,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # Neo4j graph database
   neo4j:
     image: neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad
     container_name: groovemap-neo4j
@@ -155,8 +154,8 @@ services:
       NEO4J_server_memory_heap_max__size: 2G
       NEO4J_server_memory_pagecache_size: 1G
     ports:
-      - "7474:7474"      # HTTP
-      - "7687:7687"      # Bolt
+      - "7474:7474"
+      - "7687:7687"
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -178,7 +177,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # Redis cache
   redis:
     image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     container_name: groovemap-redis
@@ -605,8 +603,8 @@ services:
       # insights service. Override with a random value in production.
       INSIGHTS_INTERNAL_SECRET: "${INSIGHTS_INTERNAL_SECRET:-dev-internal-insights-secret-change-in-production}"
     ports:
-      - "8004:8004"      # Auth API
-      - "8005:8005"      # Health check
+      - "8004:8004"
+      - "8005:8005"
     volumes:
       - api_logs:/logs
       - discogs_data:/discogs-data:ro
@@ -725,7 +723,6 @@ services:
     cap_drop:
       - ALL
 
-  # Graphinator service
   graphinator:
     image: "${DISCOGS_GRAPH_ENRICHER_IMAGE:?Set DISCOGS_GRAPH_ENRICHER_IMAGE to a digest-pinned discogs-graph-enricher image}"
     container_name: groovemap-graphinator
