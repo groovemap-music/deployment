@@ -352,15 +352,20 @@ class Stack:
     addresses the management endpoint.
     """
 
-    def __init__(self, project: str, compose_files: Sequence[str], broker_port: int = 0, env_file: str | None = None) -> None:
+    def __init__(
+        self, project: str, compose_files: Sequence[str], broker_port: int = 0, env_file: str | None = None, project_directory: str | None = None
+    ) -> None:
         self.project = project
         self.compose_files = list(compose_files)
         self.env_file = env_file
+        self.project_directory = project_directory
         self.broker_url = f"http://127.0.0.1:{broker_port}/api"
 
     def compose_argv(self) -> list[str]:
         """Return the common Compose invocation for this isolated stack."""
         argv = ["docker", "compose", "--project-name", self.project]
+        if self.project_directory is not None:
+            argv += ["--project-directory", self.project_directory]
         if self.env_file is not None:
             argv += ["--env-file", self.env_file]
         for compose_file in self.compose_files:
@@ -789,6 +794,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--broker-port", type=int, required=True, help="Published loopback port of the RabbitMQ management API")
     parser.add_argument("--api-port", type=int, help="Published loopback port of the catalog API, required unless --extractor-service is given")
     parser.add_argument("--env-file", help="Environment file used to resolve digest-pinned Compose images")
+    parser.add_argument("--project-directory", help="Optional shared host path for Compose bind mounts in a disposable smoke")
     parser.add_argument("--extractor-service", help="Run this one-shot extractor instead of publishing promoted event fixtures")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each stage before failing")
     return parser.parse_args(argv)
@@ -797,7 +803,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """Publish the fixture events, wait for both stores, and report every assertion."""
     args = parse_args(argv)
-    stack = Stack(args.project, args.compose_files, args.broker_port, args.env_file)
+    stack = Stack(args.project, args.compose_files, args.broker_port, args.env_file, args.project_directory)
 
     if args.extractor_service:
         print(f"waiting for {len(DISCOGS_CONSUMER_QUEUES)} Discogs contract queues to bind a consumer")
