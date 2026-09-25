@@ -49,6 +49,12 @@ The extraction runs asynchronously. Progress is tracked in the extraction histor
 
 If an extraction is already running, the trigger returns an error — wait for it to complete first.
 
+This trigger has no cross-source lock: it only rejects a second trigger for the *same* source.
+The Discogs import must still finish, including its consumers draining, before the MusicBrainz
+one starts; see [Post-import identity maintenance](maintenance.md#post-import-identity-maintenance)
+for why, the first-load bring-up procedure, and the re-attachment and projection steps that
+follow every cycle.
+
 ## DLQ Management
 
 Dead-letter queues (DLQs) collect messages that consumers failed to process. Each data type has a DLQ per consumer:

@@ -168,6 +168,118 @@ removed each attempt's containers, volumes, and network. Label-filtered
 for projects `groovemap-id-87i1-smoke2`, `groovemap-id-87i1-smoke3`, or
 `groovemap-id-87i1-smoke4` after teardown. No live Compose project was changed.
 
+## Post-import identity maintenance
+
+`musicbrainz-sql-loader` attaches a MusicBrainz release, release group, artist, or label to
+its Discogs counterpart's native id only when the Discogs alias already resolves; otherwise it
+mints a separate native id, and no later reload heals the split. **The Discogs import must
+finish — not merely start — before the MusicBrainz import starts**, on the first load and on
+every cycle. A read-only measurement on the predecessor system's database (2026-09-25)
+found 3,661,734 MusicBrainz entities naming a Discogs counterpart (releases 1,877,974, artists
+1,272,211, release groups 347,129, labels 164,420): loading MusicBrainz first could split most
+of them across two native ids, while loading Discogs first leaves about 23,409 whose Discogs
+target is not yet in the dump, plus new drift every cycle, which the re-attachment job below
+heals.
+
+**First load.** Both extractors start extracting immediately when their container starts, and
+[Per-source extractor cutover](#per-source-extractor-cutover) is explicit that the two ingest
+concurrently with no cross-container ordering, lock, or mutual exclusion — bringing up the full
+Compose stack in one `docker compose up` starts `extractor-musicbrainz` alongside
+`extractor-discogs`. The MusicBrainz ingestion path is therefore not deployed at all for the
+first load: bring up the stack without `extractor-musicbrainz` and its two consumers,
+`brainzgraphinator` (MusicBrainz graph enrichment) and `brainztableinator` (MusicBrainz to
+PostgreSQL). None of the three is a dependency of any other Compose service (each only depends
+on shared infrastructure — RabbitMQ, PostgreSQL, Neo4j, `schema-init`), so leaving them out of
+the service list is enough; nothing else in the stack fails to start because they are absent.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait \
+  $(docker compose -f docker-compose.yml -f docker-compose.prod.yml config --services \
+    | grep -vE '^(extractor-musicbrainz|brainzgraphinator|brainztableinator)$')
+```
+
+For a local (non-production) stack, drop the two `-f` flags; [Quick
+start](quick-start.md#4-start-only-with-operator-approval) shows the production invocation
+these follow.
+
+"Extraction finished" is not "import finished": the extractor publishes to RabbitMQ
+asynchronously, so the Discogs consumers (`graphinator`, `tableinator`) have to drain too. The
+admin panel's extraction history only records admin-*triggered* runs, so it does not cover this
+automatic first run — use the RabbitMQ management UI at <http://localhost:15672> (see
+[Queue monitoring](monitoring.md#queue-monitoring)) or the admin panel's Queue Trends tab
+instead, and confirm the Discogs consumer queues
+(`groovemap-discogs-graphinator-*` and `groovemap-discogs-tableinator-*`) are at zero ready and
+zero unacknowledged messages with their consumers still attached, not merely idle because
+nothing is running. Only then deploy the MusicBrainz ingestion path:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait \
+  extractor-musicbrainz brainzgraphinator brainztableinator
+```
+
+**Later cycles.** `extractor-discogs` and `extractor-musicbrainz` each then run on their own
+periodic schedule (`PERIODIC_CHECK_DAYS`: 5 days and 3 days) with the same no-ordering
+behavior, so nothing in the stack today keeps a later Discogs cycle ahead of the MusicBrainz
+one it should precede — that is a known gap, not something this procedure enforces. What
+follows instead heals the resulting drift after the fact: run the re-attachment job below once
+the Discogs import for a cycle has completed and its consumer queues have drained, using the
+same RabbitMQ signal as above (or, for an admin-triggered re-run, the extraction history row
+reaching `completed`).
+
+The re-attachment job itself is owned by `catalog-api`
+([ADR 0014 section 8](https://github.com/groovemap-music/design/blob/main/docs/adr/0014-cross-catalog-edition-candidates.md#8-split-linked-items-catalog-re-attachment-outside-the-matcher),
+amended
+[2026-09-25](https://github.com/groovemap-music/design/blob/main/docs/adr/0014-cross-catalog-edition-candidates.md#2026-09-25-dependents-guard-replaced-by-the-native-id-merge)).
+Then run the `gm_id` projection
+([ADR 0009](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md),
+amended
+[2026-09-25](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md#2026-09-25-superseded-catalog-items-and-native-id-merge)).
+See
+[`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#re-attaching-load-order-split-catalog-items)
+for the job's full rule, guards, and lock order.
+
+1. Dry run the census first:
+
+   ```bash
+   docker exec groovemap-api catalog-identity-reattach
+   ```
+
+   Read the printed per-kind census before applying: `split` and `stale_gm_item_id` items,
+   `eligible` (candidates minus guarded), `guarded` by reason, `dependents` by table, and
+   `identifier_aliases` (held by candidates, and how many are `contested` — also held by the
+   Discogs record).
+2. Apply the repair, naming an existing active admin (see
+   [Creating an Admin Account](admin-guide.md#creating-an-admin-account)):
+
+   ```bash
+   docker exec groovemap-api catalog-identity-reattach --apply --admin-id <admin-uuid>
+   ```
+
+   Alternative: `POST /api/admin/identity/reattach` (dry run by default; add `?apply=true` to
+   write). Both return `202` with a job id and log the census and, for an applying run, the
+   per-kind outcomes.
+3. Then project `gm_id` onto Neo4j so the graph follows the alias table:
+
+   ```bash
+   docker exec groovemap-api catalog-identity-projection
+   ```
+
+   Alternative: `POST /api/admin/identity/project`.
+
+Run this sequence after the first full load and after every monthly Discogs import.
+MusicBrainz publishes twice weekly and Discogs monthly, so new MusicBrainz-to-Discogs links
+keep arriving ahead of their Discogs targets between Discogs cycles.
+
+Operator notes:
+
+- Safe to re-run: a second run reports the already-repaired and already-guarded items as
+  `unchanged`.
+- The exit code reflects only run-level failure. Read the per-item `reattached`, `guarded`,
+  `unchanged`, and `failed` counts from the printed report, not the exit code.
+- A guarded item — a split native id with a dependent in `artifacts`, `owned_copies`,
+  `observations`, `user_collections`, or `user_wantlists` — waits for the ADR 0009 native-id
+  merge; it is not a failure to retry.
+
 ## Media-aware loader upgrade
 
 Promoting the media-aware SQL loader and graph enricher images does not populate
