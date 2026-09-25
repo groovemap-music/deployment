@@ -51,3 +51,8 @@ A supplemental history-only merge retains the original commits for
 `migrate-master-year-to-int.sh`. Their current versions add read-only defaults, explicit
 `--apply` gates, and secret-file support; the merge imports history without replacing the
 reviewed current tree.
+
+This is the extraction of this repository's own history, unrelated to the Discogs and
+MusicBrainz catalog extractions. For the required order between those two and the
+maintenance they need afterward, see
+[Post-import identity maintenance](maintenance.md#post-import-identity-maintenance).
