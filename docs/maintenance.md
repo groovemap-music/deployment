@@ -270,15 +270,35 @@ Run this sequence after the first full load and after every monthly Discogs impo
 MusicBrainz publishes twice weekly and Discogs monthly, so new MusicBrainz-to-Discogs links
 keep arriving ahead of their Discogs targets between Discogs cycles.
 
+**Automatic alternative.** Set `IDENTITY_AUTO_REATTACH_ENABLED=true` on the `api` service
+(`groovemap-api`) — in `docker-compose.yml`'s `api` environment block, overridable in
+`docker-compose.prod.yml`'s — and `catalog-api` runs the re-attachment (apply) and then the
+`gm_id` projection by itself, once per completed Discogs extraction, detected the same way as
+above from `loader_extraction_latch`. `IDENTITY_AUTO_REATTACH_INTERVAL` (seconds, default 300)
+sets how often it polls; the watcher is off by default and idles until the relation exists.
+Every replica polls, but a PostgreSQL advisory lock and a handled marker in `admin_audit_log`
+(`action = identity.reattach.auto`; a failed run is `identity.reattach.auto.failed` and is
+retried) keep a run to exactly once per extraction. The first-load staged deploy and the
+MusicBrainz-after-Discogs cycle order above still apply — the switch only replaces the manual
+`catalog-identity-reattach` / `catalog-identity-projection` runs above, not the ordering they
+depend on. See
+[`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#running-both-automatically-after-each-discogs-import)
+for the full design.
+
 Operator notes:
 
 - Safe to re-run: a second run reports the already-repaired and already-guarded items as
   `unchanged`.
 - The exit code reflects only run-level failure. Read the per-item `reattached`, `guarded`,
   `unchanged`, and `failed` counts from the printed report, not the exit code.
-- A guarded item — a split native id with a dependent in `artifacts`, `owned_copies`,
-  `observations`, `user_collections`, or `user_wantlists` — waits for the ADR 0009 native-id
-  merge; it is not a failure to retry.
+- A guarded item — a split native id holding a `discogs` alias, another row's alias, or an
+  alias whose source is not `catalog` (guard reasons `shared_native_id` and
+  `non_catalog_alias`) — is a real item, not a load-order orphan, and is not a failure to
+  retry. Dependents no longer guard: since catalog-api main `e061f7d`, a dependent
+  (`artifacts`, `owned_copies`, and what hangs off them, or a `user_collections` /
+  `user_wantlists` row) is merged into the survivor instead — moved, ledgered in
+  `catalog_item_moves`, and reversible — and the census reports it under `will_move`, not
+  `guarded`.
 
 ## Media-aware loader upgrade
 
