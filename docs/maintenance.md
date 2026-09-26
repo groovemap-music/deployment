@@ -257,7 +257,10 @@ for the job's full rule, guards, and lock order.
 
    Alternative: `POST /api/admin/identity/reattach` (dry run by default; add `?apply=true` to
    write). Both return `202` with a job id and log the census and, for an applying run, the
-   per-kind outcomes.
+   per-kind outcomes. Either path writes one `admin_audit_log` row under that job id first,
+   before any identity write, as `identity.reattach.started`; a run whose row cannot be
+   written does not start. The row becomes `identity.reattach.apply` when the run finishes, or
+   `identity.reattach.failed` when it fails.
 3. Then project `gm_id` onto Neo4j so the graph follows the alias table:
 
    ```bash
@@ -277,11 +280,14 @@ keep arriving ahead of their Discogs targets between Discogs cycles.
 above from `loader_extraction_latch`. `IDENTITY_AUTO_REATTACH_INTERVAL` (seconds, default 300)
 sets how often it polls; the watcher is off by default and idles until the relation exists.
 Every replica polls, but a PostgreSQL advisory lock and a handled marker in `admin_audit_log`
-(`action = identity.reattach.auto`; a failed run is `identity.reattach.auto.failed` and is
-retried) keep a run to exactly once per extraction. The first-load staged deploy and the
-MusicBrainz-after-Discogs cycle order above still apply — the switch only replaces the manual
-`catalog-identity-reattach` / `catalog-identity-projection` runs above, not the ordering they
-depend on. See
+keep a run to exactly once per extraction: the watcher writes its row first, before any
+identity write, as `identity.reattach.auto.started` (a run whose row cannot be written does
+not start), then to `identity.reattach.auto` when it finishes — that row is the durable
+handled marker — or to `identity.reattach.auto.failed` when it fails. Neither started nor
+failed is the marker, so a failed or interrupted run is retried under a new job id. The
+first-load staged deploy and the MusicBrainz-after-Discogs cycle order above still apply — the
+switch only replaces the manual `catalog-identity-reattach` / `catalog-identity-projection`
+runs above, not the ordering they depend on. See
 [`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#running-both-automatically-after-each-discogs-import)
 for the full design.
 
@@ -289,6 +295,11 @@ Operator notes:
 
 - Safe to re-run: a second run reports the already-repaired and already-guarded items as
   `unchanged`.
+- A row left at `identity.reattach.started` or `identity.reattach.auto.started` means the run
+  was interrupted or its finalize update failed — check the API logs. Re-run the manual steps
+  above yourself; the watcher retries an automatic run on its own, under a new job id. Either
+  way the earlier row is untouched, and every supersession that named it as `decision_ref`
+  still resolves.
 - The exit code reflects only run-level failure. Read the per-item `reattached`, `guarded`,
   `unchanged`, and `failed` counts from the printed report, not the exit code.
 - A guarded item — a split native id holding a `discogs` alias, another row's alias, or an
