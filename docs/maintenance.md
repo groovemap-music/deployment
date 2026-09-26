@@ -294,10 +294,11 @@ Operator notes:
 - A guarded item — a split native id holding a `discogs` alias, another row's alias, or an
   alias whose source is not `catalog` (guard reasons `shared_native_id` and
   `non_catalog_alias`) — is a real item, not a load-order orphan, and is not a failure to
-  retry. Dependents no longer guard: since catalog-api main `e061f7d`, a dependent
-  (`artifacts`, `owned_copies`, and what hangs off them, or a `user_collections` /
-  `user_wantlists` row) is merged into the survivor instead — moved, ledgered in
-  `catalog_item_moves`, and reversible — and the census reports it under `will_move`, not
+  retry. Dependents no longer guard: since catalog-api main `e061f7d`, `artifacts` and
+  `owned_copies` rows are re-pointed to the survivor and ledgered in `catalog_item_moves`
+  (reversible); `user_collections` and `user_wantlists` hold an alias-derived `gm_item_id`
+  cache that is recomputed, not moved or ledgered; `observations` are untouched, since they
+  reference copies and artifacts. The census reports a dependent item under `will_move`, not
   `guarded`.
 
 ## Media-aware loader upgrade
