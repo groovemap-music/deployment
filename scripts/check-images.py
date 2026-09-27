@@ -20,7 +20,10 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 REGISTRY = "ghcr.io/groovemap-music"
 
 # Compose service -> the required image variable. Each Discogs/MusicBrainz producer
-# owns its own image after the ADR 0005 split; no variable is shared by two services.
+# owns its own image after the ADR 0005 split; no variable is shared by two services,
+# except ANALYTICS_ENGINE_IMAGE: `embeddings` is the one-shot analytics-engine-embeddings
+# entry point (ADR 0013), invoked with an entrypoint override against the same released
+# image the always-on `insights` service runs, never a second published artifact.
 INTERNAL_IMAGES = {
     "schema-init": "DATABASE_SCHEMA_IMAGE",
     "api": "CATALOG_API_IMAGE",
@@ -33,7 +36,14 @@ INTERNAL_IMAGES = {
     "dashboard": "OPERATIONS_CONSOLE_IMAGE",
     "explore": "GRAPH_EXPLORER_IMAGE",
     "insights": "ANALYTICS_ENGINE_IMAGE",
+    "embeddings": "ANALYTICS_ENGINE_IMAGE",
 }
+
+# Image variables allowed to be shared by more than one service in INTERNAL_IMAGES —
+# the ANALYTICS_ENGINE_IMAGE exception above. Every other variable must promote exactly
+# one service, so a variable colliding by accident (a copy-paste bug, not a deliberate
+# shared-image job) is still caught.
+SHARED_IMAGE_VARIABLES = {"ANALYTICS_ENGINE_IMAGE"}
 
 # Image variable -> the repository that owns and publishes it. The repository name is
 # also the GHCR image name, so a variable must never promote another repository's image.
@@ -93,7 +103,12 @@ THIRD_PARTY_IMAGES = {
 def check_declarations() -> None:
     """Validate the static ownership and reviewed-release policy tables."""
     assert set(INTERNAL_IMAGES.values()) == set(IMAGE_OWNERS), "every required image variable needs a declared owning repository"
-    assert len(set(INTERNAL_IMAGES.values())) == len(INTERNAL_IMAGES), "each service must promote its own source-owned image"
+    unshared_variables = [variable for variable in INTERNAL_IMAGES.values() if variable not in SHARED_IMAGE_VARIABLES]
+    assert len(set(unshared_variables)) == len(unshared_variables), (
+        "each service must promote its own source-owned image unless declared in SHARED_IMAGE_VARIABLES"
+    )
+    for variable in SHARED_IMAGE_VARIABLES:
+        assert variable in IMAGE_OWNERS, f"{variable} is declared shared but is not a known internal image variable"
     assert set(RELEASED_IMAGE_DIGESTS) == set(IMAGE_OWNERS), "every owned image variable needs a reviewed release digest"
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
         "a reviewed release digest must be a full manifest digest"

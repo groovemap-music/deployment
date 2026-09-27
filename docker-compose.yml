@@ -1091,6 +1091,57 @@ services:
     volumes:
       - insights_logs:/logs
 
+  # One-shot analytics-engine embedding pipeline entry point (ADR 0013's monthly
+  # FastRP recompute; see docs/maintenance.md#monthly-embedding-refresh). Shares the
+  # insights service's image but overrides its entrypoint, so it never runs the
+  # always-on FastAPI/scheduler process the base image otherwise starts.
+  #
+  # SOURCE_DUMP_ID/SOURCE_DUMP_DATE have no default and change every month — the
+  # invoker supplies them, since it is the one that knows which dump just landed.
+  # The "jobs" profile keeps this out of `docker compose up`'s default service set;
+  # `docker compose run` still reaches it regardless of which profiles are active.
+  #
+  # EMBEDDING_PIPELINE_POSTGRES_USERNAME/_PASSWORD are the pipeline's own
+  # least-privilege login (ADR 0013's 2026-09-24 amendment) — a member of
+  # database-schema's NOLOGIN `embedding_pipeline` group role, never this stack's
+  # POSTGRES_USERNAME superuser. See scripts/provision-embedding-pipeline-login.sh.
+  embeddings:
+    image: "${ANALYTICS_ENGINE_IMAGE:?Set ANALYTICS_ENGINE_IMAGE to a digest-pinned analytics-engine image}"
+    container_name: groovemap-embeddings
+    hostname: embeddings
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint: ["analytics-engine-embeddings"]
+    profiles:
+      - jobs
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: embeddings
+      LOG_LEVEL: INFO
+      POSTGRES_DATABASE: groovemap
+      POSTGRES_HOST: postgres
+      PYTHONUNBUFFERED: "1"
+      SOURCE_DUMP_ID: "${SOURCE_DUMP_ID:?Set SOURCE_DUMP_ID to the dump this run embeds, e.g. discogs-2026-09}"
+      SOURCE_DUMP_DATE: "${SOURCE_DUMP_DATE:?Set SOURCE_DUMP_DATE to that dump's release date, YYYY-MM-DD}"
+      EMBEDDING_PIPELINE_POSTGRES_USERNAME: "${EMBEDDING_PIPELINE_POSTGRES_USERNAME:-embedding_pipeline}"
+      EMBEDDING_PIPELINE_POSTGRES_PASSWORD: "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD:-groovemap}"
+    depends_on:
+      <<: *otel-depends-on
+      schema-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - groovemap
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
 volumes:
   rabbitmq_data:
   postgres_data:

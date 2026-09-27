@@ -22,6 +22,13 @@ released image into the stack.
 | `dashboard` | [`operations-console`](https://github.com/groovemap-music/operations-console) | `OPERATIONS_CONSOLE_IMAGE` |
 | `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
 | `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
+| `embeddings` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
+
+`embeddings` is the one exception to "each variable promotes exactly one
+service": it runs the same released `analytics-engine` image as `insights`,
+with its entrypoint overridden to the one-shot `analytics-engine-embeddings`
+job (see [Monthly embedding refresh](maintenance.md#monthly-embedding-refresh)),
+never a second published artifact.
 
 Each primary image therefore has the form
 `ghcr.io/groovemap-music/<source-repository>`. An auxiliary image appends its

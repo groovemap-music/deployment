@@ -49,7 +49,7 @@ known-first-party = ["scripts"]
 lines-after-imports = 2
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["PLC", "S105", "S106", "S603", "T201"]
+"tests/**/*.py" = ["PLC", "S105", "S106", "S107", "S603", "T201"]
 "scripts/*.py" = ["S108", "T201"]
 
 [tool.mypy]

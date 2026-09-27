@@ -37,6 +37,15 @@ secrets:
   # only way into the dashboards.
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
+  # The embedding pipeline's own least-privilege login (ADR 0013's 2026-09-24
+  # amendment) — a member of database-schema's NOLOGIN embedding_pipeline group
+  # role, never this stack's postgres_username superuser. See
+  # scripts/provision-embedding-pipeline-login.sh and
+  # docs/maintenance.md#monthly-embedding-refresh.
+  embedding_pipeline_username:
+    file: ./secrets/embedding_pipeline_username.txt
+  embedding_pipeline_password:
+    file: ./secrets/embedding_pipeline_password.txt
 
 # Production telemetry: identical transport, different environment tag. The
 # base file's OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME carry over
@@ -499,3 +508,15 @@ services:
         condition: any
         delay: 5s
         max_attempts: 3
+
+  # A one-shot job, not a long-running service: no restart policy override. The
+  # homelab provisions its own embedding_pipeline login and its secrets/ files —
+  # this overlay only wires the same _FILE convention every other credential uses.
+  embeddings:
+    environment:
+      <<: *otel-prod-env
+      EMBEDDING_PIPELINE_POSTGRES_USERNAME_FILE: /run/secrets/embedding_pipeline_username
+      EMBEDDING_PIPELINE_POSTGRES_PASSWORD_FILE: /run/secrets/embedding_pipeline_password
+    secrets:
+      - embedding_pipeline_username
+      - embedding_pipeline_password
