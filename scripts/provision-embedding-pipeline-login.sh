@@ -6,14 +6,17 @@
 # and CI"). Idempotent — safe to re-run after every dump load, before
 # scripts/run-embeddings.sh.
 #
-# The password never appears on a command line (docker exec argv, psql -c, or
-# this script's own argv) or gets interpolated into SQL text directly: it
-# crosses into the container only as an environment variable
-# (`docker exec -e`), and psql's own `\getenv` plus `:'pw'` variable
-# interpolation quotes it as a literal, so an embedded quote in the password
-# can never break out of the SQL string or inject a second statement. The
-# username is validated as a plain identifier below and always substituted via
-# psql's `:"username"` quoted-identifier interpolation, never string-built.
+# The password never appears on a command line — not this script's own argv,
+# not docker exec's, not psql's `-c` — or gets interpolated into SQL text
+# directly. `docker exec -e NAME` (the bare name, no `=value`) tells Docker to
+# forward whatever NAME already holds in this script's own (exported)
+# environment, so the value itself is never a command-line argument for any
+# process a host `ps` could show; psql's own `\getenv` then reads it back
+# inside the container, and `:'pw'` interpolation quotes it as a literal, so
+# an embedded quote in the password can never break out of the SQL string or
+# inject a second statement. The username is validated as a plain identifier
+# below and always substituted via psql's `:"username"` quoted-identifier
+# interpolation, never string-built.
 #
 # `embedding_pipeline` itself is created by schema-init's guarded initializer,
 # only once the `vector` extension is installed. This stack's postgres service
@@ -62,14 +65,18 @@ fi
 if [[ "$(role_exists "$username")" == "1" ]]; then
   echo "provision-embedding-pipeline-login: $username already exists; leaving its password alone."
 else
-  # The password crosses into the container as an environment variable, never
-  # as part of the SQL text or this command's own argv; \getenv reads it back
+  # `-e EMBEDDING_PIPELINE_PASSWORD` names the variable only — no `=value` —
+  # so Docker forwards it from this script's own exported environment rather
+  # than taking a value off the command line; the password is never a
+  # docker/psql argv element a host `ps` could read. \getenv reads it back
   # inside psql, and :'pw' interpolates it as a properly quoted literal.
-  docker exec -i -e EMBEDDING_PIPELINE_PASSWORD="$password" "$POSTGRES_CONTAINER" \
+  export EMBEDDING_PIPELINE_PASSWORD="$password"
+  docker exec -i -e EMBEDDING_PIPELINE_PASSWORD "$POSTGRES_CONTAINER" \
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -v "username=$username" <<'SQL'
 \getenv pw EMBEDDING_PIPELINE_PASSWORD
 CREATE ROLE :"username" LOGIN PASSWORD :'pw';
 SQL
+  unset EMBEDDING_PIPELINE_PASSWORD
   echo "provision-embedding-pipeline-login: created $username"
 fi
 

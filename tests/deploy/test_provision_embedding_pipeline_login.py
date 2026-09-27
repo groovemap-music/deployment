@@ -5,19 +5,22 @@ An earlier revision built the CREATE ROLE statement by interpolating the
 password directly into a `psql -c "..."` string (`PASSWORD '$password'`) —
 vulnerable to SQL injection if the password ever contained a single quote,
 and exposed the password in plain text on the `docker exec`/`psql` command
-line (visible to any local user via `ps`, and to shell history). The fixed
-script never puts the password on a command line or in SQL text at all: it
-crosses into the container only as an environment variable (`docker exec
--e`), and the SQL — delivered over stdin, not `-c` — reads it back with
-psql's `\\getenv` and interpolates it as a quoted literal (`:'pw'`). The
-username is validated as a plain identifier up front and always substituted
-via psql's quoted-identifier form (`:"username"`), never string-built.
+line (visible to any local user via `ps`, and to shell history). A first fix
+moved the SQL to stdin and quoted it with psql variables, but still passed
+`docker exec -e EMBEDDING_PIPELINE_PASSWORD="$password"` — the value was
+still a `docker exec` argv element. The current script instead `export`s the
+password under that name and passes `-e EMBEDDING_PIPELINE_PASSWORD` with no
+`=value`: Docker forwards whatever the name already holds in this script's
+own environment, so the value is never a command-line argument for any
+process a host `ps` could read, in addition to never being interpolated into
+SQL text (psql's own `\\getenv` plus `:'pw'`/`:"username"` quoting closes that
+off).
 
 These tests stub `docker` on PATH (there is no real PostgreSQL container in
-this test environment) and assert both the security property — a
-single-quote-and-injection-shaped password never appears in any SQL text or
-command-line argument, anywhere — and the ordinary role-provisioning
-behavior.
+this test environment) and assert both security properties — a
+single-quote-and-injection-shaped password never appears in any SQL text,
+and never appears in any command-line argument, anywhere — alongside the
+ordinary role-provisioning behavior.
 """
 
 from __future__ import annotations
@@ -39,9 +42,12 @@ INJECTION_PASSWORD = "it's-a-secret'; DROP ROLE embedding_pipeline; --"
 
 def _stub_docker(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     """Install a fake `docker` on PATH that simulates `inspect`, the two
-    `role_exists` lookups, the CREATE ROLE call (stdin + `-e` capture), and
-    the final GRANT — driven by FAKE_ROLE_EMBEDDING_PIPELINE_EXISTS /
-    FAKE_ROLE_TARGET_EXISTS so a test can pick the branch it wants to exercise.
+    `role_exists` lookups, the CREATE ROLE call, and the final GRANT — driven
+    by FAKE_ROLE_EMBEDDING_PIPELINE_EXISTS / FAKE_ROLE_TARGET_EXISTS so a test
+    can pick the branch it wants to exercise. The CREATE ROLE branch reads
+    EMBEDDING_PIPELINE_PASSWORD out of its OWN process environment — never off
+    argv — exactly mirroring how the real `docker exec -e NAME` (no `=value`)
+    forwards it from the calling script's exported environment.
     """
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir()
@@ -49,7 +55,7 @@ def _stub_docker(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     logs = {
         "argv": tmp_path / "docker-argv.log",
         "stdin": tmp_path / "docker-stdin.log",
-        "password_arg": tmp_path / "docker-password-arg.log",
+        "password_env": tmp_path / "docker-password-env.log",
     }
     docker.write_text(
         textwrap.dedent(
@@ -65,12 +71,12 @@ def _stub_docker(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
 
             role=""
             has_stdin_flag=0
-            password_arg=""
+            has_password_env_flag=0
             for arg in "$@"; do
               case "$arg" in
                 role=*) role="${arg#role=}" ;;
                 -i) has_stdin_flag=1 ;;
-                EMBEDDING_PIPELINE_PASSWORD=*) password_arg="$arg" ;;
+                EMBEDDING_PIPELINE_PASSWORD) has_password_env_flag=1 ;;
               esac
             done
 
@@ -85,7 +91,9 @@ def _stub_docker(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
 
             if [[ "$has_stdin_flag" == "1" ]]; then
               cat >>"$FAKE_DOCKER_STDIN_LOG"
-              printf '%s' "$password_arg" >"$FAKE_DOCKER_PASSWORD_ARG_LOG"
+              if [[ "$has_password_env_flag" == "1" ]]; then
+                printf '%s' "${EMBEDDING_PIPELINE_PASSWORD:-}" >"$FAKE_DOCKER_PASSWORD_ENV_LOG"
+              fi
               exit 0
             fi
 
@@ -112,13 +120,16 @@ def _run(
     env["EMBEDDING_PIPELINE_POSTGRES_PASSWORD"] = password
     env["FAKE_DOCKER_ARGV_LOG"] = str(logs["argv"])
     env["FAKE_DOCKER_STDIN_LOG"] = str(logs["stdin"])
-    env["FAKE_DOCKER_PASSWORD_ARG_LOG"] = str(logs["password_arg"])
+    env["FAKE_DOCKER_PASSWORD_ENV_LOG"] = str(logs["password_env"])
     env["FAKE_ROLE_EMBEDDING_PIPELINE_EXISTS"] = "1" if embedding_pipeline_exists else "0"
     env["FAKE_ROLE_TARGET_EXISTS"] = "1" if target_exists else "0"
     if username is not None:
         env["EMBEDDING_PIPELINE_POSTGRES_USERNAME"] = username
     else:
         env.pop("EMBEDDING_PIPELINE_POSTGRES_USERNAME", None)
+    # A stray inherited value would let the real behavior leak into the
+    # container's env by accident rather than through the script's own export.
+    env.pop("EMBEDDING_PIPELINE_PASSWORD", None)
 
     result = subprocess.run(
         [str(SCRIPT)],
@@ -149,20 +160,16 @@ class TestProvisionEmbeddingPipelineLoginScript:
         assert "\\getenv pw EMBEDDING_PIPELINE_PASSWORD" in stdin_text
         assert "CREATE ROLE :\"username\" LOGIN PASSWORD :'pw';" in stdin_text
 
-        # It reaches the container exactly once, unmodified, as an environment
-        # variable assignment — never re-embedded into a SQL string.
-        assert logs["password_arg"].read_text() == f"EMBEDDING_PIPELINE_PASSWORD={INJECTION_PASSWORD}"
+        # ... nor in any docker/psql command-line argument, anywhere. Only the
+        # bare variable NAME (`-e EMBEDDING_PIPELINE_PASSWORD`, no `=value`)
+        # is ever an argv element.
+        argv_text = logs["argv"].read_text()
+        assert INJECTION_PASSWORD not in argv_text
+        assert "EMBEDDING_PIPELINE_PASSWORD" in argv_text
 
-        # Of every docker/psql invocation logged, the password appears only in
-        # the one `docker exec -e EMBEDDING_PIPELINE_PASSWORD=...` call that
-        # carries it into the container's environment — and never combined
-        # with a `-c` flag, i.e. never as part of a SQL string handed to psql
-        # on the command line the way the vulnerable revision did.
-        argv_lines = logs["argv"].read_text().splitlines()
-        carrying_lines = [line for line in argv_lines if INJECTION_PASSWORD in line]
-        assert len(carrying_lines) == 1
-        assert "EMBEDDING_PIPELINE_PASSWORD=" in carrying_lines[0]
-        assert " -c " not in carrying_lines[0] and not carrying_lines[0].endswith(" -c")
+        # It still reaches the container, unmodified, as an environment
+        # variable — just never by way of a command-line argument.
+        assert logs["password_env"].read_text() == INJECTION_PASSWORD
 
     def test_leaves_existing_login_password_alone(self, tmp_path: Path) -> None:
         result, logs = _run(tmp_path, username="embedding_pipeline_login", embedding_pipeline_exists=True, target_exists=True)
@@ -170,9 +177,10 @@ class TestProvisionEmbeddingPipelineLoginScript:
         assert result.returncode == 0, result.stderr
         assert "already exists; leaving its password alone" in result.stdout
         assert "is a member of embedding_pipeline" in result.stdout
-        # No CREATE ROLE call means no stdin/-e invocation at all.
+        # No CREATE ROLE call means no stdin invocation, and the password
+        # env var is never forwarded at all.
         assert not logs["stdin"].exists() or not logs["stdin"].read_text()
-        assert not logs["password_arg"].exists() or not logs["password_arg"].read_text()
+        assert not logs["password_env"].exists() or not logs["password_env"].read_text()
 
     def test_skips_when_embedding_pipeline_role_does_not_exist_yet(self, tmp_path: Path) -> None:
         """The pgvector dependency (gm-deployment-kh5) hasn't landed: this must
