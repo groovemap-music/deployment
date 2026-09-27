@@ -55,6 +55,18 @@ config-prod:
 secrets-bootstrap:
     bash scripts/create-secrets.sh
 
+# One-time (per stack), idempotent: grants the embedding pipeline's login
+# membership in database-schema's embedding_pipeline role. Run once that role
+# exists (PostgreSQL 19 + pgvector — see docs/maintenance.md#monthly-embedding-refresh),
+# before the first embeddings-run.
+embeddings-provision-login:
+    bash scripts/provision-embedding-pipeline-login.sh
+
+# Requires SOURCE_DUMP_ID and SOURCE_DUMP_DATE, and a running dev/CI stack whose
+# Discogs consumer queues have drained. See docs/maintenance.md#monthly-embedding-refresh.
+embeddings-run:
+    bash scripts/run-embeddings.sh
+
 # Requires approved, real digest-pinned image values in .env.
 smoke:
     docker compose up -d --wait

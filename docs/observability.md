@@ -180,7 +180,7 @@ only in half of the services it touched. Only the head rate changes between
 environments: development keeps every span because the volumes are small and a
 dropped span is a debugging dead end, while production keeps a tenth.
 
-These eleven services are wired:
+These twelve services are wired:
 
 | Service | `OTEL_SERVICE_NAME` |
 | --- | --- |
@@ -195,6 +195,7 @@ These eleven services are wired:
 | `dashboard` | `dashboard` |
 | `explore` | `explore` |
 | `insights` | `insights` |
+| `embeddings` | `embeddings` |
 
 Each of them also declares `depends_on: otel-collector` with condition
 `service_started` — never `service_healthy`. Telemetry must not be able to hold
@@ -318,9 +319,9 @@ GrooveMap service molecule instruments against them.
 
 - `service.name` = the docker-compose service key (`api`, `extractor-discogs`,
   `extractor-musicbrainz`, `graphinator`, `brainzgraphinator`, `tableinator`,
-  `brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init`,
-  `mcp-server`). Set via `OTEL_SERVICE_NAME` in compose; the code default is the
-  package's canonical name.
+  `brainztableinator`, `dashboard`, `explore`, `insights`, `embeddings`,
+  `schema-init`, `mcp-server`). Set via `OTEL_SERVICE_NAME` in compose; the code
+  default is the package's canonical name.
 - `service.namespace=groovemap` and `deployment.environment.name=<dev|prod>` via
   `OTEL_RESOURCE_ATTRIBUTES` in compose.
 - `service.version` = the package version (`importlib.metadata` /
@@ -914,19 +915,23 @@ roll call of everything that exported:
 curl -s 'http://localhost:8428/api/v1/label/service_name/values'
 ```
 
-Expect the eleven compose service keys — `api`, `extractor-discogs`,
-`extractor-musicbrainz`, `graphinator`, `brainzgraphinator`, `tableinator`,
-`brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
-six values that come from the scrape jobs rather than from a push:
-`rabbitmq`, `postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`,
-and `otelcol-contrib`.
+Expect the eleven compose service keys that `docker compose up` actually starts — `api`,
+`extractor-discogs`, `extractor-musicbrainz`, `graphinator`, `brainzgraphinator`,
+`tableinator`, `brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
+six values that come from the scrape jobs rather than from a push: `rabbitmq`,
+`postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`, and `otelcol-contrib`.
 
-Two details are easy to misread. `schema-init` runs once and exits, so it
+Three details are easy to misread. `schema-init` runs once and exits, so it
 appears only because the one-shot bootstrap flushes on shutdown; its absence
-means the flush regressed. And the collector's own scrape job is labelled
-`otelcol-contrib`, not `otel-collector`, because `service.name` from the
-collector's own telemetry wins over the job name — the five exporter jobs do
-match their compose service keys.
+means the flush regressed. `embeddings` (the twelfth wired service; see
+[Monthly embedding refresh](maintenance.md#monthly-embedding-refresh)) never
+appears here at all unless it was separately invoked with `docker compose run`
+— it sits behind the `jobs` profile precisely so plain `docker compose up`
+never starts it, so its absence from this roll call is expected, not a
+regression. And the collector's own scrape job is labelled `otelcol-contrib`,
+not `otel-collector`, because `service.name` from the collector's own
+telemetry wins over the job name — the five exporter jobs do match their
+compose service keys.
 
 A service that is missing here is either running an image without the telemetry
 work, or failing its telemetry bootstrap. The bootstrap never raises, so check

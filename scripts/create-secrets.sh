@@ -67,6 +67,13 @@ write_secret "insights_internal_secret.txt" "$(openssl rand -hex 32)"
 # dashboards have no reachable login.
 write_secret "grafana_admin_password.txt" "$(openssl rand -base64 24)"
 
+# Embedding pipeline login (ADR 0013's 2026-09-24 amendment) — a member of
+# database-schema's NOLOGIN embedding_pipeline group role, never the
+# postgres_username superuser above. This only creates the credential file;
+# scripts/provision-embedding-pipeline-login.sh grants the actual database role.
+write_secret "embedding_pipeline_username.txt" "embedding_pipeline"
+write_secret "embedding_pipeline_password.txt" "$(openssl rand -base64 24)"
+
 echo ""
 echo "✅ secrets/ is ready. Files are owner-read-only (chmod 600)."
 echo "   Never commit secrets/ to version control."

@@ -62,6 +62,7 @@ INSTRUMENTED_SERVICES = (
     "dashboard",
     "explore",
     "insights",
+    "embeddings",
 )
 
 EXPORTERS = ("postgres-exporter", "redis-exporter")

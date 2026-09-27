@@ -312,6 +312,131 @@ Operator notes:
   reference copies and artifacts. The census reports a dependent item under `will_move`, not
   `guarded`.
 
+## Monthly embedding refresh
+
+[ADR 0013](https://github.com/groovemap-music/design/blob/main/docs/adr/0013-pgvector-catalog-embeddings.md)
+adopts pgvector and FastRP graph embeddings for similar-artist retrieval. `analytics-engine`
+ships the pipeline that computes them, `analytics-engine-embeddings`
+(`insights/embedding_pipeline.py`), as a one-shot entry point rather than a scheduled loop:
+"the deployment layer" invokes it once a month, after that month's dump has loaded — this
+section is that trigger. No cron or `CronJob` convention exists in this repository; an operator
+(or a CI step standing in for one) runs it by hand, the same shape as
+[Post-import identity maintenance](#post-import-identity-maintenance) above. Production
+scheduling is the homelab's concern, not this repository's.
+
+### Prerequisite: PostgreSQL 19 and pgvector
+
+The pipeline reads and writes through `public.artist_embeddings` and authenticates as a member
+of database-schema's `embedding_pipeline` role — both exist only once `database-schema`'s
+initializer runs against a PostgreSQL instance with the `vector` extension installed. This
+repository's dev/CI `postgres` service is `postgres:18-alpine`, with no pgvector build: a
+locally built, unpublished PostgreSQL 19 + pgvector 0.8.6 development/CI image is
+gm-deployment-kh5, itself gated on the PostgreSQL 19 GA pin (gm-deployment-2sb.2). Until one of
+those lands, the wiring below is in place but cannot complete a real run — `just embeddings-run`
+is expected to fail at authentication or "relation does not exist", not silently succeed. The
+shared production instance is the homelab's own PostgreSQL 19 + pgvector build, requested
+separately from that image.
+
+### Provisioning the pipeline's login (once per stack)
+
+ADR 0013's 2026-09-24 amendment: `database-schema` defines `embedding_pipeline` as a `NOLOGIN`
+group role — `SELECT` on every relation in the `graph` schema, `SELECT, INSERT, UPDATE, DELETE`
+on `public.artist_embeddings` alone, nothing else — and the LOGIN role that is a *member* of it
+is "provisioned where credentials live": `deployment` (this repository) for development and CI,
+the homelab for the shared production instance.
+
+1. `just secrets-bootstrap` (production) or copying `.env.example` to `.env` (development)
+   creates the `EMBEDDING_PIPELINE_POSTGRES_USERNAME`/`_PASSWORD` credential material, the same
+   `_FILE` secret convention as every other login in this stack.
+2. `just embeddings-provision-login` creates that LOGIN role, if it does not already exist, and
+   grants it membership in `embedding_pipeline`. It is idempotent — safe to re-run after every
+   dump load — and it is deliberately a no-op (exit 0, with a logged reason) until
+   `embedding_pipeline` itself exists, so it never fails `just check`/CI over the pgvector
+   dependency above.
+
+### Running the job
+
+Once the prerequisites above are met, after a month's dump has loaded and its consumer queues
+have drained (the same RabbitMQ/Queue Trends signal
+[Post-import identity maintenance](#post-import-identity-maintenance) uses):
+
+```bash
+SOURCE_DUMP_ID=discogs-2026-09 SOURCE_DUMP_DATE=2026-09-01 just embeddings-run
+```
+
+`SOURCE_DUMP_ID`/`SOURCE_DUMP_DATE` have no default — the invoker supplies them, since it is the
+one that knows which dump just landed, and they become `artist_embeddings.source_dump_id`/
+`source_dump_date` on every row the run writes. The job is idempotent per stored
+`model_version` (which composes the algorithm version, an edge-set version, and the dump id):
+re-running for a dump already recorded under this algorithm is a no-op.
+
+`docker-compose.yml`'s `embeddings` service runs `analytics-engine-embeddings` against the same
+released image the always-on `insights` service uses (`ANALYTICS_ENGINE_IMAGE`), with its
+entrypoint overridden and no dependency on `api`/`redis`/`neo4j` — the pipeline talks to
+PostgreSQL only. It sits behind Compose's `jobs` profile so `docker compose up` never starts it;
+`just embeddings-run` (`scripts/run-embeddings.sh`) reaches it directly with `docker compose run
+--rm --no-deps`, regardless of active profiles.
+
+### The post-load operator index step
+
+`embedding_pipeline` holds no DDL privilege and no ownership of `public.artist_embeddings` — it
+never builds or rebuilds an index itself. Instead it logs the exact statement an operator (a
+human, or an automation step on a different, more privileged credential) runs after the load's
+transaction commits:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <index_name>
+ON public.artist_embeddings USING hnsw (embedding halfvec_cosine_ops)
+WITH (m = 16, ef_construction = 64)
+WHERE model_version = '<model_version>';
+```
+
+`<index_name>` and `<model_version>` come from the job's own log line (`_index_name` /
+`stored_model_version` in `insights/embedding_pipeline.py`) — copy them verbatim rather than
+re-deriving them; `database-schema`'s own `build_artist_embeddings_version_index` computes the
+identical statement byte-for-byte and is the function an operator with programmatic access
+should prefer over raw SQL. Run it as the stack superuser, never the `embedding_pipeline` login:
+
+```bash
+docker exec groovemap-postgres psql -U groovemap -d groovemap -v ON_ERROR_STOP=1 \
+  -c "SET maintenance_work_mem = '8GB'" \
+  -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS <index_name> ON public.artist_embeddings USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE model_version = '<model_version>'" \
+  -c "RESET maintenance_work_mem"
+```
+
+Once `catalog-api` has switched its kNN retrieval to the new `model_version`, retire the
+superseded one — index before rows, so the bulk `DELETE` has nothing left to maintain row by
+row — via `retire_artist_embeddings_version`, or the equivalent:
+`DROP INDEX CONCURRENTLY IF EXISTS <old_index_name>` then
+`DELETE FROM public.artist_embeddings WHERE model_version = '<old_model_version>'`.
+
+**Memory and `/dev/shm`.** ADR 0013's own documented `maintenance_work_mem` figure (2 GB) is a
+code default, not a sizing recommendation — `gm-analytics-engine-ieu.3` measured a full-scale
+build (6.87M rows, `halfvec(128)`, `m = 16`, `ef_construction = 64`) falling into a
+disk-spilling slow mode at both settings tried below full speed:
+
+| `maintenance_work_mem` | Result |
+| --- | --- |
+| 2 GB | Slowed to 15,000–18,000 tuples/minute past about 3.4M of 6,869,453 rows (52.3%); killed after ~1h25m. |
+| 4.5 GB | Slowed past about 5.3M rows (77%). |
+| 8 GB, with `max_parallel_maintenance_workers = 4` on a 6-CPU host | Full speed throughout: 552.8 s (6,869,453 rows) and 596.1 s (6,896,892 rows). |
+
+Raise `maintenance_work_mem` to at least ~4.5 GB for a full-catalog build, and prefer 8 GB with
+parallel workers enabled where the host can spare it. A parallel HNSW build needs `/dev/shm` (or
+Docker's `--shm-size`) at least as large as whatever `maintenance_work_mem` it runs with — this
+stack's `postgres` service does not raise `shm_size` today, because it has no pgvector build to
+size a real index against yet; whoever lands the PostgreSQL 19 + pgvector image above must raise
+it alongside the memory setting. These figures describe the shape of the sizing problem at this
+row count on a two-CPU-class host, not a value to plan the production host around — re-measure
+there.
+
+**First full run.** No end-to-end run against a real PostgreSQL + pgvector instance has
+happened yet — the pipeline's ~7.6–8.5 GB peak RSS budget
+(`insights/embeddings.py::estimate_peak_bytes`, see analytics-engine's `docs/embeddings.md`) is
+an estimate, never measured end-to-end from a running container. The first operator to run this
+job for real must record peak RSS/physical footprint and wall time and report them back to
+`analytics-engine` (`docs/embeddings.md`), per gm-analytics-engine-ieu.3's own follow-up note.
+
 ## Media-aware loader upgrade
 
 Promoting the media-aware SQL loader and graph enricher images does not populate
