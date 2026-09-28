@@ -98,6 +98,7 @@ and pinned by digest:
 | Compose service | Reviewed image tag |
 | --- | --- |
 | `rabbitmq` | `rabbitmq:4-management` |
+| `rabbitmq-dlq-policy-init` | `rabbitmq:4-management` |
 | `postgres` | `postgres:18-alpine` |
 | `neo4j` | `neo4j:2026-community` |
 | `redis` | `redis:8-alpine` |

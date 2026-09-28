@@ -69,6 +69,14 @@ services:
       - rabbitmq_password
       - rabbitmq_username
 
+  # gm-deployment-8mb.1: authenticate to the management API with the same
+  # Docker _FILE secret credential the rabbitmq service itself uses, instead
+  # of the base file's plaintext RABBITMQADMIN_USERNAME/PASSWORD.
+  rabbitmq-dlq-policy-init:
+    secrets:
+      - rabbitmq_password
+      - rabbitmq_username
+
   postgres:
     restart: always
     command:

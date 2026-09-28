@@ -90,6 +90,45 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # One-shot, idempotent: declares the catalog-DLQ size-cap policy (gm-deployment-8mb.1)
+  # via the management HTTP API (rabbitmqadmin, bundled in the rabbitmq image) once the
+  # broker is healthy. RabbitMQ's boot-time `load_definitions` import was rejected: on a
+  # blank node it skips creating the default vhost/user that RABBITMQ_DEFAULT_USER/PASS/
+  # VHOST above would otherwise create, breaking every service's auth on a fresh install
+  # (see "Nuances of Boot-time Definition Import" in the RabbitMQ docs). Applying the
+  # policy after the broker (and its default vhost/user) already exist avoids that.
+  # Neither this service nor the policy it declares touches any queue declaration — the
+  # four catalog consumers' DLQs stay classic; see docs/admin-guide.md#dlq-size-cap-policy.
+  rabbitmq-dlq-policy-init:
+    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    container_name: groovemap-rabbitmq-dlq-policy-init
+    hostname: rabbitmq-dlq-policy-init
+    entrypoint: ["/scripts/rabbitmq-dlq-policy-init.sh"]
+    environment:
+      RABBITMQADMIN_TARGET_HOST: rabbitmq
+      RABBITMQADMIN_TARGET_PORT: "15672"
+      RABBITMQADMIN_USERNAME: groovemap
+      RABBITMQADMIN_PASSWORD: groovemap
+      RABBITMQADMIN_TARGET_VHOST: /
+      RABBITMQADMIN_NON_INTERACTIVE_MODE: "true"
+      # Catalog-DLQ size-cap policy (gm-deployment-8mb.1): operator-configurable without
+      # editing service code. See docs/admin-guide.md#dlq-size-cap-policy for defaults,
+      # rationale, and how to inspect/change the live policy.
+      RABBITMQ_DLQ_MAX_LENGTH: "${RABBITMQ_DLQ_MAX_LENGTH:-50000}"
+      RABBITMQ_DLQ_MAX_LENGTH_BYTES: "${RABBITMQ_DLQ_MAX_LENGTH_BYTES:-536870912}"
+      RABBITMQ_DLQ_OVERFLOW: "${RABBITMQ_DLQ_OVERFLOW:-drop-head}"
+    volumes:
+      - ./scripts/rabbitmq-dlq-policy-init.sh:/scripts/rabbitmq-dlq-policy-init.sh:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - groovemap
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
   # PostgreSQL database
   postgres:
     image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2

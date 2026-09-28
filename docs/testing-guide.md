@@ -74,6 +74,7 @@ flowchart LR
 | The erasure assertion's export parsing, absence probes, and isolation | `deployment/tests/deploy/test_erasure_smoke.py` |
 | Image naming, digest pinning, and promoted-artifact provenance | `deployment/scripts/check-images.py` |
 | Compose rendering for supported overlays | `deployment/scripts/check-compose.sh` |
+| Catalog-DLQ size-cap policy: pattern matches the real DLQ names and provisioning wiring | `deployment/scripts/check-rabbitmq-dlq-policy.py` |
 | Service behavior, package behavior, and service Dockerfiles | The corresponding source repository |
 | Database schema behavior and initializer image | [`database-schema`](https://github.com/groovemap-music/database-schema) |
 | Shared CI behavior | [`.github`](https://github.com/groovemap-music/.github) |

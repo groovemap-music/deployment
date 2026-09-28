@@ -11,6 +11,7 @@ _source-analysis:
     uvx --from ruff==0.16.4 ruff check .
     uv run python scripts/check-images.py
     uv run python scripts/check-dashboards.py
+    uv run python scripts/check-rabbitmq-dlq-policy.py
 
 _compose-check:
     bash scripts/check-compose.sh

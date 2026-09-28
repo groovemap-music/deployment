@@ -87,6 +87,7 @@ def test_recipe_dag_preserves_the_required_validation_graph() -> None:
         "uvx --from ruff==0.16.4 ruff check .",
         "uv run python scripts/check-images.py",
         "uv run python scripts/check-dashboards.py",
+        "uv run python scripts/check-rabbitmq-dlq-policy.py",
         "uv run python scripts/check-licenses.py",
         'uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"',
         "bash scripts/check-compose.sh",
