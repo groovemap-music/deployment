@@ -14,6 +14,7 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 # GrooveMap image supplied through a required environment variable.
 THIRD_PARTY_SERVICES = (
     "rabbitmq",
+    "rabbitmq-dlq-policy-init",
     "postgres",
     "neo4j",
     "redis",
