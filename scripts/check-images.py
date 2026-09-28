@@ -93,6 +93,11 @@ THIRD_PARTY_IMAGES = {
     "postgres": "postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",  # gitleaks:allow
     "postgres-exporter": "prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e",  # gitleaks:allow
     "rabbitmq": "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8",  # gitleaks:allow
+    # rabbitmqadmin (the HTTP-API CLI that declares the catalog-DLQ cap policy,
+    # gm-deployment-8mb.1) is bundled in the same image, so this one-shot init
+    # service reuses rabbitmq's own reference rather than adding a new
+    # third-party image.
+    "rabbitmq-dlq-policy-init": "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8",  # gitleaks:allow
     "redis": "redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",  # gitleaks:allow
     "redis-exporter": "oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836",  # gitleaks:allow
     "victoria-metrics": "victoriametrics/victoria-metrics:v1.152.0@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef",  # gitleaks:allow
