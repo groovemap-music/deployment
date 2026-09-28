@@ -43,7 +43,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    image: rabbitmq:4-management@sha256:ddc75301edf58a8332934cf2d801be7cbf8d65c6458d747364a8046238ff1c89
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -100,7 +100,7 @@ services:
   # Neither this service nor the policy it declares touches any queue declaration — the
   # four catalog consumers' DLQs stay classic; see docs/admin-guide.md#dlq-size-cap-policy.
   rabbitmq-dlq-policy-init:
-    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    image: rabbitmq:4-management@sha256:ddc75301edf58a8332934cf2d801be7cbf8d65c6458d747364a8046238ff1c89
     container_name: groovemap-rabbitmq-dlq-policy-init
     hostname: rabbitmq-dlq-policy-init
     entrypoint: ["/scripts/rabbitmq-dlq-policy-init.sh"]
@@ -131,7 +131,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     container_name: groovemap-postgres
     hostname: postgres
     command:
@@ -167,7 +167,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad
+    image: neo4j:2026.08.1-community@sha256:d8f4c156caa3af76499134947deb11d13042e471d9733060449f2a01eb7a248e
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -217,7 +217,7 @@ services:
       - no-new-privileges:true
 
   redis:
-    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     container_name: groovemap-redis
     hostname: redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -273,7 +273,7 @@ services:
 
   # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
   redis-exporter:
-    image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
+    image: oliver006/redis_exporter:v1.92.0@sha256:ca3abd5f19da6c87e96038ba08aaa3dfaab34dc649834584c4d6880b05952fef
     container_name: groovemap-redis-exporter
     hostname: redis-exporter
     environment:
@@ -438,7 +438,7 @@ services:
   # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
   # API this server exposes under /select/tempo.
   victoria-traces:
-    image: victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd
+    image: victoriametrics/victoria-traces:v0.11.1@sha256:b8e13852fa320debb9c1124f7987f62a1fd048c9de50a2ed840c390e21e232ed
     container_name: groovemap-victoria-traces
     hostname: victoria-traces
     command:
