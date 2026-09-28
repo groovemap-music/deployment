@@ -678,6 +678,11 @@ LOG_LEVEL=INFO
 Published endpoints: <http://localhost:8004> (service) and
 <http://localhost:8005/health> (health probe).
 
+After configuring Resend, follow the
+[transactional email live-verification runbook](transactional-email-verification.md).
+The final send and password change require explicit operator approval; the
+configuration examples above do not prove live delivery.
+
 **Notes**: After startup, set Discogs app credentials using the `discogs-setup` CLI bundled in the API container:
 
 ```bash
