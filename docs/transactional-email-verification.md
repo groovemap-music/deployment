@@ -86,7 +86,8 @@ received message and a completed reset are both required.
 
 ## Record the outcome
 
-Add a note to the Beadhive work item with this non-secret evidence:
+Add a note to bead gm-deployment-v7l — the tracked live-verification work item
+this runbook was split from — with this non-secret evidence:
 
 ```text
 Live verification: PASS | FAIL
