@@ -14,6 +14,7 @@
 - [Monitoring](monitoring.md)
 - [Observability](observability.md)
 - [Database resilience](database-resilience.md)
+- [Graph backend continuity and rollback](graph-backend-continuity.md)
 - [Docker security](docker-security.md)
 - [Dockerfile standards](dockerfile-standards.md)
 - [Transactional email live verification](transactional-email-verification.md)
