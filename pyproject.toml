@@ -40,6 +40,10 @@ exclude-newer = "2 days"
 line-length = 150
 target-version = "py314"
 
+[tool.ruff.per-file-target-version]
+# Lux host and pinned legacy consumer images execute these helpers on Python 3.13.
+"scripts/extractor*.py" = "py313"
+
 [tool.ruff.lint]
 select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]
 ignore = ["B008", "C901", "E501", "S101"]

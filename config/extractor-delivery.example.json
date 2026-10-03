@@ -61,7 +61,14 @@
         }
       },
       "service": null,
-      "baseline_image": null
+      "baseline_image": null,
+      "baseline_configured_image": null,
+      "baseline_runtime": {
+        "configured_image": null,
+        "repo_digest": null,
+        "image_id": null,
+        "reference": null
+      }
     },
     "musicbrainz": {
       "image": null,
@@ -121,7 +128,14 @@
         }
       },
       "service": null,
-      "baseline_image": null
+      "baseline_image": null,
+      "baseline_configured_image": null,
+      "baseline_runtime": {
+        "configured_image": null,
+        "repo_digest": null,
+        "image_id": null,
+        "reference": null
+      }
     }
   }
 }

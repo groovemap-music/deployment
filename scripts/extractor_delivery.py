@@ -50,6 +50,17 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             isinstance(original_image, str) and bool(re.fullmatch(r"[a-zA-Z0-9./_-]+@sha256:[0-9a-f]{64}", original_image)),
             f"{provider}: immutable original baseline image required",
         )
+        configured = record.get("baseline_configured_image")
+        require(isinstance(configured, str) and bool(configured), f"{provider}: original configured image reference required")
+        runtime = record.get("baseline_runtime", {})
+        require(isinstance(runtime, dict), f"{provider}: original runtime identity record required")
+        require(runtime.get("configured_image") == configured, f"{provider}: original runtime configured reference mismatch")
+        require(runtime.get("repo_digest") == original_image, f"{provider}: inspected original registry digest mismatch")
+        require(
+            isinstance(runtime.get("image_id"), str) and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", runtime["image_id"])),
+            f"{provider}: inspected original image ID required",
+        )
+        require(bool(runtime.get("reference")), f"{provider}: original runtime identity evidence required")
         image = record.get("image", "")
         require(isinstance(image, str), f"{provider}: immutable image string required")
         require(
@@ -118,7 +129,7 @@ def expected_config(baseline: dict[str, Any], manifest: dict[str, Any]) -> dict[
         changes = overlay["services"][service]
         require(service in result.get("services", {}), f"missing baseline service {service}")
         target = result["services"][service]
-        require(target.get("image") == record["baseline_image"], f"{provider}: original baseline image mismatch")
+        require(target.get("image") == record["baseline_configured_image"], f"{provider}: original baseline image mismatch")
         require(target.get("command") == ["--source", provider], f"{provider}: original baseline provider selector mismatch")
         require("build" not in target, f"{service}: baseline must consume an immutable image")
         target["image"] = changes["image"]
@@ -185,7 +196,7 @@ def validate_json_log(text: str, environment: str) -> dict[str, Any]:
     return {"json_events": events, "root_environment": environment, "missing_environment": 0, "wrong_environment": 0}
 
 
-def isolated_startup_probe(image: str, provider: str, context: str, revision: str) -> dict[str, Any]:
+def isolated_startup_probe(image: str, provider: str, context: str, revision: str, executor: Any = None) -> dict[str, Any]:
     """Probe an already-pulled approved image without network, host mounts or production credentials."""
     require(provider in PROVIDERS, "unknown provider")
     require(bool(re.fullmatch(rf"ghcr\.io/groovemap-music/{provider}-ingestion@sha256:[0-9a-f]{{64}}", image)), "immutable provider image required")
@@ -193,7 +204,9 @@ def isolated_startup_probe(image: str, provider: str, context: str, revision: st
     require(bool(SHA.fullmatch(revision)), "verified OCI revision required")
     docker = ["docker", "--context", context]
 
-    def execute(arguments: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    def execute(arguments: list[str], timeout: int = 30, cleanup: bool = False) -> subprocess.CompletedProcess[str]:
+        if executor is not None:
+            return executor(arguments, timeout, cleanup=cleanup)  # type: ignore[no-any-return]
         # All commands address Docker with explicit argv; no shell or private environment is forwarded.
         return subprocess.run([*docker, *arguments], capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
 
@@ -230,6 +243,12 @@ def isolated_startup_probe(image: str, provider: str, context: str, revision: st
             "256m",
             "--pids-limit",
             "64",
+            "--log-driver",
+            "json-file",
+            "--log-opt",
+            "max-size=1m",
+            "--log-opt",
+            "max-file=1",
             "--network",
             "none",
             "--read-only",
@@ -275,27 +294,33 @@ def isolated_startup_probe(image: str, provider: str, context: str, revision: st
                 require(exit_code == 1, "missing synthetic secret must fail before acquisition")
                 scenarios[name] = {"exit": exit_code, **validate_json_log(started.stdout, environment or "development")}
         except subprocess.TimeoutExpired as error:
-            error.add_note(f"Task-owned probe name={container_name} owner={owner}; inspect ownership before any later cleanup")
+            error.add_note(f"Task-owned probe name={container_name} owner={owner} context={context}; inspect ownership before any later cleanup")
             raise
         finally:
             # Even timeout/error before create returns an ID uses the unique ownership label.
-            inspected = execute(["container", "inspect", container_name], timeout=5)
-            if inspected.returncode == 0:
-                owned = json.loads(inspected.stdout)[0]
-                config = owned.get("Config", {})
-                owned_id = owned.get("Id", "")
-                require(
-                    config.get("Labels", {}).get("beadhive.probe.owner") == owner
-                    and config.get("Labels", {}).get("beadhive.probe.task") == "gm-deployment-eeo"
-                    and config.get("Image") == image,
-                    "probe cleanup ownership is not verified; no container removed",
+            try:
+                inspected = execute(["container", "inspect", container_name], timeout=5, cleanup=True)
+                if inspected.returncode == 0:
+                    owned = json.loads(inspected.stdout)[0]
+                    config = owned.get("Config", {})
+                    owned_id = owned.get("Id", "")
+                    require(
+                        config.get("Labels", {}).get("beadhive.probe.owner") == owner
+                        and config.get("Labels", {}).get("beadhive.probe.task") == "gm-deployment-eeo"
+                        and config.get("Image") == image,
+                        "probe cleanup ownership is not verified; no container removed",
+                    )
+                    require(bool(re.fullmatch(r"[0-9a-f]{64}", owned_id)), "invalid inspected probe identity")
+                    require(container is None or container == owned_id, "probe cleanup identity mismatch; no container removed")
+                    removed = execute(["rm", "--force", owned_id], timeout=5, cleanup=True)
+                    require(removed.returncode == 0, "owned isolated probe cleanup failed")
+                else:
+                    require(container is None, "owned probe disappeared or cleanup could not inspect it")
+            except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as cleanup_error:
+                cleanup_error.add_note(
+                    f"Task-owned cleanup unresolved name={container_name} owner={owner} context={context}; inspect ownership before reconciliation"
                 )
-                require(bool(re.fullmatch(r"[0-9a-f]{64}", owned_id)), "invalid inspected probe identity")
-                require(container is None or container == owned_id, "probe cleanup identity mismatch; no container removed")
-                removed = execute(["rm", "--force", owned_id], timeout=5)
-                require(removed.returncode == 0, "owned isolated probe cleanup failed")
-            else:
-                require(container is None, "owned probe disappeared or cleanup could not inspect it")
+                raise
     return {
         "image": image,
         "provider": provider,
@@ -346,9 +371,8 @@ def main() -> int:
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
         # Parse and filesystem failures can contain private paths or JSON input snippets.
         print(f"delivery preflight rejected ({type(error).__name__}); inspect inputs locally")
-        if isinstance(error, subprocess.TimeoutExpired):
-            for note in getattr(error, "__notes__", []):
-                print(note)
+        for note in getattr(error, "__notes__", []):
+            print(note)
         return 2
     print("delivery inputs validated; no deployment performed; independent review and root coordination remain required")
     return 0

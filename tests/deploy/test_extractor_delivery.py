@@ -41,6 +41,13 @@ def manifest() -> dict[str, Any]:
         providers[provider] = {
             "service": f"existing-extractor-{provider}",
             "baseline_image": f"registry.example/legacy-extractor@sha256:{'c' * 64}",
+            "baseline_configured_image": "registry.example/legacy-extractor:latest",
+            "baseline_runtime": {
+                "configured_image": "registry.example/legacy-extractor:latest",
+                "repo_digest": f"registry.example/legacy-extractor@sha256:{'c' * 64}",
+                "image_id": f"sha256:{'d' * 64}",
+                "reference": "synthetic-test-only",
+            },
             "image": image,
             "version": "v1.2.3",
             "image_revision": "b" * 40,
@@ -66,7 +73,7 @@ def baseline() -> dict[str, Any]:
     for provider in delivery.PROVIDERS:
         service = manifest()["providers"][provider]["service"]
         services[service] = {
-            "image": f"registry.example/legacy-extractor@sha256:{'c' * 64}",
+            "image": "registry.example/legacy-extractor:latest",
             "command": ["--source", provider],
             "hostname": f"extractor-{provider}",
             "environment": {
@@ -437,3 +444,81 @@ def test_mapping_to_unrelated_existing_service_is_rejected() -> None:
     evidence["providers"]["discogs"]["service"] = "unrelated"
     with pytest.raises(ValueError, match="original baseline"):
         delivery.expected_config(baseline(), evidence)
+
+
+@pytest.mark.parametrize(
+    "key,bad", [("configured_image", "other:latest"), ("repo_digest", "other@sha256:" + "a" * 64), ("image_id", "invalid"), ("reference", "")]
+)
+def test_original_mutable_reference_requires_bound_inspected_runtime_evidence(key: str, bad: str) -> None:
+    record = manifest()
+    record["providers"]["discogs"]["baseline_runtime"][key] = bad
+    with pytest.raises(ValueError, match="original"):
+        delivery.expected_config(baseline(), record)
+
+
+def test_mutable_original_reference_is_not_rewritten_into_fabricated_resolved_baseline() -> None:
+    original = baseline()
+    mapping = manifest()["providers"]["discogs"]
+    assert original["services"][mapping["service"]]["image"].endswith(":latest")
+    candidate = delivery.expected_config(original, manifest())
+    assert original["services"][mapping["service"]]["image"] == mapping["baseline_configured_image"]
+    assert candidate["services"][mapping["service"]]["image"] == mapping["image"]
+    fabricated = copy.deepcopy(original)
+    fabricated["services"][mapping["service"]]["image"] = mapping["baseline_image"]
+    with pytest.raises(ValueError, match="original baseline"):
+        delivery.expected_config(fabricated, manifest())
+
+
+@pytest.mark.parametrize("step", ["inspect", "remove"])
+def test_cleanup_timeout_preserves_owned_reconciliation_identity(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
+    image = manifest()["providers"]["discogs"]["image"]
+    owner = ""
+
+    def fake_run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal owner
+        args = command[3:]
+        if args[:2] == ["image", "inspect"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Architecture": "amd64",
+                            "Os": "linux",
+                            "Config": {"Labels": {"org.opencontainers.image.revision": "b" * 40}, "Entrypoint": ["discogs-ingestion"]},
+                        }
+                    ]
+                ),
+                "",
+            )
+        if args[0] == "create":
+            owner = args[args.index("--label") + 1].split("=", 1)[1]
+            raise subprocess.TimeoutExpired(command, 30)
+        if args[:2] == ["container", "inspect"]:
+            if step == "inspect":
+                raise subprocess.TimeoutExpired(command, 5)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Id": "c" * 64,
+                            "Config": {"Image": image, "Labels": {"beadhive.probe.owner": owner, "beadhive.probe.task": "gm-deployment-eeo"}},
+                        }
+                    ]
+                ),
+                "",
+            )
+        assert args == ["rm", "--force", "c" * 64]
+        raise subprocess.TimeoutExpired(command, 5)
+
+    monkeypatch.setattr(delivery.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        delivery.isolated_startup_probe(image, "discogs", "test-only", "b" * 40)
+    note = " ".join(error.value.__notes__)
+    assert f"name=gm-extractor-log-probe-{owner}" in note
+    assert f"owner={owner}" in note
+    assert "context=test-only" in note
+    assert isinstance(error.value.__context__, subprocess.TimeoutExpired)
