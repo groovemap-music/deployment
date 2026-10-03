@@ -47,10 +47,11 @@ secrets:
   embedding_pipeline_password:
     file: ./secrets/embedding_pipeline_password.txt
 
-# Production telemetry: identical transport, different environment tag. The
-# base file's OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME carry over
-# unchanged; only the resource attributes are re-stamped.
+# Production logging and telemetry context share this application-service anchor.
+# The base file's OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME carry over;
+# resource attributes and the head sampling rate are re-stamped below.
 x-otel-prod-env: &otel-prod-env
+  ENVIRONMENT: "production"
   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=groovemap,deployment.environment.name=prod"
   # Production keeps a tenth of the traces. The sampler itself
   # (`parentbased_traceidratio`) is unchanged from the base file, so a trace
