@@ -1,0 +1,141 @@
+{
+  "format_version": 1,
+  "baseline_reference": null,
+  "rollback_reference": null,
+  "providers": {
+    "discogs": {
+      "image": null,
+      "version": null,
+      "image_revision": null,
+      "reviewed_main": "e95c0a5db6b8721fecbddf78ea54ed4b17263f01",
+      "platform": "linux/amd64",
+      "release_review_reference": null,
+      "source_ancestry": {
+        "image": null,
+        "ancestor": "e95c0a5db6b8721fecbddf78ea54ed4b17263f01",
+        "descendant": null,
+        "command": null,
+        "exit": null,
+        "reference": null
+      },
+      "exchange_prefix": null,
+      "proofs": {
+        "cli": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "secret_file": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "mount_permissions": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "routing": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "consumer_contract": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "resume": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "logging": {
+          "image": null,
+          "status": "pending",
+          "reference": null,
+          "root_environment": null,
+          "json_events": 0,
+          "missing_environment": null,
+          "wrong_environment": null
+        }
+      },
+      "service": null,
+      "baseline_image": null,
+      "baseline_configured_image": null,
+      "baseline_runtime": {
+        "configured_image": null,
+        "repo_digest": null,
+        "image_id": null,
+        "reference": null
+      }
+    },
+    "musicbrainz": {
+      "image": null,
+      "version": null,
+      "image_revision": null,
+      "reviewed_main": "737eac71a9039efa9ade93de194f33cec50c5a35",
+      "platform": "linux/amd64",
+      "release_review_reference": null,
+      "source_ancestry": {
+        "image": null,
+        "ancestor": "737eac71a9039efa9ade93de194f33cec50c5a35",
+        "descendant": null,
+        "command": null,
+        "exit": null,
+        "reference": null
+      },
+      "exchange_prefix": null,
+      "proofs": {
+        "cli": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "secret_file": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "mount_permissions": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "routing": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "consumer_contract": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "resume": {
+          "image": null,
+          "status": "pending",
+          "reference": null
+        },
+        "logging": {
+          "image": null,
+          "status": "pending",
+          "reference": null,
+          "root_environment": null,
+          "json_events": 0,
+          "missing_environment": null,
+          "wrong_environment": null
+        }
+      },
+      "service": null,
+      "baseline_image": null,
+      "baseline_configured_image": null,
+      "baseline_runtime": {
+        "configured_image": null,
+        "repo_digest": null,
+        "image_id": null,
+        "reference": null
+      }
+    }
+  }
+}

@@ -23,3 +23,5 @@
 - [Platform targeting](platform-targeting.md)
 - [Usage examples](usage-examples.md)
 - [Source-history provenance](extraction.md)
+
+- [Extractor delivery](extractor-delivery.md): two-service compatibility, image provenance, adaptation and rollback.
