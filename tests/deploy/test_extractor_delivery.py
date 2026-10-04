@@ -522,3 +522,142 @@ def test_cleanup_timeout_preserves_owned_reconciliation_identity(monkeypatch: py
     assert f"owner={owner}" in note
     assert "context=test-only" in note
     assert isinstance(error.value.__context__, subprocess.TimeoutExpired)
+
+
+def _load_fragment() -> Any:
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "extractor_managed_fragment", Path(__file__).resolve().parents[2] / "scripts/extractor_managed_fragment.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+fragment = _load_fragment()
+
+
+def managed_original() -> bytes:
+    # Deliberately preserve unrelated edits, anchors, comments and non-ASCII bytes.
+    text = """x-base: &base
+  user: '1000:1000'
+services:
+  unrelated:
+    image: unrelated:unchanged # existing user edit
+    environment:
+      NOTE: café
+"""
+    for provider in delivery.PROVIDERS:
+        text += f"""  existing-extractor-{provider}:
+    <<: *base
+    image: registry.example/legacy-extractor:latest # retain provenance
+    command: ["--source", "{provider}"] # selector
+    environment: # original operator annotation
+      ENVIRONMENT: production
+      STARTUP_DELAY: "30"
+      RABBITMQ_PASSWORD_FILE: /run/secrets/test-only
+      RETAIN: 'user modification'
+    healthcheck:
+      test: [CMD, 'true']
+"""
+        if provider == "musicbrainz":
+            # Insert at the second service's environment only.
+            index = text.rfind("    healthcheck:")
+            text = text[:index] + "      AMQP_EXCHANGE_PREFIX: ignored\n      DISCOGS_HEALTH_URL: obsolete\n" + text[index:]
+    return text.encode()
+
+
+@pytest.mark.parametrize("crlf", [False, True])
+def test_managed_patch_preserves_dirty_bytes_and_exact_immutable_rollback(crlf: bool) -> None:
+    original = managed_original()
+    if crlf:
+        original = original.replace(b"\n", b"\r\n")
+    value = manifest()
+    forward, proof = fragment.render_fragment(original, fragment.digest(original), value)
+    rollback, rollback_proof = fragment.render_fragment(original, fragment.digest(original), value, rollback=True)
+    expected_rollback = original.replace(b"registry.example/legacy-extractor:latest", value["providers"]["discogs"]["baseline_image"].encode())
+    assert rollback == expected_rollback
+    for preserved in [
+        b"NOTE: caf\xc3\xa9",
+        b"RETAIN: 'user modification'",
+        b"# retain provenance",
+        b"# selector",
+        b"# original operator annotation",
+        b"<<: *base",
+    ]:
+        assert forward.count(preserved) == original.count(preserved)
+    assert b"STARTUP_DELAY:" not in forward and b"DISCOGS_HEALTH_URL:" not in forward
+    assert forward.count(b"command: !reset []") == 2
+    assert proof["all_unrelated_bytes_preserved"] and rollback_proof["changed_original_line_spans"] == 2
+    assert not proof["compose_equivalence_verified"] and not proof["production_applied"]
+    if crlf:
+        assert b"\n" not in forward.replace(b"\r\n", b"")
+
+
+@pytest.mark.parametrize("change", ["hash", "image", "selector", "duplicate", "environment"])
+def test_managed_patch_rejects_source_drift_or_ambiguous_mapping(change: str) -> None:
+    original = managed_original()
+    if change == "image":
+        original = original.replace(b"legacy-extractor:latest", b"other:latest", 1)
+    elif change == "selector":
+        original = original.replace(b'"--source", "discogs"', b'"--source", "musicbrainz"', 1)
+    elif change == "duplicate":
+        original += b"  existing-extractor-discogs:\n"
+    elif change == "environment":
+        original = original.replace(b"environment: # original operator annotation", b"environment: {OTHER: unsafe}", 1)
+    expected = "0" * 64 if change == "hash" else fragment.digest(original)
+    with pytest.raises(ValueError):
+        fragment.render_fragment(original, expected, manifest())
+
+
+def test_real_compose_managed_fragment_matches_full_contract_and_rollback(tmp_path: Path) -> None:
+    original = managed_original()
+    value = manifest()
+    forward, _ = fragment.render_fragment(original, fragment.digest(original), value)
+    rollback, _ = fragment.render_fragment(original, fragment.digest(original), value, rollback=True)
+    models = []
+    for name, content in [("original", original), ("forward", forward), ("rollback", rollback)]:
+        path = tmp_path / (name + ".yml")
+        path.write_bytes(content)
+        command = ["docker", "compose", "--project-name", "extractor-delivery-offline-test", "-f", str(path), "config", "--format", "json"]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        models.append(json.loads(result.stdout))
+    delivery.validate_candidate(models[0], models[1], value)
+    expected = copy.deepcopy(models[0])
+    for record in value["providers"].values():
+        expected["services"][record["service"]]["image"] = record["baseline_image"]
+    assert models[2] == expected
+
+
+def test_managed_cli_refuses_existing_output_without_modifying_any_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = tmp_path / "original.yml"
+    original.write_bytes(managed_original())
+    value = tmp_path / "manifest.json"
+    value.write_text(json.dumps(manifest()))
+    rollback = tmp_path / "rollback.yml"
+    receipt = tmp_path / "receipt.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fragment",
+            "--original",
+            str(original),
+            "--expected-sha256",
+            fragment.digest(original.read_bytes()),
+            "--manifest",
+            str(value),
+            "--forward-output",
+            str(original),
+            "--rollback-output",
+            str(rollback),
+            "--receipt",
+            str(receipt),
+        ],
+    )
+    with pytest.raises(ValueError, match="distinct and absent"):
+        fragment.main()
+    assert original.read_bytes() == managed_original()
+    assert not rollback.exists() and not receipt.exists()

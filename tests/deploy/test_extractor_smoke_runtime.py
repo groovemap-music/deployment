@@ -337,7 +337,10 @@ def test_missing_non_null_legacy_graph_projection_rejected(entity: str) -> None:
         driver.validate_mb_graph(entity, event, {"mbid": event["id"]})
 
 
-@pytest.mark.parametrize("name", ["extractor_delivery.py", "extractor_smoke_run.py", "extractor_smoke_driver.py", "extractor_smoke_prepare.py"])
+@pytest.mark.parametrize(
+    "name",
+    ["extractor_delivery.py", "extractor_managed_fragment.py", "extractor_smoke_run.py", "extractor_smoke_driver.py", "extractor_smoke_prepare.py"],
+)
 def test_remote_helpers_parse_on_python313(name: str) -> None:
     source = (Path(__file__).resolve().parents[2] / "scripts" / name).read_text()
     ast.parse(source, filename=name, feature_version=(3, 13))

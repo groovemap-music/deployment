@@ -220,3 +220,38 @@ The disposable Neo4j auxiliary enables authenticated Bolt only. Its HTTP and HTT
 Each transient capture queue is exclusive to its observer connection and automatically deleted when that connection closes, following [RabbitMQ queue ownership semantics](https://www.rabbitmq.com/docs/queues) and [aio-pika declaration options](https://docs.aio-pika.com/apidoc.html). The observer remains alive throughout producer completion and restart tests, and its capture file lives in the owned bounded capture volume. Broker deprecated-feature settings and the actual producer/consumer topology are unchanged. Observer exit fails readiness immediately and preserves the existing bounded diagnostics before cleanup.
 
 SQL verification follows the exact legacy consumer normalization: the synthetic master year is persisted as integer 2000 and the release date derives integer year 2000. Every other captured field and relationship must remain equal, with normalized year type/value independently asserted. Different single-file versions remain unchanged; prior stale-purge safety refusals are recorded without treating them as the sole failure cause. Failed SQL/graph verifier subprocesses now preserve bounded first and latest redacted errors in the owned host directory before retry or cleanup.
+
+
+## Retain an included managed fragment
+
+When the deployment authority includes an existing service fragment, retain that
+fragment rather than relying on an additional ephemeral Compose file. Capture its
+actual current bytes, including pre-existing operator edits, and independently
+record the SHA-256. Never replace it with a clean repository copy.
+
+```sh
+uv run python scripts/extractor_managed_fragment.py \
+  --original private-original.yml --expected-sha256 VERIFIED_CURRENT_SHA256 \
+  --manifest reviewed-manifest.json \
+  --forward-output absent-forward.yml --rollback-output absent-rollback.yml \
+  --receipt absent-byte-preservation-receipt.json
+```
+
+This side-effect-free preparer requires exact source identity, mapped provider
+selectors and configured baseline images. It changes only the two provider images,
+commands, deployment environment, exchange prefixes and obsolete environment keys.
+All other original line spans remain byte-identical, including unrelated services,
+anchors and operator edits. The rollback candidate preserves the exact original
+fragment except for the two independently verified immutable rollback image pins.
+Outputs must be distinct and absent; the managed input is never opened for writing.
+
+These byte receipts do not establish Compose equivalence or authorize deployment.
+The operator must resolve the real managed entrypoint with each staged fragment,
+compare the full private candidate against `extractor_delivery.py`'s expected model,
+and prove rollback differs from the original resolved baseline only in those two
+image pins. Before a reviewed atomic write, recheck the live source byte hash and
+retain the original, candidate, rollback and resolution evidence durably. A changed
+hash requires a fresh snapshot and review, preserving the intervening edits. After
+writing, resolve the actual included fragment again and verify exact equivalence
+before recreating only the two selected services. Existing operational acceptance
+checks and guarded rollback remain required.
