@@ -106,6 +106,31 @@ configuration. The sections below describe service runtime contracts; change a
 literal Compose value with a reviewed override file, not by assuming every
 source-level variable is an `.env` interpolation.
 
+### Structured log environment
+
+The production overlay explicitly sets `ENVIRONMENT=production` on every
+GrooveMap application service, including the schema and embedding jobs. Apply
+both `docker-compose.yml` and `docker-compose.prod.yml` to obtain that runtime
+setting; the base development configuration leaves it unset.
+
+The shared Python logger reads `ENVIRONMENT` when logging is configured and
+falls back to `development` when the variable is absent. This adds the
+`environment` field to structured logs; it does not set verbosity. `LOG_LEVEL`
+controls verbosity independently. The telemetry resource attribute remains
+`deployment.environment.name=prod`; its abbreviated value does not set the
+logger's `ENVIRONMENT` variable.
+
+`ENVIRONMENT` is a literal container value in the production overlay, rather
+than an `.env` interpolation input. Changing a host shell variable or adding
+`ENVIRONMENT` to `.env` does not override it. A reviewed Compose override may
+change the literal value. Existing containers retain their old environment
+until an operator applies the reviewed configuration and recreates them.
+
+For post-deployment verification, inspect a newly emitted application JSON log
+and confirm its `environment` field is `production`. A local Compose validation
+proves the configuration supplied to containers; it does not prove that a live
+host has applied it or that every third-party image emits the same log fields.
+
 ### RabbitMQ Configuration
 
 RabbitMQ connections are configured using individual component variables.
