@@ -66,7 +66,7 @@ def healthcheck(port: int) -> list[str]:
 
 
 def expected_config(baseline: dict[str, Any], manifest: dict[str, Any], *, rollback: bool = False) -> dict[str, Any]:
-    """Preserve every resolved contract outside image, startup delay, environment and health test."""
+    """Preserve every resolved contract outside image, production environment and health test."""
     validate_manifest(manifest)
     result = copy.deepcopy(baseline)
     for role, (_, port) in SERVICES.items():
@@ -78,11 +78,11 @@ def expected_config(baseline: dict[str, Any], manifest: dict[str, Any], *, rollb
         require("build" not in target, "service must consume a released image")
         require(not target.get("command") and not target.get("entrypoint"), "explicit legacy startup override needs separate reviewed adaptation")
         require(isinstance(target.get("environment"), dict), "resolved environment mapping required")
+        require("STARTUP_DELAY" not in target["environment"], "startup delay requires independently reviewed preservation or adaptation")
         require(isinstance(target.get("healthcheck"), dict) and "test" in target["healthcheck"], "baseline healthcheck required")
         target["image"] = record["rollback_image"] if rollback else record["image"]
         if not rollback:
             target["environment"]["ENVIRONMENT"] = "production"
-            target["environment"].pop("STARTUP_DELAY", None)
             target["healthcheck"]["test"] = healthcheck(port)
     return result
 
@@ -97,10 +97,16 @@ def render_fragment(original: bytes, expected_sha: str, manifest: dict[str, Any]
     validate_manifest(manifest)
     text = original.decode()
     require("\t" not in text, "ambiguous tab indentation")
+    parsed = yaml.safe_load(text)
+    require(isinstance(parsed, dict) and isinstance(parsed.get("services"), dict), "service mapping required")
     lines = text.splitlines(keepends=True)
     changes: dict[int, str] = {}
     for role, (_, port) in SERVICES.items():
         record = manifest["services"][role]
+        direct = parsed["services"].get(record["service"], {})
+        environment = direct.get("environment") if isinstance(direct, dict) else None
+        require(isinstance(environment, dict), "direct environment mapping required")
+        require("STARTUP_DELAY" not in environment, "startup delay requires independently reviewed preservation or adaptation")
         headers = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == f"  {record['service']}:"]
         require(len(headers) == 1, "missing or duplicated mapped service")
         start = headers[0]
@@ -127,7 +133,7 @@ def render_fragment(original: bytes, expected_sha: str, manifest: dict[str, Any]
         changes[image] = replace(image, record["rollback_image"] if rollback else record["image"])
         if rollback:
             continue
-        for block, keys in (("environment", {"ENVIRONMENT", "STARTUP_DELAY"}), ("healthcheck", {"test"})):
+        for block, keys in (("environment", {"ENVIRONMENT"}), ("healthcheck", {"test"})):
             index = fields[block][0]
             require(not lines[index].split(":", 1)[1].split("#", 1)[0].strip(), "direct block mapping required")
             stop = next((i for i in range(index + 1, end) if re.match(r"^    [^\s#]", lines[i])), end)
@@ -143,8 +149,6 @@ def render_fragment(original: bytes, expected_sha: str, manifest: dict[str, Any]
                 else:
                     ending = "\r\n" if lines[index].endswith("\r\n") else "\n"
                     changes[index] = lines[index] + f"      ENVIRONMENT: production{ending}"
-                if nested.get("STARTUP_DELAY"):
-                    changes[nested["STARTUP_DELAY"][0]] = ""
             else:
                 require(len(nested.get("test", [])) == 1, "direct healthcheck test required")
                 changes[nested["test"][0]] = replace(nested["test"][0], json.dumps(healthcheck(port)))

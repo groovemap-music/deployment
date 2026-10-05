@@ -39,9 +39,9 @@ healthy HTTP endpoint establish these broader contracts.
 
 ## Guarded preparation
 
-The candidate removes the legacy startup-delay environment variable only after `cli` and
-`environment` proof establishes owner-image startup compatibility and existing dependency health
-ordering. Explicit legacy command/entrypoint overrides fail closed and require an independently
+The helper rejects any baseline or direct fragment containing `STARTUP_DELAY`, including zero.
+An independently reviewed preservation or adaptation contract is required before that behavior
+can be changed. Existing dependency health ordering remains unchanged. Explicit legacy command/entrypoint overrides fail closed and require an independently
 reviewed adaptation. Production environment is explicit. Healthchecks use the image's installed
 Python because the owner images have no curl dependency. All other fields are retained.
 
@@ -55,7 +55,7 @@ uv run python scripts/health_service_delivery.py \
 ```
 
 Outputs must be distinct absent files; the input is never opened for writing. Forward preparation
-changes only the two images, `ENVIRONMENT`, optional `STARTUP_DELAY` removal and healthcheck test.
+changes only the two images, `ENVIRONMENT` and healthcheck test. It does not remove startup delay.
 Rollback preparation retains every original service contract, replacing only mutable old images
 with inspected immutable rollback references. It is rendered from the original bytes, not from the
 forward candidate. Comments, CRLF and unrelated operator edits remain byte-for-byte intact.

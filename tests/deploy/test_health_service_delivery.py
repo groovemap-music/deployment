@@ -62,7 +62,6 @@ services:\r
     image: legacy/explore:latest # keep image comment\r
     environment:\r
       API_BASE_URL: http://api:8004\r
-      STARTUP_DELAY: 12\r
     healthcheck:\r
       test: [CMD, curl, -f, http://localhost:8007/health]\r
       interval: 30s\r
@@ -98,7 +97,7 @@ def test_forward_preserves_unrelated_bytes_and_resolved_contracts(fragment: byte
 def test_rollback_restores_original_contract_with_immutable_images(fragment: bytes, manifest: dict[str, Any]) -> None:
     candidate, _ = render_fragment(fragment, digest(fragment), manifest, rollback=True)
     validate_candidate(yaml.safe_load(fragment), yaml.safe_load(candidate), manifest, rollback=True)
-    assert b"STARTUP_DELAY: 12" in candidate
+    assert yaml.safe_load(candidate)["services"]["legacy-explore"]["environment"] == yaml.safe_load(fragment)["services"]["legacy-explore"]["environment"]
     assert b"ENVIRONMENT: development" in candidate
     assert b"[CMD, curl" in candidate
 
@@ -145,3 +144,40 @@ def test_rejects_unrelated_resolved_change(fragment: bytes, manifest: dict[str, 
     altered["services"]["insights"]["service"] = "legacy-explore"
     with pytest.raises(ValueError, match="duplicate"):
         validate_manifest(altered)
+
+
+@pytest.mark.parametrize("delay", [0, 10, "0", "10"])
+@pytest.mark.parametrize("rollback", [False, True])
+def test_resolved_startup_delay_fails_closed(
+    fragment: bytes, manifest: dict[str, Any], delay: int | str, rollback: bool
+) -> None:
+    baseline = yaml.safe_load(fragment)
+    baseline["services"]["legacy-insights"]["environment"]["STARTUP_DELAY"] = delay
+    original = copy.deepcopy(baseline)
+    with pytest.raises(ValueError, match="startup delay requires independently reviewed"):
+        expected_config(baseline, manifest, rollback=rollback)
+    assert baseline == original
+
+
+@pytest.mark.parametrize("delay", [b"0", b"10"])
+@pytest.mark.parametrize("rollback", [False, True])
+def test_direct_fragment_startup_delay_fails_closed(
+    fragment: bytes, manifest: dict[str, Any], delay: bytes, rollback: bool
+) -> None:
+    changed = fragment.replace(
+        b"      ENVIRONMENT: development\r\n",
+        b"      ENVIRONMENT: development\r\n      STARTUP_DELAY: " + delay + b"\r\n",
+    )
+    with pytest.raises(ValueError, match="startup delay requires independently reviewed"):
+        render_fragment(changed, digest(changed), manifest, rollback=rollback)
+    assert b"STARTUP_DELAY: " + delay + b"\r\n" in changed
+
+
+def test_forward_preserves_all_other_environment_values(fragment: bytes, manifest: dict[str, Any]) -> None:
+    baseline = yaml.safe_load(fragment)
+    candidate = expected_config(baseline, manifest)
+    for record in manifest["services"].values():
+        name = record["service"]
+        wanted = dict(baseline["services"][name]["environment"], ENVIRONMENT="production")
+        assert candidate["services"][name]["environment"] == wanted
+    assert baseline == yaml.safe_load(fragment)
