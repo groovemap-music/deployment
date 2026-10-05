@@ -97,7 +97,10 @@ def test_forward_preserves_unrelated_bytes_and_resolved_contracts(fragment: byte
 def test_rollback_restores_original_contract_with_immutable_images(fragment: bytes, manifest: dict[str, Any]) -> None:
     candidate, _ = render_fragment(fragment, digest(fragment), manifest, rollback=True)
     validate_candidate(yaml.safe_load(fragment), yaml.safe_load(candidate), manifest, rollback=True)
-    assert yaml.safe_load(candidate)["services"]["legacy-explore"]["environment"] == yaml.safe_load(fragment)["services"]["legacy-explore"]["environment"]
+    assert (
+        yaml.safe_load(candidate)["services"]["legacy-explore"]["environment"]
+        == yaml.safe_load(fragment)["services"]["legacy-explore"]["environment"]
+    )
     assert b"ENVIRONMENT: development" in candidate
     assert b"[CMD, curl" in candidate
 
