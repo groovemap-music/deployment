@@ -148,9 +148,7 @@ def test_rejects_unrelated_resolved_change(fragment: bytes, manifest: dict[str, 
 
 @pytest.mark.parametrize("delay", [0, 10, "0", "10"])
 @pytest.mark.parametrize("rollback", [False, True])
-def test_resolved_startup_delay_fails_closed(
-    fragment: bytes, manifest: dict[str, Any], delay: int | str, rollback: bool
-) -> None:
+def test_resolved_startup_delay_fails_closed(fragment: bytes, manifest: dict[str, Any], delay: int | str, rollback: bool) -> None:
     baseline = yaml.safe_load(fragment)
     baseline["services"]["legacy-insights"]["environment"]["STARTUP_DELAY"] = delay
     original = copy.deepcopy(baseline)
@@ -161,9 +159,7 @@ def test_resolved_startup_delay_fails_closed(
 
 @pytest.mark.parametrize("delay", [b"0", b"10"])
 @pytest.mark.parametrize("rollback", [False, True])
-def test_direct_fragment_startup_delay_fails_closed(
-    fragment: bytes, manifest: dict[str, Any], delay: bytes, rollback: bool
-) -> None:
+def test_direct_fragment_startup_delay_fails_closed(fragment: bytes, manifest: dict[str, Any], delay: bytes, rollback: bool) -> None:
     changed = fragment.replace(
         b"      ENVIRONMENT: development\r\n",
         b"      ENVIRONMENT: development\r\n      STARTUP_DELAY: " + delay + b"\r\n",
