@@ -105,7 +105,8 @@ def render_fragment(original: bytes, expected_sha: str, manifest: dict[str, Any]
         record = manifest["services"][role]
         direct = parsed["services"].get(record["service"], {})
         environment = direct.get("environment") if isinstance(direct, dict) else None
-        require(isinstance(environment, dict), "direct environment mapping required")
+        if not isinstance(environment, dict):
+            raise ValueError("direct environment mapping required")
         require("STARTUP_DELAY" not in environment, "startup delay requires independently reviewed preservation or adaptation")
         headers = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == f"  {record['service']}:"]
         require(len(headers) == 1, "missing or duplicated mapped service")
