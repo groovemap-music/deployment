@@ -82,8 +82,8 @@ API can delete series, so reach them through Grafana or an SSH tunnel.
 ## Backend services
 
 All four images are digest pinned like every other third-party image in this
-repository; `scripts/check-images.py` enumerates the exact reference each
-service runs and enforces that.
+repository; `scripts/check-images.py` enumerates the reviewed repository each
+service runs and enforces that, along with the digest pin.
 
 | Service | Image | Config | State |
 | --- | --- | --- | --- |

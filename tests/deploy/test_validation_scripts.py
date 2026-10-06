@@ -42,6 +42,50 @@ def test_image_policy_rejects_a_mutable_compose_reference() -> None:
         )
 
 
+D1 = "@sha256:" + "a" * 64
+D2 = "@sha256:" + "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("service", "image"),
+    [
+        ("grafana", f"grafana/grafana:99.0.1{D2}"),  # routine version + digest bump
+        ("neo4j", f"neo4j:2026.08.1-community{D2}"),  # tag format change
+        ("otel-collector", f"otel/opentelemetry-collector-contrib:0.161.0-386{D2}"),  # build-suffixed tag
+        ("cadvisor", f"gcr.io/cadvisor/cadvisor:v1.0.0{D2}"),  # registry host is part of the repository
+    ],
+)
+def test_third_party_policy_accepts_any_version_of_a_reviewed_repository(service: str, image: str) -> None:
+    image_policy()["check_third_party_reference"](service, image)
+
+
+@pytest.mark.parametrize(
+    ("service", "image", "message"),
+    [
+        ("grafana", "grafana/grafana:13.2.3", "not digest-pinned"),
+        ("grafana", f"grafana/grafana{D1}", "versioned tag"),
+        ("grafana", f"grafana/grafana:latest{D1}", "versioned tag"),
+        ("grafana", f"evilcorp/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
+        ("grafana", f"docker.io/grafana/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
+        ("grafana", f"ghcr.io/grafana/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
+        ("postgres", f"postgres-evil:18{D1}", "not the reviewed postgres"),
+        ("cadvisor", f"cadvisor/cadvisor:v1.0.0{D1}", "not the reviewed gcr.io/cadvisor/cadvisor"),
+    ],
+)
+def test_third_party_policy_rejects_unpinned_or_foreign_references(service: str, image: str, message: str) -> None:
+    with pytest.raises(AssertionError, match=message):
+        image_policy()["check_third_party_reference"](service, image)
+
+
+def test_image_policy_rejects_a_swapped_compose_repository() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    compose["services"]["redis"]["image"] = f"valkey/valkey:8{D1}"
+    env_names = (".env.example", "config/validation.env")
+
+    with pytest.raises(AssertionError, match="redis runs repository valkey/valkey"):
+        image_policy()["check_compose"](yaml.safe_dump(compose), {name: (ROOT / name).read_text() for name in env_names})
+
+
 def test_provenance_policy_rejects_modified_promoted_content() -> None:
     policy = image_policy()
     provenance = json.loads((ROOT / "config/provenance.json").read_text())

@@ -79,30 +79,47 @@ RELEASED_IMAGE_DIGESTS = {
     "ANALYTICS_ENGINE_IMAGE": "a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69",  # analytics-engine v0.1.1  gitleaks:allow
 }
 
-# Compose service -> the exact third-party image reference it runs. These are public
-# registry images nobody here publishes, so the manifest digest is the whole review: a
-# bump is a deliberate edit to this table and to docker-compose.yml together, never a
-# tag that quietly moved underneath the stack. Every service NOT in INTERNAL_IMAGES
-# must appear here.
-THIRD_PARTY_IMAGES = {
-    "cadvisor": "gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57",  # gitleaks:allow
-    "grafana": "grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0",  # gitleaks:allow
-    "neo4j": "neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad",  # gitleaks:allow
-    "node-exporter": "prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",  # gitleaks:allow
-    "otel-collector": "otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1",  # gitleaks:allow
-    "postgres": "postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",  # gitleaks:allow
-    "postgres-exporter": "prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e",  # gitleaks:allow
-    "rabbitmq": "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8",  # gitleaks:allow
+# Compose service -> the reviewed repository (registry host included when it is not Docker
+# Hub) of the third-party image it runs. These are public registry images nobody here
+# publishes. The review is of WHERE an image comes from and that it is immutable, not of
+# which release it is: Dependabot's docker-compose ecosystem bumps the tag and the manifest
+# digest together, and those routine bumps must not need a hand edit here. So the check
+# pins the repository (an unknown, swapped, or re-hosted repository fails) and requires a
+# versioned tag plus a sha256 digest (a bare, `latest`, or digest-less reference fails),
+# but accepts any tag and digest for a reviewed repository. Every service NOT in
+# INTERNAL_IMAGES must appear here.
+THIRD_PARTY_REPOSITORIES = {
+    "cadvisor": "gcr.io/cadvisor/cadvisor",
+    "grafana": "grafana/grafana",
+    "neo4j": "neo4j",
+    "node-exporter": "prom/node-exporter",
+    "otel-collector": "otel/opentelemetry-collector-contrib",
+    "postgres": "postgres",
+    "postgres-exporter": "prometheuscommunity/postgres-exporter",
+    "rabbitmq": "rabbitmq",
     # rabbitmqadmin (the HTTP-API CLI that declares the catalog-DLQ cap policy,
     # gm-deployment-8mb.1) is bundled in the same image, so this one-shot init
-    # service reuses rabbitmq's own reference rather than adding a new
+    # service reuses rabbitmq's own repository rather than adding a new
     # third-party image.
-    "rabbitmq-dlq-policy-init": "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8",  # gitleaks:allow
-    "redis": "redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",  # gitleaks:allow
-    "redis-exporter": "oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836",  # gitleaks:allow
-    "victoria-metrics": "victoriametrics/victoria-metrics:v1.152.0@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef",  # gitleaks:allow
-    "victoria-traces": "victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd",  # gitleaks:allow
+    "rabbitmq-dlq-policy-init": "rabbitmq",
+    "redis": "redis",
+    "redis-exporter": "oliver006/redis_exporter",
+    "victoria-metrics": "victoriametrics/victoria-metrics",
+    "victoria-traces": "victoriametrics/victoria-traces",
 }
+
+# repository[:tag]@sha256:digest, where the repository may carry a registry host:port.
+IMAGE_REFERENCE = re.compile(r"(?P<repository>[^@:]+(?::\d+)?(?:/[^@:]+)*?)(?::(?P<tag>[^@:/]+))?@sha256:[0-9a-f]{64}")
+
+
+def check_third_party_reference(service_name: str, image: str) -> None:
+    """Require a reviewed repository, a non-floating tag, and a digest; any version is fine."""
+    assert DIGEST.search(image), f"{service_name} image is not digest-pinned: {image}"
+    match = IMAGE_REFERENCE.fullmatch(image)
+    assert match, f"{service_name} image is not a repository:tag@sha256 reference: {image}"
+    expected = THIRD_PARTY_REPOSITORIES[service_name]
+    assert match["repository"] == expected, f"{service_name} runs repository {match['repository']}, not the reviewed {expected}"
+    assert match["tag"] and match["tag"] != "latest", f"{service_name} image needs a versioned tag, not {match['tag']!r}: {image}"
 
 
 def check_declarations() -> None:
@@ -118,8 +135,10 @@ def check_declarations() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
         "a reviewed release digest must be a full manifest digest"
     )
-    assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_IMAGES), "a service runs either a released GrooveMap image or a public one"
-    assert all(DIGEST.search(reference) for reference in THIRD_PARTY_IMAGES.values()), "every third-party reference must be digest pinned"
+    assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_REPOSITORIES), "a service runs either a released GrooveMap image or a public one"
+    assert all(
+        repository and "@" not in repository and ":" not in repository.rsplit("/", 1)[-1] for repository in THIRD_PARTY_REPOSITORIES.values()
+    ), "a reviewed third-party repository is a bare name, with no tag or digest"
 
 
 def parse_assignments(text: str) -> dict[str, str]:
@@ -140,15 +159,11 @@ def check_compose(compose_text: str, env_templates: Mapping[str, str]) -> None:
         assert image.startswith(f"${{{variable}:?"), f"{service_name} must require {variable}"
 
     third_party_services = sorted(set(services) - set(INTERNAL_IMAGES))
-    assert third_party_services == sorted(THIRD_PARTY_IMAGES), (
-        f"THIRD_PARTY_IMAGES does not match the compose services: {sorted(set(third_party_services) ^ set(THIRD_PARTY_IMAGES))}"
+    assert third_party_services == sorted(THIRD_PARTY_REPOSITORIES), (
+        f"THIRD_PARTY_REPOSITORIES does not match the compose services: {sorted(set(third_party_services) ^ set(THIRD_PARTY_REPOSITORIES))}"
     )
     for service_name in third_party_services:
-        image = services[service_name]["image"]
-        assert DIGEST.search(image), f"{service_name} image is not digest-pinned: {image}"
-        assert image == THIRD_PARTY_IMAGES[service_name], (
-            f"{service_name} runs {image}, which is not the reviewed reference {THIRD_PARTY_IMAGES[service_name]}"
-        )
+        check_third_party_reference(service_name, services[service_name]["image"])
 
     assert ":latest" not in compose_text
 

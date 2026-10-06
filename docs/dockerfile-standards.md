@@ -93,28 +93,36 @@ its documentation evolve together.
 ## Base infrastructure images
 
 Images not built by GrooveMap are declared directly in `docker-compose.yml`
-and pinned by digest:
+and pinned by digest as `repository:tag@sha256:digest`:
 
-| Compose service | Reviewed image tag |
+| Compose service | Reviewed repository |
 | --- | --- |
-| `rabbitmq` | `rabbitmq:4-management` |
-| `rabbitmq-dlq-policy-init` | `rabbitmq:4-management` |
-| `postgres` | `postgres:18-alpine` |
-| `neo4j` | `neo4j:2026-community` |
-| `redis` | `redis:8-alpine` |
-| `postgres-exporter` | `prometheuscommunity/postgres-exporter:v0.20.1` |
-| `redis-exporter` | `oliver006/redis_exporter:v1.91.1` |
-| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.55.1` |
-| `node-exporter` | `prom/node-exporter:v1.12.1` |
-| `victoria-metrics` | `victoriametrics/victoria-metrics:v1.152.0` |
-| `victoria-traces` | `victoriametrics/victoria-traces:v0.11.0` |
-| `otel-collector` | `otel/opentelemetry-collector-contrib:0.161.0` |
-| `grafana` | `grafana/grafana:13.2.2` |
+| `rabbitmq` | `rabbitmq` |
+| `rabbitmq-dlq-policy-init` | `rabbitmq` |
+| `postgres` | `postgres` |
+| `neo4j` | `neo4j` |
+| `redis` | `redis` |
+| `postgres-exporter` | `prometheuscommunity/postgres-exporter` |
+| `redis-exporter` | `oliver006/redis_exporter` |
+| `cadvisor` | `gcr.io/cadvisor/cadvisor` |
+| `node-exporter` | `prom/node-exporter` |
+| `victoria-metrics` | `victoriametrics/victoria-metrics` |
+| `victoria-traces` | `victoriametrics/victoria-traces` |
+| `otel-collector` | `otel/opentelemetry-collector-contrib` |
+| `grafana` | `grafana/grafana` |
 
-The executable reference appends the reviewed `@sha256:` manifest digest;
-`scripts/check-images.py` is the exact duplicate-policy authority. Upgrading an
-image requires reviewing its release notes, updating the readable tag and
-digest together, and rerunning the deployment gate.
+Versions are not recorded here. Dependabot tracks the tag and manifest digest
+of each image in `docker-compose.yml` and opens grouped bump PRs; the current
+version is whatever `docker-compose.yml` says.
+
+`scripts/check-images.py` (`THIRD_PARTY_REPOSITORIES`) is the policy authority.
+It requires each third-party service to run its reviewed repository (an unknown,
+swapped, or re-hosted repository fails), a versioned tag (not `latest` or
+absent), and a `@sha256:` manifest digest. Any tag and digest of a reviewed
+repository passes, so routine bumps need no edit to the script. Adding a new
+third-party image or changing a repository is a deliberate edit to the script
+and `docker-compose.yml` together. Review a bump's release notes in its
+Dependabot PR before merging, and rerun the deployment gate.
 
 ## Validation
 
