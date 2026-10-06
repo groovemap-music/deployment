@@ -131,7 +131,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     container_name: groovemap-postgres
     hostname: postgres
     command:
@@ -167,7 +167,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026-community@sha256:7f2c38fa0de8caf875d35237fa7dabda74de4f4fc2fc7c3c9e4b53c2add268ad
+    image: neo4j:2026.08.1-community@sha256:d8f4c156caa3af76499134947deb11d13042e471d9733060449f2a01eb7a248e
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -217,7 +217,7 @@ services:
       - no-new-privileges:true
 
   redis:
-    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     container_name: groovemap-redis
     hostname: redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -273,7 +273,7 @@ services:
 
   # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
   redis-exporter:
-    image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
+    image: oliver006/redis_exporter:v1.93.0@sha256:6ca518a72f30f7f576ef92963de1b91d3c3f5fd3aeac949f878bfda183587820
     container_name: groovemap-redis-exporter
     hostname: redis-exporter
     environment:
@@ -404,7 +404,7 @@ services:
   # keeps working. It scrapes nothing itself; otel-collector owns all
   # collection and remote-writes here.
   victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.152.0@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef
+    image: victoriametrics/victoria-metrics:v1.153.0@sha256:5eff7af5341e401471002f58d106d399e614a62f3d240f2dbc21901e49eed5dd
     container_name: groovemap-victoria-metrics
     hostname: victoria-metrics
     command:
@@ -438,7 +438,7 @@ services:
   # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
   # API this server exposes under /select/tempo.
   victoria-traces:
-    image: victoriametrics/victoria-traces:v0.11.0@sha256:9947b14b6b9baa61b8efef64467a7118ee54ccd6be6b7c1849f6fdd65d8e17fd
+    image: victoriametrics/victoria-traces:v0.12.0@sha256:80919fcc85cc6dd87f598d20ccf42d0ab1120de8f25d4dcf08c5ea2515a496ba
     container_name: groovemap-victoria-traces
     hostname: victoria-traces
     command:
@@ -475,7 +475,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+    image: otel/opentelemetry-collector-contrib:0.161.0-386@sha256:76fd04f2d75922e93e447381bafcd0b78d24f1c5cdcc13f424d9a16f0342c087
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -517,7 +517,7 @@ services:
   # never edited in the UI. Dev enables anonymous Viewer access; the production
   # overlay disables it and sources the admin password from a Docker secret.
   grafana:
-    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     container_name: groovemap-grafana
     hostname: grafana
     environment:
