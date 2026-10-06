@@ -148,8 +148,9 @@ def test_image_guide_matches_every_compose_image_identity() -> None:
             assert f"| `{service_name}` |" in guide
             assert f"| `{variable}` |" in guide
         else:
-            tag = image.split("@sha256:", maxsplit=1)[0]
-            assert f"| `{service_name}` | `{tag}` |" in guide
+            # The guide names the reviewed repository only; versions are tracked by Dependabot.
+            repository = image.split("@sha256:", maxsplit=1)[0].rsplit(":", maxsplit=1)[0]
+            assert f"| `{service_name}` | `{repository}` |" in guide
 
 
 def test_quick_start_lists_only_the_published_application_and_backend_ports() -> None:
