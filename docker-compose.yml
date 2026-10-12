@@ -43,7 +43,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    image: rabbitmq:4-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -100,7 +100,7 @@ services:
   # Neither this service nor the policy it declares touches any queue declaration — the
   # four catalog consumers' DLQs stay classic; see docs/admin-guide.md#dlq-size-cap-policy.
   rabbitmq-dlq-policy-init:
-    image: rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8
+    image: rabbitmq:4-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
     container_name: groovemap-rabbitmq-dlq-policy-init
     hostname: rabbitmq-dlq-policy-init
     entrypoint: ["/scripts/rabbitmq-dlq-policy-init.sh"]
@@ -167,7 +167,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026.08.1-community@sha256:d8f4c156caa3af76499134947deb11d13042e471d9733060449f2a01eb7a248e
+    image: neo4j:2026.09.0-community@sha256:6f3f17e72d69bb6f26b03f6186f5afb15a201f8b460bb69b0cd8030717f9f01a
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -475,7 +475,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.161.0-386@sha256:76fd04f2d75922e93e447381bafcd0b78d24f1c5cdcc13f424d9a16f0342c087
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
