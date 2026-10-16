@@ -167,7 +167,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026.08.1-community@sha256:d8f4c156caa3af76499134947deb11d13042e471d9733060449f2a01eb7a248e
+    image: neo4j:2026.09.0-community@sha256:6f3f17e72d69bb6f26b03f6186f5afb15a201f8b460bb69b0cd8030717f9f01a
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -404,7 +404,7 @@ services:
   # keeps working. It scrapes nothing itself; otel-collector owns all
   # collection and remote-writes here.
   victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.153.0@sha256:5eff7af5341e401471002f58d106d399e614a62f3d240f2dbc21901e49eed5dd
+    image: victoriametrics/victoria-metrics:v1.154.0@sha256:4bd592341587d669b7f57d54bbb82bd21ac8675f4e24234b7703a7c0f85197d8
     container_name: groovemap-victoria-metrics
     hostname: victoria-metrics
     command:
@@ -475,7 +475,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.161.0-386@sha256:76fd04f2d75922e93e447381bafcd0b78d24f1c5cdcc13f424d9a16f0342c087
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
