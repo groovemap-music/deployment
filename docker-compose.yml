@@ -273,7 +273,7 @@ services:
 
   # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
   redis-exporter:
-    image: oliver006/redis_exporter:v1.93.0@sha256:6ca518a72f30f7f576ef92963de1b91d3c3f5fd3aeac949f878bfda183587820
+    image: oliver006/redis_exporter:v1.94.0@sha256:0842ef7110e62b40bbde2d5c11f38c6fbd99f7100c75e3866637c1b335a1eff7
     container_name: groovemap-redis-exporter
     hostname: redis-exporter
     environment:
@@ -475,7 +475,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+    image: otel/opentelemetry-collector-contrib:0.162.0-386@sha256:8b9211dbe1b3642eca91b237f39ede8baae9abaf97d6dcc88116f77f29545359
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -517,7 +517,7 @@ services:
   # never edited in the UI. Dev enables anonymous Viewer access; the production
   # overlay disables it and sources the admin password from a Docker secret.
   grafana:
-    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     container_name: groovemap-grafana
     hostname: grafana
     environment:
