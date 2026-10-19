@@ -43,7 +43,7 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | RabbitMQ | `rabbitmq` | Message broker and queue management | 5672, 15672 |
 | Neo4j | `neo4j` | Graph database for relationships | 7474, 7687 |
 | PostgreSQL | `postgres` | Relational database for analytics | 5433 (mapped) |
-| Redis | `redis` | Cache for queries, sessions, and analytics | 6379 |
+| Valkey | `valkey` | Cache for queries, sessions, and analytics | 6379 |
 | VictoriaMetrics | `victoria-metrics` | Metrics store and Prometheus-compatible query API | 8428 (published in base; loopback in production) |
 | VictoriaTraces | `victoria-traces` | Trace store and Tempo-compatible query API | 10428 (published in base; loopback in production) |
 | OpenTelemetry Collector | `otel-collector` | OTLP ingest, infrastructure scrapes, and backend export | 4317, 4318, 8888, 13133 (internal) |
@@ -57,7 +57,7 @@ map](dockerfile-standards.md#compatibility-identifiers).
 ### Persistent volumes
 
 Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
-(`postgres_data`), Redis (`redis_data`), Grafana (`grafana_data`),
+(`postgres_data`), Valkey (`valkey_data`, replacing the legacy `redis_data`), Grafana (`grafana_data`),
 VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
 (`victoria_traces_data`). Neo4j separates `neo4j_data`, `neo4j_logs`,
 `neo4j_import`, and `neo4j_plugins`. The producers persist downloads in

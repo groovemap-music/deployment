@@ -32,10 +32,10 @@ def test_image_policy_script() -> None:
 def test_image_policy_rejects_a_mutable_compose_reference() -> None:
     policy = image_policy()
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    compose["services"]["redis"]["image"] = "redis:latest"
+    compose["services"]["valkey"]["image"] = "valkey/valkey:latest"
     env_names = (".env.example", "config/validation.env")
 
-    with pytest.raises(AssertionError, match="redis image is not digest-pinned"):
+    with pytest.raises(AssertionError, match="valkey image is not digest-pinned"):
         policy["check_compose"](
             yaml.safe_dump(compose),
             {name: (ROOT / name).read_text() for name in env_names},

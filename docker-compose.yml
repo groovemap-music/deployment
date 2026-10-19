@@ -216,22 +216,21 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  redis:
-    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
-    container_name: groovemap-redis
-    hostname: redis
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+  valkey:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    container_name: groovemap-valkey
+    hostname: valkey
+    command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     networks:
       groovemap:
         aliases:
           - cache
-          - redis-cache
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -271,21 +270,23 @@ services:
       - ALL
     read_only: true
 
-  # Redis metrics exporter, scraped by otel-collector on :9121. Not published.
-  redis-exporter:
+  # Valkey metrics exporter, scraped by otel-collector on :9121. Not published.
+  # oliver006/redis_exporter speaks to Valkey; REDIS_ADDR is the exporter's own
+  # variable name. The collector relabels its redis_* series to valkey_*.
+  valkey-exporter:
     image: oliver006/redis_exporter:v1.94.0@sha256:0842ef7110e62b40bbde2d5c11f38c6fbd99f7100c75e3866637c1b335a1eff7
-    container_name: groovemap-redis-exporter
-    hostname: redis-exporter
+    container_name: groovemap-valkey-exporter
+    hostname: valkey-exporter
     environment:
-      REDIS_ADDR: "redis://redis:6379"
+      REDIS_ADDR: "redis://valkey:6379"
     depends_on:
-      redis:
+      valkey:
         condition: service_healthy
     networks:
       - groovemap
     # No healthcheck: the image is distroless and ships neither a shell nor an
     # HTTP client, so no probe can run inside it. A failed exporter shows up as
-    # a stale `redis-exporter` scrape job on the infrastructure dashboard.
+    # a stale `valkey-exporter` scrape job on the infrastructure dashboard.
     restart: unless-stopped
     logging: *default-logging
     security_opt:
@@ -381,7 +382,7 @@ services:
       - /:/rootfs:ro
     networks:
       - groovemap
-    # The image is busybox-based, so unlike redis-exporter it can probe itself.
+    # The image is busybox-based, so unlike valkey-exporter it can probe itself.
     # The landing page is a few bytes; /metrics would render the whole scrape.
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9100/"]
@@ -623,7 +624,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
-      REDIS_HOST: redis
+      VALKEY_HOST: valkey
       STARTUP_DELAY: "5"
       DISCOGS_DATA_ROOT: /discogs-data
       MUSICBRAINZ_DATA_ROOT: /musicbrainz-data
@@ -654,7 +655,7 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
       neo4j:
         condition: service_healthy
@@ -992,7 +993,6 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
-      REDIS_HOST: redis
       API_HOST: api
       API_PORT: "8004"
       UV_CACHE_DIR: "/tmp/.cache/uv"
@@ -1007,8 +1007,6 @@ services:
       postgres:
         condition: service_healthy
       neo4j:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -1093,7 +1091,7 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
-      REDIS_HOST: redis
+      VALKEY_HOST: valkey
       STARTUP_DELAY: "10"
       # Shared secret for authenticating to the API's /api/internal/insights/* router.
       # MUST match the api service's value.
@@ -1107,7 +1105,7 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     networks:
       - groovemap
@@ -1188,6 +1186,9 @@ volumes:
   neo4j_logs:
   neo4j_import:
   neo4j_plugins:
+  valkey_data:
+  # Legacy Redis volume. Valkey cannot read Redis 7.4+ RDB/AOF, so it is not
+  # mounted by anything; it stays declared until the cutover runbook removes it.
   redis_data:
   discogs_data:
   extractor_discogs_logs:

@@ -9,7 +9,7 @@
 # environment: it takes its own Compose project name, its own subnet, Compose's
 # project-scoped container names instead of the fixed ones, and no published port
 # except the RabbitMQ management API and the API, both on loopback. PostgreSQL,
-# Neo4j, and Redis stay unpublished; the assertions reach them through
+# Neo4j, and Valkey stay unpublished; the assertions reach them through
 # `docker compose exec`.
 #
 # The API is here rather than the barcode lookup being asserted in the erasure
@@ -35,7 +35,7 @@ services:
   neo4j:
     container_name: !reset null
     ports: !override []
-  redis:
+  valkey:
     container_name: !reset null
     ports: !override []
   # The telemetry backends the internal services depend on. Compose starts them

@@ -5,7 +5,7 @@ account afterwards, and the export claim is only true if the body a user is hand
 actually parses. This run makes both claims checkable: it registers an account against the
 disposable stack's own API, grants both consent purposes, gives the account something to
 export in all three stores, takes the export and parses it line by line, then erases the
-account and reads PostgreSQL, Neo4j, and Redis directly to assert that nothing keyed to
+account and reads PostgreSQL, Neo4j, and Valkey directly to assert that nothing keyed to
 that user or its subject survived.
 
 Two things make the absence assertions mean something. Every probe is scoped to the id
@@ -79,7 +79,7 @@ EXPORT_KINDS = (
 
 EXPORT_MEDIA_TYPE = "application/x-ndjson"
 
-# The per-user Redis keys the erasure sweeps. The recommendation pattern is deliberately
+# The per-user Valkey keys the erasure sweeps. The recommendation pattern is deliberately
 # wider than the two shapes `RecommendCache.invalidate_user` knows: it is still scoped to
 # this user's id, and a surviving key under some third `recommend:` shape is exactly the
 # kind of residue this assertion exists to catch.
@@ -117,14 +117,14 @@ def expect(response: Response, status: int, what: str) -> Response:
 # ---------------------------------------------------------------------------
 
 
-def redis_cli(stack: smoke_media.Stack, command: Sequence[str]) -> str:
-    """Run one redis-cli command inside the stack's cache container."""
-    return stack.compose_exec("redis", ["redis-cli", *command]).strip()
+def valkey_cli(stack: smoke_media.Stack, command: Sequence[str]) -> str:
+    """Run one valkey-cli command inside the stack's cache container."""
+    return stack.compose_exec("valkey", ["valkey-cli", *command]).strip()
 
 
-def redis_keys(stack: smoke_media.Stack, pattern: str) -> list[str]:
+def valkey_keys(stack: smoke_media.Stack, pattern: str) -> list[str]:
     """Return the keys matching a pattern, scanned cursor-wise rather than with KEYS."""
-    return [line.strip() for line in redis_cli(stack, ["--scan", "--pattern", pattern]).splitlines() if line.strip()]
+    return [line.strip() for line in valkey_cli(stack, ["--scan", "--pattern", pattern]).splitlines() if line.strip()]
 
 
 def count_sql(table: str, predicate: str) -> str:
@@ -308,7 +308,7 @@ def seed_cache(stack: smoke_media.Stack, user_id: str) -> None:
     The collection sync writes this key; nothing in the HTTP flow here does, so the run
     writes it for the same reason it writes the `:User` node.
     """
-    redis_cli(stack, ["SET", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), "1"])
+    valkey_cli(stack, ["SET", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), "1"])
 
 
 def arrange_stores(stack: smoke_media.Stack, user_id: str) -> None:
@@ -396,22 +396,22 @@ def _graph_nodes(stack: smoke_media.Stack, name: str, query: str, expected: int,
     return probe
 
 
-def _redis_matches(stack: smoke_media.Stack, name: str, pattern: str, expected: str) -> Callable[[], Check]:
+def _valkey_matches(stack: smoke_media.Stack, name: str, pattern: str, expected: str) -> Callable[[], Check]:
     """Return a probe asserting how many keys scoped to the user a pattern still matches."""
 
     def probe() -> Check:
-        keys = redis_keys(stack, pattern)
+        keys = valkey_keys(stack, pattern)
         passed = len(keys) == 0 if expected == "none" else len(keys) > 0
         return Check(name, passed, f"keys matching {pattern} -> {len(keys)}, expected {expected}")
 
     return probe
 
 
-def _redis_key(stack: smoke_media.Stack, name: str, key: str, expected: int) -> Callable[[], Check]:
+def _valkey_key(stack: smoke_media.Stack, name: str, key: str, expected: int) -> Callable[[], Check]:
     """Return a probe asserting whether one user-scoped key exists."""
 
     def probe() -> Check:
-        value = redis_cli(stack, ["EXISTS", key])
+        value = valkey_cli(stack, ["EXISTS", key])
         exists = int(value) if value.isdigit() else 0
         return Check(name, exists == expected, f"EXISTS {key} -> {exists}, expected {expected}")
 
@@ -439,8 +439,8 @@ def arranged_probes(stack: smoke_media.Stack, user_id: str, subject_id: str) -> 
         _graph_nodes(
             stack, "neo4j User node present", f"MATCH (u:User {{id: {user}}}) RETURN count(u) AS value", 1, f"count(:User {{id: {user_id}}})"
         ),
-        _redis_matches(stack, "redis recommendation keys present", RECOMMEND_KEY_PATTERN.format(user_id=user_id), "at least 1"),
-        _redis_key(stack, "redis snapshot count present", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), 1),
+        _valkey_matches(stack, "valkey recommendation keys present", RECOMMEND_KEY_PATTERN.format(user_id=user_id), "at least 1"),
+        _valkey_key(stack, "valkey snapshot count present", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), 1),
     ]
 
 
@@ -476,8 +476,8 @@ def absence_probes(stack: smoke_media.Stack, user_id: str, subject_id: str) -> l
         _graph_nodes(
             stack, "neo4j User node erased", f"MATCH (u:User {{id: {user}}}) RETURN count(u) AS value", 0, f"count(:User {{id: {user_id}}})"
         ),
-        _redis_matches(stack, "redis recommendation keys erased", RECOMMEND_KEY_PATTERN.format(user_id=user_id), "none"),
-        _redis_key(stack, "redis snapshot count erased", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), 0),
+        _valkey_matches(stack, "valkey recommendation keys erased", RECOMMEND_KEY_PATTERN.format(user_id=user_id), "none"),
+        _valkey_key(stack, "valkey snapshot count erased", SNAPSHOT_USER_COUNT_KEY.format(user_id=user_id), 0),
     ]
 
 
@@ -574,7 +574,7 @@ def export_probes(response: Response, lines: Sequence[ExportLine]) -> list[Calla
 def erasure_probes(response: Response) -> list[Callable[[], Check]]:
     """Return what the erasure's own answer must say before any store is read.
 
-    ADR 0010 reports a Neo4j or Redis step that did not complete in `incomplete` rather
+    ADR 0010 reports a Neo4j or Valkey step that did not complete in `incomplete` rather
     than hiding it, so a non-empty list is a failed assertion here even though the
     relational half committed.
     """

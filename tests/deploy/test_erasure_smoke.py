@@ -47,7 +47,7 @@ OVERLAY = REPO_ROOT / "docker-compose.erasure-smoke.yml"
 SMOKE_SERVICES = (
     "postgres",
     "neo4j",
-    "redis",
+    "valkey",
     "victoria-metrics",
     "victoria-traces",
     "otel-collector",
@@ -89,14 +89,14 @@ class FakeStack:
         self,
         sql: dict[str, str] | None = None,
         cypher: dict[str, str] | None = None,
-        redis: dict[str, str] | None = None,
+        valkey: dict[str, str] | None = None,
     ) -> None:
         self._sql = sql or {}
         self._cypher = cypher or {}
-        self._redis = redis or {}
+        self._valkey = valkey or {}
         self.sql_queries: list[str] = []
         self.cypher_queries: list[str] = []
-        self.redis_commands: list[list[str]] = []
+        self.valkey_commands: list[list[str]] = []
 
     def psql(self, sql: str) -> str:
         self.sql_queries.append(sql)
@@ -107,14 +107,14 @@ class FakeStack:
         return self._cypher.get(query, "")
 
     def compose_exec(self, service: str, command: list[str], timeout: float = 120.0) -> str:  # noqa: ARG002
-        assert service == "redis", f"only the cache is reached with compose exec, not {service}"
-        assert command[0] == "redis-cli"
-        self.redis_commands.append(list(command[1:]))
-        return self._redis.get(" ".join(command[1:]), "")
+        assert service == "valkey", f"only the cache is reached with compose exec, not {service}"
+        assert command[0] == "valkey-cli"
+        self.valkey_commands.append(list(command[1:]))
+        return self._valkey.get(" ".join(command[1:]), "")
 
-    def becomes(self, sql: dict[str, str], cypher: dict[str, str], redis: dict[str, str]) -> None:
+    def becomes(self, sql: dict[str, str], cypher: dict[str, str], valkey: dict[str, str]) -> None:
         """Replay a different set of answers from here on, as an erasure makes a store do."""
-        self._sql, self._cypher, self._redis = sql, cypher, redis
+        self._sql, self._cypher, self._valkey = sql, cypher, valkey
 
 
 def counted(table: str, predicate: str) -> str:
@@ -146,11 +146,11 @@ def arranged_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tu
         valued("subject_id", "activity.user_subjects", by_user): subject_id,
     }
     cypher = {f"MATCH (u:User {{id: '{user_id}'}}) RETURN count(u) AS value": "1"}
-    redis = {
+    valkey = {
         f"--scan --pattern recommend:*{user_id}*": f"recommend:explore:{user_id}:artist:999000101:2\n",
         f"EXISTS snapshot:usercount:{user_id}": "1",
     }
-    return sql, cypher, redis
+    return sql, cypher, valkey
 
 
 def erased_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
@@ -170,8 +170,8 @@ def erased_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tupl
         valued("is_active", "users", by_id): "f",
     }
     cypher = {f"MATCH (u:User {{id: '{user_id}'}}) RETURN count(u) AS value": "0"}
-    redis = {f"EXISTS snapshot:usercount:{user_id}": "0"}
-    return sql, cypher, redis
+    valkey = {f"EXISTS snapshot:usercount:{user_id}": "0"}
+    return sql, cypher, valkey
 
 
 def export_body(kinds: list[str] | None = None) -> str:
@@ -221,8 +221,8 @@ def test_the_absence_probe_list_covers_every_store_the_erasure_touches() -> None
         "postgres users row soft-erased",
         "postgres users row deactivated",
         "neo4j User node erased",
-        "redis recommendation keys erased",
-        "redis snapshot count erased",
+        "valkey recommendation keys erased",
+        "valkey snapshot count erased",
     ]
 
 
@@ -240,8 +240,8 @@ def test_every_absence_is_paired_with_a_presence_asserted_before_the_erasure() -
         "postgres owned copy present",
         "postgres observation present",
         "neo4j User node present",
-        "redis recommendation keys present",
-        "redis snapshot count present",
+        "valkey recommendation keys present",
+        "valkey snapshot count present",
     ]
 
     # The erasure record is the one absence probe with no pair: it asserts a row appearing
@@ -254,8 +254,8 @@ def test_every_absence_is_paired_with_a_presence_asserted_before_the_erasure() -
         "owned cop",
         "observation",
         "neo4j User node",
-        "redis recommendation keys",
-        "redis snapshot count",
+        "valkey recommendation keys",
+        "valkey snapshot count",
     }
     for subject in subjects:
         assert any(subject in name for name in arranged), f"nothing is asserted present for {subject}"
@@ -276,7 +276,7 @@ def test_every_store_probe_is_scoped_to_the_account_this_run_created() -> None:
         for query in stack.cypher_queries:
             assert "MATCH (u:User) " not in query, f"an unscoped User count: {query}"
             assert USER_ID in query, f"a graph probe named no id from this run: {query}"
-        for command in stack.redis_commands:
+        for command in stack.valkey_commands:
             assert any(USER_ID in argument for argument in command), f"a cache probe named no id from this run: {command}"
 
 
@@ -301,19 +301,19 @@ def test_the_activity_probes_are_keyed_to_the_subject_and_the_rest_to_the_user()
 
 
 def test_every_absence_probe_passes_only_when_the_erasure_actually_ran() -> None:
-    sql, cypher, redis = erased_answers()
-    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, redis), USER_ID, SUBJECT_ID)]
+    sql, cypher, valkey = erased_answers()
+    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, valkey), USER_ID, SUBJECT_ID)]
 
     assert smoke_erasure.exit_code(results) == 0, smoke_erasure.render(results, "erasure")
 
 
 def test_a_store_that_still_holds_the_account_fails_the_run() -> None:
-    sql, cypher, redis = erased_answers()
+    sql, cypher, valkey = erased_answers()
     survivors = {
         counted("activity.events", f"subject_id = '{SUBJECT_ID}'"): "4",
         counted("observations", f"user_id = '{USER_ID}'"): "1",
     }
-    stack = FakeStack(sql | survivors, cypher | {f"MATCH (u:User {{id: '{USER_ID}'}}) RETURN count(u) AS value": "1"}, redis)
+    stack = FakeStack(sql | survivors, cypher | {f"MATCH (u:User {{id: '{USER_ID}'}}) RETURN count(u) AS value": "1"}, valkey)
     results = [probe() for probe in smoke_erasure.absence_probes(stack, USER_ID, SUBJECT_ID)]
 
     assert smoke_erasure.exit_code(results) == 1
@@ -332,27 +332,27 @@ def test_a_surviving_cache_key_for_the_user_fails_the_run() -> None:
     results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, leftovers), USER_ID, SUBJECT_ID)]
 
     failed = {result.name for result in results if not result.passed}
-    assert failed == {"redis recommendation keys erased", "redis snapshot count erased"}
+    assert failed == {"valkey recommendation keys erased", "valkey snapshot count erased"}
 
 
 def test_a_missing_erasure_record_fails_even_though_every_row_is_gone() -> None:
-    sql, cypher, redis = erased_answers()
+    sql, cypher, valkey = erased_answers()
     # The `activity.erasures` row is the durable record that the erasure happened; the
     # event that requested it is deleted along with everything else.
     del sql[counted("activity.erasures", f"subject_id = '{SUBJECT_ID}'")]
-    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, redis), USER_ID, SUBJECT_ID)]
+    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, valkey), USER_ID, SUBJECT_ID)]
 
     assert smoke_erasure.exit_code(results) == 1
     assert [result.name for result in results if not result.passed] == ["postgres erasure recorded"]
 
 
 def test_a_hard_deleted_or_still_active_users_row_is_a_failure() -> None:
-    sql, cypher, redis = erased_answers()
+    sql, cypher, valkey = erased_answers()
     # The users row is soft-erased in place: two foreign keys to it carry no cascade rule.
     # Its disappearance is as much a failure as its survival unchanged.
     del sql[valued("left(email, 7)", "users", f"id = '{USER_ID}'")]
     still_active = sql | {valued("is_active", "users", f"id = '{USER_ID}'"): "t"}
-    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(still_active, cypher, redis), USER_ID, SUBJECT_ID)]
+    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(still_active, cypher, valkey), USER_ID, SUBJECT_ID)]
 
     failed = {result.name: result for result in results if not result.passed}
     assert set(failed) == {"postgres users row soft-erased", "postgres users row deactivated"}
@@ -502,7 +502,7 @@ def test_the_erasure_response_probes_read_the_partial_failure_shape() -> None:
 
 
 def test_a_store_step_reported_incomplete_fails_the_run() -> None:
-    # The relational half commits first, so ADR 0010 reports a failed Neo4j or Redis step
+    # The relational half commits first, so ADR 0010 reports a failed Neo4j or Valkey step
     # in `incomplete` rather than hiding it. A run that ignored that list would call an
     # erasure complete while a store still held the user.
     reported = erasure_response(payload={"erasure_id": "x", "events_deleted": 4, "incomplete": ["Neo4j deletion failed: ServiceUnavailable"]})
@@ -654,7 +654,7 @@ def test_the_run_creates_its_own_catalog_neighbourhood_and_user_subgraph() -> No
 
     for table in ("catalog_items", "artifacts", "user_collections", "owned_copies", "observations"):
         assert any(f"INSERT INTO {table} " in query for query in stack.sql_queries), f"nothing was written to {table}"
-    assert stack.redis_commands[-1][:2] == ["SET", f"snapshot:usercount:{USER_ID}"]
+    assert stack.valkey_commands[-1][:2] == ["SET", f"snapshot:usercount:{USER_ID}"]
 
 
 def test_the_reserved_smoke_identities_stay_outside_any_real_catalog_range() -> None:

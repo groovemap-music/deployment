@@ -9,7 +9,7 @@ services:
     ports: !override []
   neo4j:
     ports: !override []
-  redis:
+  valkey:
     ports: !override []
 
   # Release images currently target linux/amd64. Keep the infrastructure
