@@ -35,10 +35,19 @@ receivers:
           scrape_interval: 15s
           static_configs:
             - targets: ["postgres-exporter:9187"]
-        - job_name: redis-exporter
+        - job_name: valkey-exporter
           scrape_interval: 15s
           static_configs:
-            - targets: ["redis-exporter:9121"]
+            - targets: ["valkey-exporter:9121"]
+          # oliver006/redis_exporter names every series redis_*, even against
+          # Valkey. Rewrite them at scrape time so everything stored,
+          # dashboarded, and alerted on is valkey_*. `$$` is the collector's
+          # escape for a literal `$` in the replacement.
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: redis_(.*)
+              target_label: __name__
+              replacement: valkey_$$1
         - job_name: otel-collector
           scrape_interval: 15s
           static_configs:

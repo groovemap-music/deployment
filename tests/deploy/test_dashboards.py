@@ -275,7 +275,7 @@ class TestAcceptancePanels:
         assert "db_client_operation_duration_seconds_bucket" in metrics
 
     def test_neo4j_client_latency_is_scoped_to_the_graph(self) -> None:
-        """db.client.operation.duration is shared with PostgreSQL and Redis."""
+        """db.client.operation.duration is shared with PostgreSQL and Valkey."""
         for expr in _expressions(_dashboards()["neo4j.json"]):
             if "db_client_operation_duration_seconds" in expr:
                 assert 'db_system_name="neo4j"' in expr, expr
@@ -318,7 +318,7 @@ class TestAcceptancePanels:
         metrics = self._metrics("infrastructure.json")
         assert any(metric.startswith("rabbitmq_") for metric in metrics)
         assert any(metric.startswith("pg_") for metric in metrics)
-        assert any(metric.startswith("redis_") for metric in metrics)
+        assert any(metric.startswith("valkey_") for metric in metrics)
         assert "otelcol_receiver_accepted_metric_points_total" in metrics
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
@@ -811,7 +811,7 @@ EXPECTED_ALERT_SEVERITIES = {
     "ApiErrorRateHigh": "critical",
     "ApiLatencyHigh": "warning",
     "PostgresConnectionsNearMax": "warning",
-    "RedisMemoryHigh": "warning",
+    "ValkeyMemoryHigh": "warning",
     "RabbitMqMemoryAlarm": "critical",
     "Neo4jDown": "critical",
     "EventLoopLagHigh": "warning",

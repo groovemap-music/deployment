@@ -55,8 +55,8 @@ write_secret "rabbitmq_password.txt" "$(openssl rand -base64 24)"
 # Neo4j password
 write_secret "neo4j_password.txt" "$(openssl rand -base64 24)"
 
-# Redis password (requirepass — see scripts/redis-entrypoint.sh)
-write_secret "redis_password.txt" "$(openssl rand -base64 24)"
+# Valkey password (requirepass — see scripts/valkey-entrypoint.sh)
+write_secret "valkey_password.txt" "$(openssl rand -base64 24)"
 
 # Shared secret gating /api/internal/insights/* — MUST match between api and
 # insights (both read the same secrets/insights_internal_secret.txt file).

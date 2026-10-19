@@ -1,16 +1,16 @@
-"""Deploy-config regression tests for production Redis authentication.
+"""Deploy-config regression tests for production Valkey authentication.
 
-Base docker-compose.yml runs redis with no ``--requirepass`` and publishes
+Base docker-compose.yml runs valkey with no ``--requirepass`` and publishes
 6379 to 0.0.0.0. Every OTHER stateful service (postgres, neo4j, rabbitmq) gets
 a docker-compose.prod.yml hardening override that wires a Docker _FILE secret
-credential — redis got none, so a prod deploy left it unauthenticated and
+credential — valkey got none, so a prod deploy left it unauthenticated and
 reachable from the network with zero credentials (FLUSHALL, cache poisoning).
 
 These tests parse the compose YAML directly (no ``docker`` binary required)
-and assert the prod overlay closes that gap: a redis_password secret exists,
-the redis service authenticates with it via a custom entrypoint, the port is
-rebound to loopback only, and every service that talks to redis
-(api/dashboard/insights) gets REDIS_PASSWORD_FILE wired in.
+and assert the prod overlay closes that gap: a valkey_password secret exists,
+the valkey service authenticates with it via a custom entrypoint, the port is
+rebound to loopback only, and every service that talks to valkey
+(api/dashboard/insights) gets VALKEY_PASSWORD_FILE wired in.
 """
 
 from __future__ import annotations
@@ -60,74 +60,120 @@ def _prod_compose() -> dict[str, Any]:
     return _load_compose(REPO_ROOT / "docker-compose.prod.yml")
 
 
-class TestBaseRedisIsUnauthenticatedByDefault:
+class TestBaseValkeyIsUnauthenticatedByDefault:
     """Document the vulnerable baseline so a regression in the prod fix is obvious."""
 
-    def test_base_redis_has_no_requirepass(self) -> None:
-        redis = _base_compose()["services"]["redis"]
-        assert "--requirepass" not in redis["command"]
+    def test_base_valkey_has_no_requirepass(self) -> None:
+        valkey = _base_compose()["services"]["valkey"]
+        assert "--requirepass" not in valkey["command"]
 
-    def test_base_redis_publishes_to_all_interfaces(self) -> None:
-        redis = _base_compose()["services"]["redis"]
-        ports = redis["ports"]
+    def test_base_valkey_publishes_to_all_interfaces(self) -> None:
+        valkey = _base_compose()["services"]["valkey"]
+        ports = valkey["ports"]
         assert any(str(p) == "6379:6379" for p in ports)
 
 
-class TestProdRedisSecret:
-    def test_redis_password_secret_declared(self) -> None:
+class TestBaseValkeyService:
+    def test_valkey_replaces_redis(self) -> None:
+        services = _base_compose()["services"]
+        assert "valkey" in services
+        assert "redis" not in services
+
+    def test_valkey_identity_and_alias(self) -> None:
+        valkey = _base_compose()["services"]["valkey"]
+        assert valkey["container_name"] == "groovemap-valkey"
+        assert valkey["hostname"] == "valkey"
+        assert valkey["networks"]["groovemap"]["aliases"] == ["cache"]
+
+    def test_valkey_image_is_digest_pinned(self) -> None:
+        image = _base_compose()["services"]["valkey"]["image"]
+        assert image.startswith("valkey/valkey:9.")
+        assert "@sha256:" in image
+
+    def test_valkey_runs_valkey_server_with_the_cache_flags(self) -> None:
+        command = _base_compose()["services"]["valkey"]["command"]
+        assert command.startswith("valkey-server ")
+        assert "--appendonly yes" in command
+        assert "--maxmemory 512mb" in command
+
+    def test_valkey_uses_its_own_volume_not_the_redis_one(self) -> None:
+        compose = _base_compose()
+        assert compose["services"]["valkey"]["volumes"] == ["valkey_data:/data"]
+        assert "valkey_data" in compose["volumes"]
+        mounted = [v for svc in compose["services"].values() for v in svc.get("volumes", []) if isinstance(v, str)]
+        assert not any(v.startswith("redis_data") for v in mounted)
+
+    def test_valkey_healthcheck_uses_valkey_cli(self) -> None:
+        assert _base_compose()["services"]["valkey"]["healthcheck"]["test"] == ["CMD", "valkey-cli", "ping"]
+
+    def test_consumers_get_valkey_env_only(self) -> None:
+        services = _base_compose()["services"]
+        for name in ("api", "insights"):
+            environment = services[name]["environment"]
+            assert environment["VALKEY_HOST"] == "valkey", name
+            assert not any(key.startswith("REDIS_") for key in environment), name
+            assert "valkey" in services[name]["depends_on"], name
+
+
+class TestProdValkeySecret:
+    def test_valkey_password_secret_declared(self) -> None:
         prod = _prod_compose()
-        assert "redis_password" in prod["secrets"]
-        assert prod["secrets"]["redis_password"]["file"] == "./secrets/redis_password.txt"
+        assert "valkey_password" in prod["secrets"]
+        assert prod["secrets"]["valkey_password"]["file"] == "./secrets/valkey_password.txt"
 
     def test_secrets_example_placeholder_exists(self) -> None:
-        assert (REPO_ROOT / "secrets.example" / "redis_password.txt").exists()
+        assert (REPO_ROOT / "secrets.example" / "valkey_password.txt").exists()
 
 
-class TestProdRedisService:
-    def test_redis_service_uses_custom_entrypoint(self) -> None:
-        redis = _prod_compose()["services"]["redis"]
-        assert redis["entrypoint"] == ["/scripts/redis-entrypoint.sh"]
+class TestProdValkeyService:
+    def test_valkey_service_uses_custom_entrypoint(self) -> None:
+        valkey = _prod_compose()["services"]["valkey"]
+        assert valkey["entrypoint"] == ["/scripts/valkey-entrypoint.sh"]
 
-    def test_redis_service_mounts_entrypoint_script(self) -> None:
-        redis = _prod_compose()["services"]["redis"]
-        assert any("redis-entrypoint.sh" in str(v) for v in redis["volumes"])
+    def test_valkey_service_mounts_entrypoint_script(self) -> None:
+        valkey = _prod_compose()["services"]["valkey"]
+        assert any("valkey-entrypoint.sh" in str(v) for v in valkey["volumes"])
 
-    def test_redis_service_declares_password_secret(self) -> None:
-        redis = _prod_compose()["services"]["redis"]
-        assert "redis_password" in redis["secrets"]
+    def test_valkey_service_declares_password_secret(self) -> None:
+        valkey = _prod_compose()["services"]["valkey"]
+        assert "valkey_password" in valkey["secrets"]
 
-    def test_redis_port_rebound_to_loopback(self) -> None:
-        redis = _prod_compose()["services"]["redis"]
-        ports = redis["ports"]
+    def test_valkey_port_rebound_to_loopback(self) -> None:
+        valkey = _prod_compose()["services"]["valkey"]
+        ports = valkey["ports"]
         assert ports == ["127.0.0.1:6379:6379"]
         assert not any(str(p) == "6379:6379" for p in ports)
 
-    def test_redis_healthcheck_authenticates(self) -> None:
-        redis = _prod_compose()["services"]["redis"]
-        test_cmd = " ".join(redis["healthcheck"]["test"])
-        assert "redis_password" in test_cmd
+    def test_valkey_healthcheck_authenticates(self) -> None:
+        valkey = _prod_compose()["services"]["valkey"]
+        test_cmd = " ".join(valkey["healthcheck"]["test"])
+        assert "valkey_password" in test_cmd
         assert "-a" in test_cmd
 
     def test_entrypoint_script_exists_and_is_executable(self) -> None:
-        script = REPO_ROOT / "scripts" / "redis-entrypoint.sh"
+        script = REPO_ROOT / "scripts" / "valkey-entrypoint.sh"
         assert script.exists()
-        assert script.stat().st_mode & 0o111, "redis-entrypoint.sh must be executable"
+        assert script.stat().st_mode & 0o111, "valkey-entrypoint.sh must be executable"
 
 
-class TestProdRedisPasswordWiredIntoConsumers:
-    """Every Compose Redis consumer must receive the production password file."""
+class TestProdValkeyPasswordWiredIntoConsumers:
+    """Every Compose Valkey consumer must receive the production password file."""
 
-    def test_api_gets_redis_password_file(self) -> None:
+    def test_api_gets_valkey_password_file(self) -> None:
         api = _prod_compose()["services"]["api"]
-        assert api["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/redis_password"
-        assert "redis_password" in api["secrets"]
+        assert api["environment"]["VALKEY_PASSWORD_FILE"] == "/run/secrets/valkey_password"
+        assert "valkey_password" in api["secrets"]
 
-    def test_dashboard_gets_redis_password_file(self) -> None:
+    def test_dashboard_has_no_cache_wiring(self) -> None:
+        """operations-console no longer uses the cache, so it gets no credential for it."""
         dashboard = _prod_compose()["services"]["dashboard"]
-        assert dashboard["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/redis_password"
-        assert "redis_password" in dashboard["secrets"]
+        assert not any(name.startswith(("VALKEY_", "REDIS_")) for name in dashboard["environment"])
+        assert "valkey_password" not in dashboard["secrets"]
+        base = _base_compose()["services"]["dashboard"]
+        assert not any(name.startswith(("VALKEY_", "REDIS_")) for name in base["environment"])
+        assert "valkey" not in base["depends_on"]
 
-    def test_insights_gets_redis_password_file(self) -> None:
+    def test_insights_gets_valkey_password_file(self) -> None:
         insights = _prod_compose()["services"]["insights"]
-        assert insights["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/redis_password"
-        assert "redis_password" in insights["secrets"]
+        assert insights["environment"]["VALKEY_PASSWORD_FILE"] == "/run/secrets/valkey_password"
+        assert "valkey_password" in insights["secrets"]

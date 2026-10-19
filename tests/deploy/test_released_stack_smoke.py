@@ -85,7 +85,7 @@ def test_released_stack_verifier_orders_schema_before_applications() -> None:
 
 def test_released_stack_verifier_checks_health_and_graceful_stop() -> None:
     text = SCRIPT.read_text()
-    assert "GM_INFRASTRUCTURE_SERVICES=(rabbitmq postgres neo4j redis)" in text
+    assert "GM_INFRASTRUCTURE_SERVICES=(rabbitmq postgres neo4j valkey)" in text
     assert 'up -d --wait "${GM_INFRASTRUCTURE_SERVICES[@]}"' in text
     assert 'stop --timeout 30 "${GM_APPLICATION_SERVICES[@]}"' in text
 

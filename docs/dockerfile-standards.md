@@ -101,9 +101,9 @@ and pinned by digest as `repository:tag@sha256:digest`:
 | `rabbitmq-dlq-policy-init` | `rabbitmq` |
 | `postgres` | `postgres` |
 | `neo4j` | `neo4j` |
-| `redis` | `redis` |
+| `valkey` | `valkey/valkey` |
 | `postgres-exporter` | `prometheuscommunity/postgres-exporter` |
-| `redis-exporter` | `oliver006/redis_exporter` |
+| `valkey-exporter` | `oliver006/redis_exporter` |
 | `cadvisor` | `gcr.io/cadvisor/cadvisor` |
 | `node-exporter` | `prom/node-exporter` |
 | `victoria-metrics` | `victoriametrics/victoria-metrics` |
