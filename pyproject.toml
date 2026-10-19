@@ -12,7 +12,6 @@ license-files = ["LICENSE"]
 classifiers = ["Programming Language :: Python :: 3.14"]
 dependencies = [
     "pyyaml==6.0.3",
-    "valkey>=6.2.0",
 ]
 
 [dependency-groups]
@@ -20,7 +19,6 @@ dev = [
     "build>=1.6.1",
     "commitizen>=4.19.2",
     "cyclonedx-bom>=7.5.0",
-    "fakeredis[valkey]>=2.40.0",
     "mypy>=2.4.0",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",

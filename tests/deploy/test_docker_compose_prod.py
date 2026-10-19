@@ -74,10 +74,10 @@ class TestBaseValkeyIsUnauthenticatedByDefault:
 
 
 class TestBaseValkeyService:
-    def test_valkey_replaces_redis(self) -> None:
+    def test_valkey_is_the_cache_service(self) -> None:
         services = _base_compose()["services"]
         assert "valkey" in services
-        assert "redis" not in services
+        assert [name for name in services if name.endswith(("cache", "valkey"))] == ["valkey"]
 
     def test_valkey_identity_and_alias(self) -> None:
         valkey = _base_compose()["services"]["valkey"]
@@ -104,12 +104,14 @@ class TestBaseValkeyService:
         assert command[command.index("--maxmemory-policy") + 1] == "noeviction"
         assert not any("lru" in part or "lfu" in part or "random" in part for part in command)
 
-    def test_valkey_uses_its_own_volume_not_the_redis_one(self) -> None:
+    def test_valkey_uses_valkey_data_as_the_only_cache_volume(self) -> None:
         compose = _base_compose()
         assert compose["services"]["valkey"]["volumes"] == ["valkey_data:/data"]
         assert "valkey_data" in compose["volumes"]
         mounted = [v for svc in compose["services"].values() for v in svc.get("volumes", []) if isinstance(v, str)]
-        assert not any(v.startswith("redis_data") for v in mounted)
+        assert "valkey_data:/data" in mounted
+        # valkey_data is the only cache volume: no other declared volume is cache-related.
+        assert [name for name in compose["volumes"] if "cache" in name or "valkey" in name] == ["valkey_data"]
 
     def test_valkey_healthcheck_uses_valkey_cli(self) -> None:
         assert _base_compose()["services"]["valkey"]["healthcheck"]["test"] == ["CMD", "valkey-cli", "ping"]
@@ -119,7 +121,6 @@ class TestBaseValkeyService:
         for name in ("api", "insights"):
             environment = services[name]["environment"]
             assert environment["VALKEY_HOST"] == "valkey", name
-            assert not any(key.startswith("REDIS_") for key in environment), name
             assert "valkey" in services[name]["depends_on"], name
 
 
@@ -175,10 +176,10 @@ class TestProdValkeyPasswordWiredIntoConsumers:
     def test_dashboard_has_no_cache_wiring(self) -> None:
         """operations-console no longer uses the cache, so it gets no credential for it."""
         dashboard = _prod_compose()["services"]["dashboard"]
-        assert not any(name.startswith(("VALKEY_", "REDIS_")) for name in dashboard["environment"])
+        assert not any(name.startswith(("VALKEY_",)) for name in dashboard["environment"])
         assert "valkey_password" not in dashboard["secrets"]
         base = _base_compose()["services"]["dashboard"]
-        assert not any(name.startswith(("VALKEY_", "REDIS_")) for name in base["environment"])
+        assert not any(name.startswith(("VALKEY_",)) for name in base["environment"])
         assert "valkey" not in base["depends_on"]
 
     def test_insights_gets_valkey_password_file(self) -> None:

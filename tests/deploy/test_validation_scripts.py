@@ -79,10 +79,10 @@ def test_third_party_policy_rejects_unpinned_or_foreign_references(service: str,
 
 def test_image_policy_rejects_a_swapped_compose_repository() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    compose["services"]["valkey"]["image"] = f"redis:8{D1}"
+    compose["services"]["valkey"]["image"] = f"evilcache:8{D1}"
     env_names = (".env.example", "config/validation.env")
 
-    with pytest.raises(AssertionError, match="valkey runs repository redis"):
+    with pytest.raises(AssertionError, match="valkey runs repository evilcache"):
         image_policy()["check_compose"](yaml.safe_dump(compose), {name: (ROOT / name).read_text() for name in env_names})
 
 

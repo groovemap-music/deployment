@@ -420,7 +420,7 @@ closed.
 | `groovemap.pipeline.batch.size` | `groovemap_pipeline_batch_size` | histogram (`{items}`) | `store` (`neo4j`\|`postgresql`), `entity` |
 | `groovemap.pipeline.batch.flush.duration` | `groovemap_pipeline_batch_flush_duration_seconds` | histogram (s) | `store`, `entity`, `outcome` |
 | `groovemap.pipeline.consumers.active` | `groovemap_pipeline_consumers_active` | up-down counter | `source` |
-| `groovemap.pipeline.reconnects` | `groovemap_pipeline_reconnects_total` | counter | `system` (`rabbitmq`\|`neo4j`\|`postgresql`\|`redis`) |
+| `groovemap.pipeline.reconnects` | `groovemap_pipeline_reconnects_total` | counter | `system` (`rabbitmq`\|`neo4j`\|`postgresql`\|`valkey`) |
 | `groovemap.pipeline.circuit_breaker.state` | `groovemap_pipeline_circuit_breaker_state` | gauge (0 closed, 1 half-open, 2 open) | `system` |
 
 ### Extraction metrics
@@ -1270,10 +1270,6 @@ docker compose down -v
 
 ### First execution, 2026-09-03
 
-> **Historical record.** These executions predate the Redis to Valkey swap. The
-> `redis-exporter` scrape job they list is now `valkey-exporter`, and its series
-> are stored as `valkey_*`. The logs are kept as run, not rewritten.
-
 The runbook above was executed once against locally built images. This record
 exists so the next operator knows what a good result looks like, and which
 steps have never been executed successfully. Replace it after the first run
@@ -1310,7 +1306,7 @@ argument removed; neither binary accepts it any more.
 `api`, `brainzgraphinator`, `brainztableinator`, `dashboard`, `explore`,
 `extractor-discogs`, `extractor-musicbrainz`, `insights`, `schema-init`,
 `tableinator`. From the scrape jobs: `otelcol-contrib`, `postgres-exporter`,
-`rabbitmq`, `redis-exporter`. Ten of the eleven wired services exported.
+`rabbitmq`, `valkey-exporter`. Ten of the eleven wired services exported.
 `schema-init` appearing at all is the evidence that the one-shot flush on exit
 works.
 
@@ -1359,10 +1355,6 @@ re-run: it closes the Grafana listing, the clean pass, and `graphinator`, and it
 leaves `mcp-server` open for the same reason.
 
 ### Second execution, 2026-09-05
-
-> **Historical record.** These executions predate the Redis to Valkey swap. The
-> `redis-exporter` scrape job they list is now `valkey-exporter`, and its series
-> are stored as `valkey_*`. The logs are kept as run, not rewritten.
 
 Wave 2's run. It exercised the VictoriaMetrics backend, the VictoriaTraces
 pipeline, the runtime, Neo4j, span, container, and host series, and the
@@ -1418,11 +1410,11 @@ for the first time. Pushed by services: `api`, `brainzgraphinator`,
 `extractor-musicbrainz`, `graphinator`, `insights`, `schema-init`,
 `tableinator` — all eleven wired services. From the scrape jobs: `cadvisor`,
 `node-exporter`, `otelcol-contrib`, `postgres-exporter`, `rabbitmq`,
-`redis-exporter`.
+`valkey-exporter`.
 
 **`up` is queryable.** `min by (job) (up)` returned `1` for all six scrape jobs
 (`cadvisor`, `node-exporter`, `otelcol-contrib`, `postgres-exporter`,
-`rabbitmq`, `redis-exporter`). The collector's Prometheus receiver synthesises
+`rabbitmq`, `valkey-exporter`). The collector's Prometheus receiver synthesises
 the series and remote write carries it into VictoriaMetrics intact, which is
 what `ScrapeTargetDown` rests on.
 
