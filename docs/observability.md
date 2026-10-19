@@ -570,7 +570,17 @@ job rewrites `redis_(.*)` to `valkey_$1` with `metric_relabel_configs`, so only
 | `valkey_commands_processed_total` | counter | Commands processed |
 | `valkey_keyspace_hits_total` | counter | Successful key lookups |
 | `valkey_keyspace_misses_total` | counter | Failed key lookups |
-| `valkey_evicted_keys_total` | counter | Keys evicted by the `maxmemory` policy |
+| `valkey_evicted_keys_total` | counter | Keys evicted by the `maxmemory` policy. Compose runs `noeviction`, so this stays at `0`; a rising value means the policy was changed |
+
+Valkey runs with `--maxmemory-policy noeviction` because it stores security
+state (`revoked:jti:*`, `password_changed:*`) that must never be evicted: an
+evicted revocation marker silently re-validates a revoked token. The cost is
+that at `maxmemory` writes fail with an OOM error rather than the cache
+quietly shrinking. Cache writes in catalog-api and analytics-engine swallow
+that error (the symptom is a collapsing hit ratio and more database load),
+but login 2FA challenges, logout revocation, password reset and change, OAuth
+state and snapshot saves surface it as a request error. Treat
+`ValkeyMemoryHigh` as the warning to act on, not as a cache-tuning hint.
 
 ### Span metrics
 

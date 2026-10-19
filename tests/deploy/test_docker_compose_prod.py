@@ -96,6 +96,14 @@ class TestBaseValkeyService:
         assert "--appendonly yes" in command
         assert "--maxmemory 512mb" in command
 
+    def test_valkey_never_evicts_security_state(self) -> None:
+        # revoked:jti:* and password_changed:* live only in Valkey. Any evicting policy
+        # (allkeys-*, volatile-*) can drop them under memory pressure and silently
+        # re-validate revoked tokens, so writes must fail at maxmemory instead.
+        command = _base_compose()["services"]["valkey"]["command"].split()
+        assert command[command.index("--maxmemory-policy") + 1] == "noeviction"
+        assert not any("lru" in part or "lfu" in part or "random" in part for part in command)
+
     def test_valkey_uses_its_own_volume_not_the_redis_one(self) -> None:
         compose = _base_compose()
         assert compose["services"]["valkey"]["volumes"] == ["valkey_data:/data"]

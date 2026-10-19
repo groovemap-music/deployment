@@ -505,8 +505,10 @@ groups:
           summary: Valkey is above 85% of its maxmemory
           description: >-
             Threshold: used memory above 85% of maxmemory (512MB in compose),
-            sustained 15m. The allkeys-lru policy starts evicting rather than
-            failing, so the first symptom is a collapsing cache hit ratio.
+            sustained 15m. The policy is noeviction, so at 100% Valkey evicts
+            nothing and writes fail with an OOM error instead. Cache writes are
+            swallowed (hit ratio collapses), but login 2FA challenges, logout
+            revocation, password reset and OAuth state writes surface as errors.
         labels:
           severity: warning
 
