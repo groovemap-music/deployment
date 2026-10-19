@@ -176,10 +176,10 @@ class TestProdValkeyPasswordWiredIntoConsumers:
     def test_dashboard_has_no_cache_wiring(self) -> None:
         """operations-console no longer uses the cache, so it gets no credential for it."""
         dashboard = _prod_compose()["services"]["dashboard"]
-        assert not any(name.startswith(("VALKEY_",)) for name in dashboard["environment"])
+        assert not any(name.startswith("VALKEY_") for name in dashboard["environment"])
         assert "valkey_password" not in dashboard["secrets"]
         base = _base_compose()["services"]["dashboard"]
-        assert not any(name.startswith(("VALKEY_",)) for name in base["environment"])
+        assert not any(name.startswith("VALKEY_") for name in base["environment"])
         assert "valkey" not in base["depends_on"]
 
     def test_insights_gets_valkey_password_file(self) -> None:
