@@ -373,7 +373,7 @@ class TestWaveTwoRunbookSteps:
         """Every no-data canary rests on `up`, so the runbook proves it directly."""
         section = self._section()
         assert "min by (job) (up)" in section
-        for job in ("cadvisor", "node-exporter", "otelcol-contrib", "postgres-exporter", "rabbitmq", "redis-exporter"):
+        for job in ("cadvisor", "node-exporter", "otelcol-contrib", "postgres-exporter", "rabbitmq", "valkey-exporter"):
             assert f"`{job}`" in section, f"{job} is missing from the expected scrape-job list"
 
     def test_the_trace_check_uses_the_tempo_api_and_not_promql(self) -> None:

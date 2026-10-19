@@ -102,8 +102,8 @@ THIRD_PARTY_REPOSITORIES = {
     # service reuses rabbitmq's own repository rather than adding a new
     # third-party image.
     "rabbitmq-dlq-policy-init": "rabbitmq",
-    "redis": "redis",
-    "redis-exporter": "oliver006/redis_exporter",
+    "valkey": "valkey/valkey",
+    "valkey-exporter": "oliver006/redis_exporter",
     "victoria-metrics": "victoriametrics/victoria-metrics",
     "victoria-traces": "victoriametrics/victoria-traces",
 }

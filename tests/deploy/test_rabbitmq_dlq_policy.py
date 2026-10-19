@@ -15,8 +15,8 @@ Four layers:
   synthetic bad inputs, because a gate that cannot fail is not a gate (mirrors
   test_dashboards.py's rationale for scripts/check-dashboards.py).
 - ``scripts/rabbitmq-dlq-policy-init.sh`` is run for real (with a stubbed
-  ``rabbitmqadmin`` on PATH, mirroring test_redis_entrypoint_script.py's approach for
-  scripts/redis-entrypoint.sh) to prove it builds the right policy definition from env
+  ``rabbitmqadmin`` on PATH, mirroring test_valkey_entrypoint_script.py's approach for
+  scripts/valkey-entrypoint.sh) to prove it builds the right policy definition from env
   vars and still forwards Docker secrets when present.
 - docker-compose.yml is parsed to confirm the broker runs stock (no boot-time
   definitions import) and the init service is wired to wait for it, reuse its image,
@@ -226,7 +226,7 @@ class TestComposeServiceWiring:
 
 class TestInitScriptFunctional:
     """Runs the real script with a stubbed rabbitmqadmin, mirroring
-    test_redis_entrypoint_script.py's approach for scripts/redis-entrypoint.sh."""
+    test_valkey_entrypoint_script.py's approach for scripts/valkey-entrypoint.sh."""
 
     def _run(self, tmp_path: Path, env_overrides: dict[str, str], secrets: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         stub_dir = tmp_path / "bin"
@@ -252,7 +252,7 @@ class TestInitScriptFunctional:
             (secrets_dir / name).write_text(value)
 
         # The script hardcodes /run/secrets/*; patch it to a tmp_path-local copy so the
-        # test is hermetic (same technique test_redis_entrypoint_script.py uses).
+        # test is hermetic (same technique test_valkey_entrypoint_script.py uses).
         patched = tmp_path / "rabbitmq-dlq-policy-init.sh"
         text = INIT_SCRIPT.read_text()
         text = text.replace("/run/secrets/rabbitmq_username", str(secrets_dir / "rabbitmq_username"))

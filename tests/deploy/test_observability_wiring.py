@@ -26,6 +26,7 @@ just an absent dashboard — so they are pinned here:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,7 @@ INSTRUMENTED_SERVICES = (
     "embeddings",
 )
 
-EXPORTERS = ("postgres-exporter", "redis-exporter")
+EXPORTERS = ("postgres-exporter", "valkey-exporter")
 
 # The two exporters that observe the host rather than a stack service. They are
 # not in EXPORTERS because neither takes a credential and neither is scraped on
@@ -77,7 +78,7 @@ HOST_EXPORTERS = ("cadvisor", "node-exporter")
 EXPECTED_SCRAPE_JOBS = {
     "rabbitmq": "rabbitmq:15692",
     "postgres-exporter": "postgres-exporter:9187",
-    "redis-exporter": "redis-exporter:9121",
+    "valkey-exporter": "valkey-exporter:9121",
     "otel-collector": "otel-collector:8888",
     "cadvisor": "cadvisor:8080",
     "node-exporter": "node-exporter:9100",
@@ -156,10 +157,10 @@ class TestEveryInstrumentedServiceExports:
             assert telemetry_keys <= allowed, (name, sorted(telemetry_keys - allowed))
 
     def test_third_party_services_are_not_wired_for_otlp(self) -> None:
-        """rabbitmq/postgres/neo4j/redis, the exporters, and the telemetry
+        """rabbitmq/postgres/neo4j/valkey, the exporters, and the telemetry
         backends themselves carry no OTEL SDK."""
         services = _base_compose()["services"]
-        for name in ("rabbitmq", "postgres", "neo4j", "redis", "victoria-metrics", "victoria-traces", *EXPORTERS):
+        for name in ("rabbitmq", "postgres", "neo4j", "valkey", "victoria-metrics", "victoria-traces", *EXPORTERS):
             environment = services[name].get("environment", {}) or {}
             assert not [key for key in environment if key.startswith("OTEL_")], name
 
@@ -246,7 +247,7 @@ class TestInfrastructureExporters:
     def test_exporters_wait_for_their_backing_service(self) -> None:
         services = _base_compose()["services"]
         assert services["postgres-exporter"]["depends_on"]["postgres"]["condition"] == "service_healthy"
-        assert services["redis-exporter"]["depends_on"]["redis"]["condition"] == "service_healthy"
+        assert services["valkey-exporter"]["depends_on"]["valkey"]["condition"] == "service_healthy"
 
     def test_exporters_are_hardened(self) -> None:
         services = _base_compose()["services"]
@@ -261,9 +262,9 @@ class TestInfrastructureExporters:
         assert environment["DATA_SOURCE_URI"] == "postgres:5432/groovemap?sslmode=disable"
         assert environment["DATA_SOURCE_USER"] == "groovemap"
 
-    def test_redis_exporter_targets_the_stack_cache(self) -> None:
-        environment = _base_compose()["services"]["redis-exporter"]["environment"]
-        assert environment["REDIS_ADDR"] == "redis://redis:6379"
+    def test_valkey_exporter_targets_the_stack_cache(self) -> None:
+        environment = _base_compose()["services"]["valkey-exporter"]["environment"]
+        assert environment["REDIS_ADDR"] == "redis://valkey:6379"
 
 
 class TestExporterCredentialsInProd:
@@ -277,10 +278,10 @@ class TestExporterCredentialsInProd:
         assert exporter["environment"]["DATA_SOURCE_PASS"] is None
         assert set(exporter["secrets"]) == {"postgres_username", "postgres_password"}
 
-    def test_redis_exporter_reads_the_file_backed_password(self) -> None:
-        exporter = _prod_compose()["services"]["redis-exporter"]
-        assert exporter["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/redis_password"
-        assert "redis_password" in exporter["secrets"]
+    def test_valkey_exporter_reads_the_file_backed_password(self) -> None:
+        exporter = _prod_compose()["services"]["valkey-exporter"]
+        assert exporter["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/valkey_password"
+        assert "valkey_password" in exporter["secrets"]
 
 
 class TestCollectorScrapesInfrastructure:
@@ -294,6 +295,29 @@ class TestCollectorScrapesInfrastructure:
         assert set(actual) == set(EXPECTED_SCRAPE_JOBS), sorted(actual)
         for job_name, target in EXPECTED_SCRAPE_JOBS.items():
             assert actual[job_name] == [target], job_name
+
+    def test_valkey_series_are_relabelled_from_the_exporters_redis_names(self) -> None:
+        """oliver006/redis_exporter emits redis_*; only valkey_* may be stored."""
+        job = next(job for job in _scrape_configs() if job["job_name"] == "valkey-exporter")
+        (rule,) = job["metric_relabel_configs"]
+        assert rule["source_labels"] == ["__name__"]
+        assert rule["target_label"] == "__name__"
+        # Prometheus anchors the regex; the collector turns `$$` into a literal `$`.
+        pattern = re.compile(rule["regex"])
+        replacement = re.sub(r"\$(\d)", r"\\\1", rule["replacement"].replace("$$", "$"))
+        for exported, stored in {
+            "redis_up": "valkey_up",
+            "redis_memory_used_bytes": "valkey_memory_used_bytes",
+            "redis_commands_processed_total": "valkey_commands_processed_total",
+        }.items():
+            match = pattern.fullmatch(exported)
+            assert match, exported
+            assert match.expand(replacement) == stored
+        assert not pattern.fullmatch("valkey_up")
+
+    def test_only_the_valkey_exporter_job_relabels_metrics(self) -> None:
+        relabelled = {job["job_name"] for job in _scrape_configs() if "metric_relabel_configs" in job}
+        assert relabelled == {"valkey-exporter"}
 
     def test_job_names_match_compose_service_keys(self) -> None:
         services = _base_compose()["services"]
@@ -422,7 +446,7 @@ class TestHostExporters:
         assert service["read_only"] is True
 
     def test_both_host_exporters_have_healthchecks(self) -> None:
-        """Both images ship a shell and busybox wget, so unlike redis-exporter
+        """Both images ship a shell and busybox wget, so unlike valkey-exporter
         they can probe themselves."""
         services = _base_compose()["services"]
         assert services["cadvisor"]["healthcheck"]["test"] == ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
@@ -484,7 +508,7 @@ class TestWiringDocumentation:
             "OTEL_TRACES_SAMPLER",
             "OTEL_TRACES_SAMPLER_ARG",
             "postgres-exporter",
-            "redis-exporter",
+            "valkey-exporter",
             "cadvisor",
             "node-exporter",
             "15692",

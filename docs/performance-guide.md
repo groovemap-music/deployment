@@ -116,12 +116,13 @@ pool, logs queries over five seconds, and sets a ten-minute transaction timeout.
 Heap, page cache, transaction memory, and the container limit must fit together;
 render the actual environment rather than adding the documented defaults.
 
-### Redis
+### Valkey
 
-Redis is bounded to 512 MiB with `allkeys-lru` and append-only persistence on
-`redis_data`. Treat eviction and persistence as part of performance evidence:
-the cache may evict under pressure, while AOF rewrite and volume I/O still
-consume resources.
+Valkey is bounded to 512 MiB with `noeviction` and append-only persistence on
+`valkey_data`. Treat memory headroom and persistence as part of performance
+evidence: it never evicts, so a full instance fails writes rather than dropping
+keys (watch `ValkeyMemoryHigh`), while AOF rewrite and volume I/O still consume
+resources.
 
 ## Observe before and after
 

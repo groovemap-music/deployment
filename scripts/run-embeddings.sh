@@ -8,7 +8,7 @@
 #
 # The job has no service of its own: it reuses the `insights` service's image
 # (ANALYTICS_ENGINE_IMAGE) with its entrypoint overridden and --no-deps, so this
-# one-shot run never starts or waits on api/redis. `docker-compose.yml`'s
+# one-shot run never starts or waits on api/valkey. `docker-compose.yml`'s
 # `embeddings` service (the "jobs" profile) declares its required
 # SOURCE_DUMP_ID/SOURCE_DUMP_DATE and its EMBEDDING_PIPELINE_POSTGRES_USERNAME/
 # _PASSWORD login — a member of database-schema's NOLOGIN embedding_pipeline

@@ -81,7 +81,7 @@ services:
   dashboard:
     environment:
       - LOG_LEVEL=DEBUG
-      - REDIS_HOST=redis
+      - VALKEY_HOST=valkey
 ```
 
 ## Core Settings
@@ -359,22 +359,22 @@ POSTGRES_POOL_MAX_SIZE=20
 > Query timeout (30 seconds, see **Connection Details** above) is a fixed value in
 > code, not a configurable env var.
 
-### Redis Configuration
+### Valkey Configuration
 
 | Variable         | Description                            | Default     | Required                               |
 | ---------------- | -------------------------------------- | ----------- | -------------------------------------- |
-| `REDIS_HOST`     | Redis hostname                         | `localhost` | Yes (Dashboard, API, Insights) |
-| `REDIS_PORT`     | Redis port                             | `6379`      | No                                     |
-| `REDIS_PASSWORD` | Redis password (`requirepass`)         | _(none)_    | No (required if Redis enforces auth)   |
+| `VALKEY_HOST`     | Valkey hostname                        | `localhost` | Yes (Dashboard, API, Insights) |
+| `VALKEY_PORT`     | Valkey port                            | `6379`      | No                                     |
+| `VALKEY_PASSWORD` | Valkey password (`requirepass`)        | _(none)_    | No (required if Valkey enforces auth)  |
 
 **Used By**: Dashboard, API, Insights
 
 **Connection Details**:
 
-- Protocol: Redis protocol
-- Default port: 6379 (override with `REDIS_PORT`)
+- Protocol: RESP (Redis serialization protocol), spoken by the `valkey-py` client
+- Default port: 6379 (override with `VALKEY_PORT`)
 - Database: 0 (default)
-- Authentication: when `REDIS_PASSWORD` is set it is embedded in the connection URL (`redis://:<password>@host:port/0`); omitted entirely when unset. Supports the `_FILE` secret convention (`REDIS_PASSWORD_FILE`).
+- Authentication: when `VALKEY_PASSWORD` is set it is embedded in the connection URL (`valkey://:<password>@host:port/0`); omitted entirely when unset. Supports the `_FILE` secret convention (`VALKEY_PASSWORD_FILE`).
 - Connection pool: Automatic
 - Retry logic: Exponential backoff
 
@@ -382,26 +382,40 @@ POSTGRES_POOL_MAX_SIZE=20
 
 ```bash
 # Local development (no auth)
-REDIS_HOST="localhost"
+VALKEY_HOST="localhost"
 
 # Docker Compose
-REDIS_HOST="redis"
+VALKEY_HOST="valkey"
 
-# Authenticated Redis (e.g. requirepass enabled)
-REDIS_HOST="redis"
-REDIS_PASSWORD="<password>"
+# Authenticated Valkey (e.g. requirepass enabled)
+VALKEY_HOST="valkey"
+VALKEY_PASSWORD="<password>"
 # or, via Docker secret:
-REDIS_PASSWORD_FILE="/run/secrets/redis_password"
+VALKEY_PASSWORD_FILE="/run/secrets/valkey_password"
 ```
 
 **Cache Configuration**:
 
 - Default TTL: 3600 seconds (1 hour)
 - Max memory: 512MB in the base file (change through a reviewed Compose override)
-- Eviction policy: allkeys-lru
+- Eviction policy: `noeviction` (`--maxmemory-policy noeviction`). Valkey never
+  drops a key to make room; once `maxmemory` is reached, commands that add
+  memory (`SET`, `SETEX`, `INCR`) fail with `OOM command not allowed when used
+  memory > 'maxmemory'`, while reads, `DEL`, `GETDEL` and `EXPIRE` keep working.
+  Valkey also holds security state that exists nowhere else, namely
+  `revoked:jti:*` (logout and admin-logout token revocation) and
+  `password_changed:*` (session invalidation after a password reset or change).
+  An evicting policy such as `allkeys-lru` could silently drop those keys and
+  make a revoked token valid again, so the policy is pinned by
+  `tests/deploy/test_docker_compose_prod.py`. The trade-off is that a full
+  Valkey fails writes loudly instead of degrading quietly; watch
+  `ValkeyMemoryHigh` (see [observability](observability.md)) and raise
+  `maxmemory` through a reviewed Compose override before it fills.
 - Persistence: append-only file enabled (`--appendonly yes`) on the
-  `redis_data` volume; Redis is used as a cache, but container replacement does
-  not discard the volume automatically
+  `valkey_data` volume; Valkey is used as a cache plus security state, and
+  container replacement does not discard the volume automatically. Valkey cannot
+  read the data files of Redis 7.4+, so this volume starts empty after the
+  swap; see the [Redis to Valkey cutover](maintenance.md#redis-to-valkey-cutover)
 
 ## JWT Configuration
 
@@ -662,7 +676,7 @@ POSTGRES_HOST="localhost"
 POSTGRES_USERNAME="groovemap"
 POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
-REDIS_HOST="localhost"
+VALKEY_HOST="localhost"
 JWT_SECRET_KEY="your-secret-key-here"
 DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
@@ -857,7 +871,7 @@ POSTGRES_HOST="localhost"
 POSTGRES_USERNAME="groovemap"
 POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
-REDIS_HOST="localhost"
+VALKEY_HOST="localhost"
 
 # RabbitMQ (also used to authenticate against the RabbitMQ management API)
 RABBITMQ_HOST=rabbitmq           # default: rabbitmq
@@ -887,8 +901,8 @@ POSTGRES_USERNAME="groovemap"
 POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
 
-# Optional - Redis Caching
-REDIS_HOST="localhost"                        # Redis hostname for result caching (default: localhost)
+# Optional - Valkey Caching
+VALKEY_HOST="localhost"                        # Valkey hostname for result caching (default: localhost)
 
 # Internal API authentication — MUST match the API service's INSIGHTS_INTERNAL_SECRET.
 # The API's /api/internal/insights/* router is mounted on the public app and reachable
@@ -914,7 +928,7 @@ LOG_LEVEL=INFO
 Internal health port: 8009. It is not published to the host; use
 `docker compose ps` for status.
 
-**Notes**: The Insights service uses Redis for caching computed results (cache-aside pattern). The cache TTL matches the `INSIGHTS_SCHEDULE_HOURS` interval and is invalidated after each computation run. If Redis is unavailable, the service operates without caching.
+**Notes**: The Insights service uses Valkey for caching computed results (cache-aside pattern). The cache TTL matches the `INSIGHTS_SCHEDULE_HOURS` interval and is invalidated after each computation run. If Valkey is unavailable, the service operates without caching.
 
 ### Brainzgraphinator
 
@@ -1019,8 +1033,8 @@ POSTGRES_USERNAME=postgres
 POSTGRES_PASSWORD=development
 POSTGRES_DATABASE=groovemap_dev
 
-# Redis
-REDIS_HOST=localhost
+# Valkey
+VALKEY_HOST=localhost
 
 # JWT (API)
 JWT_SECRET_KEY=dev-secret-key-not-for-production
@@ -1062,7 +1076,7 @@ This creates `secrets/` with these files (all `chmod 600`, directory `chmod 700`
 | `postgres_username.txt` | `groovemap` |
 | `rabbitmq_password.txt` | `openssl rand -base64 24` |
 | `rabbitmq_username.txt` | `groovemap` |
-| `redis_password.txt` | `openssl rand -base64 24` |
+| `valkey_password.txt` | `openssl rand -base64 24` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 | `grafana_admin_password.txt` | `openssl rand -base64 24`; Grafana admin login |
 
@@ -1083,8 +1097,8 @@ NEO4J_HOST=neo4j.prod.internal
 POSTGRES_HOST=postgres.prod.internal
 POSTGRES_DATABASE=groovemap
 
-# Redis
-REDIS_HOST=redis
+# Valkey
+VALKEY_HOST=valkey
 
 # JWT (optional non-secret settings)
 JWT_EXPIRE_MINUTES=1440
@@ -1146,8 +1160,8 @@ NEO4J_TLS_ENABLED=true
 # PostgreSQL hostname
 POSTGRES_HOST=postgres.example.com
 
-# Redis with TLS
-REDIS_HOST=rediss://:password@redis.example.com:6380/0
+# Valkey with TLS
+VALKEY_HOST=valkeys://:password@valkey.example.com:6380/0
 ```
 
 ### Access Control

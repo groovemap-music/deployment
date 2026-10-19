@@ -28,7 +28,7 @@
 # nothing — and on a stack that is starting up, or one whose extractors have not
 # run yet, that is nearly every rule at once. Missing telemetry is reported by
 # exactly three canaries instead, each covering a distinct source:
-# ScrapeTargetDown for the scrape jobs (rabbitmq, postgres, redis, cadvisor,
+# ScrapeTargetDown for the scrape jobs (rabbitmq, postgres, valkey, cadvisor,
 # node-exporter, the collector), ConsumersAbsent for the services that push
 # OTLP, and Neo4jDown for the graph probe operations-console emits. A threshold
 # rule downstream of one of those sees no data only when its canary is already
@@ -476,8 +476,8 @@ groups:
         labels:
           severity: warning
 
-      - uid: groovemap-redis-memory-high
-        title: RedisMemoryHigh
+      - uid: groovemap-valkey-memory-high
+        title: ValkeyMemoryHigh
         condition: C
         data:
           - refId: A
@@ -488,7 +488,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: 100 * redis_memory_used_bytes / redis_memory_max_bytes
+              expr: 100 * valkey_memory_used_bytes / valkey_memory_max_bytes
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -502,11 +502,13 @@ groups:
         noDataState: OK
         execErrState: Error
         annotations:
-          summary: Redis is above 85% of its maxmemory
+          summary: Valkey is above 85% of its maxmemory
           description: >-
             Threshold: used memory above 85% of maxmemory (512MB in compose),
-            sustained 15m. The allkeys-lru policy starts evicting rather than
-            failing, so the first symptom is a collapsing cache hit ratio.
+            sustained 15m. The policy is noeviction, so at 100% Valkey evicts
+            nothing and writes fail with an OOM error instead. Cache writes are
+            swallowed (hit ratio collapses), but login 2FA challenges, logout
+            revocation, password reset and OAuth state writes surface as errors.
         labels:
           severity: warning
 

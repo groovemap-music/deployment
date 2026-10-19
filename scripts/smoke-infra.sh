@@ -14,8 +14,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${compose[@]}" up -d --wait rabbitmq postgres neo4j redis
-"${compose[@]}" ps rabbitmq postgres neo4j redis
+"${compose[@]}" up -d --wait rabbitmq postgres neo4j valkey
+"${compose[@]}" ps rabbitmq postgres neo4j valkey
 
 # rabbitmq is already healthy above, so rabbitmq-dlq-policy-init's
 # depends_on/service_healthy condition is already satisfied; `compose wait` blocks

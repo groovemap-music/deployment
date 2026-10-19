@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Operator-approved, disposable end-to-end assertion that the ADR 0010 erasure and export
 # boundary holds: an account's activity can be exported as well-formed NDJSON, and after an
-# erasure nothing keyed to that account survives in PostgreSQL, Neo4j, or Redis. It starts
+# erasure nothing keyed to that account survives in PostgreSQL, Neo4j, or Valkey. It starts
 # containers and destroys their volumes on exit, so it never runs inside `just check` or CI.
 set -euo pipefail
 

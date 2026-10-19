@@ -127,7 +127,7 @@ untracked `secrets/` directory; they are not ephemeral Swarm secrets. See
 | Encryption master key  | `ENCRYPTION_MASTER_KEY_FILE`        | `ENCRYPTION_MASTER_KEY`        |
 | Resend API key         | `RESEND_API_KEY_FILE`               | `RESEND_API_KEY`               |
 | NLQ API key            | `NLQ_API_KEY_FILE`                  | `NLQ_API_KEY`                  |
-| Redis password         | `REDIS_PASSWORD_FILE`               | `REDIS_PASSWORD`               |
+| Valkey password        | `VALKEY_PASSWORD_FILE`              | `VALKEY_PASSWORD`              |
 | Insights internal key  | `INSIGHTS_INTERNAL_SECRET_FILE`     | `INSIGHTS_INTERNAL_SECRET`     |
 | Grafana admin password | `GF_SECURITY_ADMIN_PASSWORD__FILE`  | `GF_SECURITY_ADMIN_PASSWORD`   |
 
@@ -176,7 +176,7 @@ This creates `secrets/` (mode `700`) with one file per secret (mode `600`):
 | `rabbitmq_username.txt` | `groovemap` |
 | `rabbitmq_password.txt` | `openssl rand -base64 24` |
 | `neo4j_password.txt` | `openssl rand -base64 24` |
-| `redis_password.txt` | `openssl rand -base64 24` |
+| `valkey_password.txt` | `openssl rand -base64 24` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 | `grafana_admin_password.txt` | `openssl rand -base64 24`; required because production disables anonymous access |
 
@@ -190,7 +190,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 **Neo4j note**: Neo4j does not natively support the `_FILE` convention. The production overlay overrides Neo4j's entrypoint with `scripts/neo4j-entrypoint.sh`, which reads `/run/secrets/neo4j_password` and sets `NEO4J_AUTH=neo4j/<password>` before delegating to the official Neo4j entrypoint.
 
-**Redis note**: Redis does not natively support the `_FILE` convention either. The production overlay overrides Redis's entrypoint with `scripts/redis-entrypoint.sh`, which reads `/run/secrets/redis_password` and appends `--requirepass <password>` before delegating to the official Redis entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Redis is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces.
+**Valkey note**: Valkey does not natively support the `_FILE` convention either. The production overlay overrides Valkey's entrypoint with `scripts/valkey-entrypoint.sh`, which reads `/run/secrets/valkey_password` and appends `--requirepass <password>` before delegating to the official Valkey entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Valkey is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces. The `valkey-exporter` reads the same secret through its `REDIS_PASSWORD_FILE` variable (the upstream exporter's name).
 
 ### Running Securely
 

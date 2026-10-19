@@ -74,16 +74,16 @@ EXPORTER_METRICS = frozenset(
         "pg_stat_database_xact_commit",
         "pg_stat_database_xact_rollback",
         "pg_up",
-        # oliver006/redis_exporter.
-        "redis_blocked_clients",
-        "redis_commands_processed_total",
-        "redis_connected_clients",
-        "redis_evicted_keys_total",
-        "redis_keyspace_hits_total",
-        "redis_keyspace_misses_total",
-        "redis_memory_max_bytes",
-        "redis_memory_used_bytes",
-        "redis_up",
+        # oliver006/redis_exporter, relabelled redis_* -> valkey_* by the collector.
+        "valkey_blocked_clients",
+        "valkey_commands_processed_total",
+        "valkey_connected_clients",
+        "valkey_evicted_keys_total",
+        "valkey_keyspace_hits_total",
+        "valkey_keyspace_misses_total",
+        "valkey_memory_max_bytes",
+        "valkey_memory_used_bytes",
+        "valkey_up",
         # gcr.io/cadvisor/cadvisor. Per-container series; the compose service
         # key arrives as the container_label_com_docker_compose_service label,
         # which is why no label name appears in this list.
