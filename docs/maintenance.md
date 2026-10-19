@@ -372,7 +372,7 @@ re-running for a dump already recorded under this algorithm is a no-op.
 
 `docker-compose.yml`'s `embeddings` service runs `analytics-engine-embeddings` against the same
 released image the always-on `insights` service uses (`ANALYTICS_ENGINE_IMAGE`), with its
-entrypoint overridden and no dependency on `api`/`redis`/`neo4j` — the pipeline talks to
+entrypoint overridden and no dependency on `api`/`valkey`/`neo4j` — the pipeline talks to
 PostgreSQL only. It sits behind Compose's `jobs` profile so `docker compose up` never starts it;
 `just embeddings-run` (`scripts/run-embeddings.sh`) reaches it directly with `docker compose run
 --rm --no-deps`, regardless of active profiles.
@@ -564,7 +564,7 @@ it.
 
 ## Update an infrastructure image
 
-PostgreSQL, Neo4j, RabbitMQ, and Redis images are declared directly in
+PostgreSQL, Neo4j, RabbitMQ, and Valkey images are declared directly in
 `docker-compose.yml` with a readable tag and immutable digest. An update should
 include:
 
@@ -582,8 +582,10 @@ RabbitMQ 4.3 dropped the Mnesia metadata store: a node whose `rabbitmq_data`
 volume was created under an earlier 4.x release must have every feature flag
 from 4.0 through 4.2 enabled (`rabbitmqctl enable_feature_flag all`, which
 includes `khepri_db`) before its image is moved to a 4.3 digest. A fresh volume
-needs nothing. Redis 8 loads 7.x AOF and RDB files unchanged, but the upstream
-licence changed to a tri-licence (RSALv2, SSPLv1, or AGPLv3) with 8.0.
+needs nothing. Valkey cannot read the AOF or RDB files of Redis 7.4+, so
+the move from Redis to Valkey was a key-by-key copy rather than an image
+bump (see [Redis to Valkey cutover](#redis-to-valkey-cutover)); later Valkey
+upgrades should still be validated against a copy of `valkey_data`.
 
 ## Secrets
 
@@ -778,7 +780,7 @@ results, and rollback outcome in the maintenance record.
 `just smoke-erasure` starts its own disposable Compose stack (own project
 name, own subnet), registers a throwaway account, exports and erases it, and
 asserts the ADR 0010 export and deletion claims hold across PostgreSQL,
-Neo4j, and Redis before tearing the stack and its volumes down. It needs an
+Neo4j, and Valkey before tearing the stack and its volumes down. It needs an
 operator-approved `.env` with every `*_IMAGE` variable pinned to an approved
 digest, the same requirement `just smoke-media` has. See
 [The erasure and export assertion](testing-guide.md#the-erasure-and-export-assertion)

@@ -106,14 +106,14 @@ The base configuration publishes these local endpoints:
 | PostgreSQL | `localhost:5433` | `groovemap` / `groovemap` |
 | RabbitMQ management | <http://localhost:15672> | `groovemap` / `groovemap` |
 | RabbitMQ AMQP | `localhost:5672` | `groovemap` / `groovemap` |
-| Redis | `localhost:6379` | No base-stack password |
+| Valkey | `localhost:6379` | No base-stack password |
 | Grafana | <http://localhost:3000> | Anonymous Viewer access |
 | VictoriaMetrics | <http://localhost:8428> | None; development only |
 | VictoriaTraces | <http://localhost:10428> | None; development only |
 
 These credentials are for local development only. The production overlay uses
 file-backed secrets, disables anonymous Grafana access, and loopback-binds
-Redis and both unauthenticated Victoria backends.
+Valkey and both unauthenticated Victoria backends.
 
 Extractor, consumer, schema-initializer, analytics, exporter, and collector
 ports are internal-only. Inspect their container health with

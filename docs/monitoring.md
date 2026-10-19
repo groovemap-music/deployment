@@ -41,7 +41,7 @@ The base configuration publishes these probes:
 | RabbitMQ management | <http://localhost:15672> |
 
 Compose also evaluates container-native checks for PostgreSQL, Neo4j,
-RabbitMQ, Redis, the schema initializer, and every long-running application.
+RabbitMQ, Valkey, the schema initializer, and every long-running application.
 Use `docker compose ps` as the canonical summary of those checks.
 
 ## Dependency inspection
@@ -53,7 +53,7 @@ approved. These examples do not intentionally mutate data:
 docker compose exec postgres pg_isready -U groovemap -d groovemap
 docker compose exec neo4j cypher-shell -u neo4j -p "$NEO4J_PASSWORD" "RETURN 1"
 docker compose exec rabbitmq rabbitmq-diagnostics -q ping
-docker compose exec redis redis-cli ping
+docker compose exec valkey valkey-cli ping
 ```
 
 In production, obtain credentials through the environment's approved secret
