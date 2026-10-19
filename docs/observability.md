@@ -1270,6 +1270,10 @@ docker compose down -v
 
 ### First execution, 2026-09-03
 
+> **Historical record.** These executions predate the Redis to Valkey swap. The
+> `redis-exporter` scrape job they list is now `valkey-exporter`, and its series
+> are stored as `valkey_*`. The logs are kept as run, not rewritten.
+
 The runbook above was executed once against locally built images. This record
 exists so the next operator knows what a good result looks like, and which
 steps have never been executed successfully. Replace it after the first run
@@ -1355,6 +1359,10 @@ re-run: it closes the Grafana listing, the clean pass, and `graphinator`, and it
 leaves `mcp-server` open for the same reason.
 
 ### Second execution, 2026-09-05
+
+> **Historical record.** These executions predate the Redis to Valkey swap. The
+> `redis-exporter` scrape job they list is now `valkey-exporter`, and its series
+> are stored as `valkey_*`. The logs are kept as run, not rewritten.
 
 Wave 2's run. It exercised the VictoriaMetrics backend, the VictoriaTraces
 pipeline, the runtime, Neo4j, span, container, and host series, and the

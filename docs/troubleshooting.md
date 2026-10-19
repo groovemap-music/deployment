@@ -33,7 +33,7 @@ Then narrow to the first unhealthy service and its dependencies:
 ```bash
 docker compose logs --timestamps --tail=200 schema-init
 docker compose logs --timestamps --tail=200 api
-docker compose logs --timestamps --tail=200 postgres neo4j rabbitmq redis
+docker compose logs --timestamps --tail=200 postgres neo4j rabbitmq valkey
 ```
 
 Avoid starting with the last visible symptom. Compose services often remain
@@ -103,7 +103,7 @@ With approved credentials, use non-mutating probes:
 ```bash
 docker compose exec postgres pg_isready -U groovemap -d groovemap
 docker compose exec rabbitmq rabbitmq-diagnostics -q ping
-docker compose exec redis redis-cli ping
+docker compose exec valkey valkey-cli ping
 ```
 
 For Neo4j, use the environment's approved secret-access method rather than

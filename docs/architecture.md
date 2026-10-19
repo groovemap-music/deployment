@@ -57,7 +57,7 @@ map](dockerfile-standards.md#compatibility-identifiers).
 ### Persistent volumes
 
 Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
-(`postgres_data`), Valkey (`valkey_data`, replacing the legacy `redis_data`), Grafana (`grafana_data`),
+(`postgres_data`), Valkey (`valkey_data`; the legacy `redis_data` volume stays declared until the [cutover](maintenance.md#redis-to-valkey-cutover) cleanup), Grafana (`grafana_data`),
 VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
 (`victoria_traces_data`). Neo4j separates `neo4j_data`, `neo4j_logs`,
 `neo4j_import`, and `neo4j_plugins`. The producers persist downloads in
@@ -129,7 +129,7 @@ Shows how user-facing services interact with each other and with the storage lay
 graph TD
     NEO4J[("🔗 Neo4j 2026<br/>Graph Database")]
     PG[("🐘 PostgreSQL 18<br/>Analytics DB")]
-    REDIS[("🔴 Redis<br/>Cache Layer")]
+    VALKEY[("🔴 Valkey<br/>Cache Layer")]
 
     EXPLORE[["graph-explorer<br/>Compose: explore"]]
     API[["catalog-api<br/>Compose: api"]]
@@ -140,20 +140,20 @@ graph TD
 
     API -.->|User Accounts| PG
     API -.->|Graph Queries| NEO4J
-    API -.->|OAuth State + Snapshots| REDIS
+    API -.->|OAuth State + Snapshots| VALKEY
 
     API -.->|Proxy /api/insights/*| INSIGHTS
     INSIGHTS -.->|Fetch /api/internal/*| API
     INSIGHTS -.->|Store Results| PG
-    INSIGHTS -.->|Cache Results| REDIS
+    INSIGHTS -.->|Cache Results| VALKEY
 
-    DASH -.->|Cache| REDIS
+    DASH -.->|Cache| VALKEY
     DASH -.->|Stats| NEO4J
     DASH -.->|Stats| PG
 
     style NEO4J fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
     style PG fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style REDIS fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+    style VALKEY fill:#ffebee,stroke:#b71c1c,stroke-width:2px
     style EXPLORE fill:#e8eaf6,stroke:#283593,stroke-width:2px
     style API fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
     style INSIGHTS fill:#fff9c4,stroke:#f57f17,stroke-width:2px
@@ -183,7 +183,7 @@ graph TD
     RMQ{{"🐰 RabbitMQ"}}
     NEO4J[("🔗 Neo4j")]
     PG[("🐘 PostgreSQL")]
-    REDIS[("🔴 Redis")]
+    VALKEY[("🔴 Valkey")]
 
     DASH -.->|Monitor| EXT_D
     DASH -.->|Monitor| GRAPH
@@ -194,7 +194,7 @@ graph TD
     DASH -.->|Stats| RMQ
     DASH -.->|Stats| NEO4J
     DASH -.->|Stats| PG
-    DASH -.->|Cache| REDIS
+    DASH -.->|Cache| VALKEY
 
     style DASH fill:#fce4ec,stroke:#880e4f,stroke-width:2px
     style EXT_D fill:#ffccbc,stroke:#d84315,stroke-width:2px
@@ -206,7 +206,7 @@ graph TD
     style RMQ fill:#fff3e0,stroke:#e65100,stroke-width:2px
     style NEO4J fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
     style PG fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style REDIS fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+    style VALKEY fill:#ffebee,stroke:#b71c1c,stroke-width:2px
 ```
 
 ### MCP Server Integration
@@ -221,18 +221,18 @@ graph LR
 
     NEO4J[("🔗 Neo4j")]
     PG[("🐘 PostgreSQL")]
-    REDIS[("🔴 Redis")]
+    VALKEY[("🔴 Valkey")]
 
     AI <-->|MCP Protocol| MCP
     MCP -->|httpx| API
-    API --- NEO4J & PG & REDIS
+    API --- NEO4J & PG & VALKEY
 
     style AI fill:#e8eaf6,stroke:#283593,stroke-width:2px
     style MCP fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
     style API fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px
     style NEO4J fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
     style PG fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style REDIS fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+    style VALKEY fill:#ffebee,stroke:#b71c1c,stroke-width:2px
 ```
 
 ## Data Flow
@@ -617,7 +617,7 @@ See [Dashboard README](https://github.com/groovemap-music/operations-console) fo
 - FastAPI backend with async PostgreSQL and httpx (API client)
 - Configurable scheduler interval (default: 24 hours)
 - 7 computation types running sequentially
-- Redis caching with cache-aside pattern (TTL matches schedule interval, invalidated after computation)
+- Valkey caching with cache-aside pattern (TTL matches schedule interval, invalidated after computation)
 - Separate health server on port 8009
 - Results proxied through the API service at `/api/insights/*`
 
@@ -626,7 +626,7 @@ See [Dashboard README](https://github.com/groovemap-music/operations-console) fo
 - `API_BASE_URL`: URL of the API service for fetching raw query data over HTTP
 - `POSTGRES_HOST`, `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`: PostgreSQL connection
 - `INSIGHTS_SCHEDULE_HOURS`: Computation interval in hours (default: 24)
-- `REDIS_HOST`: Redis hostname for result caching
+- `VALKEY_HOST`: Valkey hostname for result caching
 - `INSIGHTS_MILESTONE_YEARS`: Configurable anniversary years to highlight
 
 See [Insights README](https://github.com/groovemap-music/analytics-engine) for details.
@@ -636,7 +636,7 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 **Responsibilities**:
 
 - User registration and authentication (`/api/auth/*`)
-- Self-service password reset with Redis-backed tokens (`/api/auth/reset-*`)
+- Self-service password reset with Valkey-backed tokens (`/api/auth/reset-*`)
 - Optional TOTP two-factor authentication (`/api/auth/2fa/*`)
 - JWT token generation and validation (HS256)
 - Discogs OAuth 1.0a OOB flow management (`/api/oauth/*`)
@@ -660,9 +660,9 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 - FastAPI backend with async PostgreSQL
 - PBKDF2-SHA256 password hashing (100,000 iterations)
 - Stateless JWT authentication using shared `JWT_SECRET_KEY`
-- Redis-backed OAuth state storage with TTL
+- Valkey-backed OAuth state storage with TTL
 - Token-protected endpoints for all user operations
-- Self-service password reset (Redis tokens, 15min TTL, anti-enumeration)
+- Self-service password reset (Valkey tokens, 15min TTL, anti-enumeration)
 - Optional TOTP 2FA with pyotp (QR code setup, recovery codes, brute-force lockout)
 - HKDF-SHA256 key derivation for per-purpose encryption (OAuth tokens, TOTP secrets)
 - Resend transactional email integration (optional — falls back to log output)
@@ -671,7 +671,7 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 
 - `JWT_SECRET_KEY`: Shared secret for HS256 token signing
 - `POSTGRES_HOST`, `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`: PostgreSQL connection
-- `REDIS_HOST`: Redis connection for OAuth state
+- `VALKEY_HOST`: Valkey connection for OAuth state
 - `DISCOGS_USER_AGENT`: User-Agent header for Discogs API calls
 
 See [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md) for details.
@@ -929,14 +929,14 @@ never creates a release.
 for the vocabulary and storage decision, and the
 [deployment validation guide](testing-guide.md) for how to run the assertion.
 
-### Redis Cache
+### Valkey Cache
 
 **Purpose**: Cache query results and OAuth state
 
 **Cache Types**:
 
 - OAuth state tokens (API — short TTL, used during Discogs OAuth flow)
-- Graph snapshots (API — native Redis TTL, default 28 days, survives service restarts)
+- Graph snapshots (API — native Valkey TTL, default 28 days, survives service restarts)
 - JWT revocation blacklist (API — JTI claims with TTL matching token expiry)
 - Insights computation results (Insights — TTL matches schedule interval, invalidated after each run)
 - Query result caching (Dashboard)
@@ -957,7 +957,7 @@ for the vocabulary and storage decision, and the
 
 - Default TTL: varies by cache type (see table above)
 - Max memory: Configurable
-- Eviction policy: LRU
+- Eviction policy: `noeviction` (security state such as `revoked:jti:*` must never be evicted; see [Configuration](configuration.md#valkey-configuration))
 
 ## Security Architecture
 
@@ -979,8 +979,8 @@ See [Docker Security](docker-security.md) for details.
 ### Network Security
 
 - The base stack publishes API, Dashboard, Explore, RabbitMQ, Neo4j,
-  PostgreSQL, Redis, VictoriaMetrics, VictoriaTraces, and Grafana ports. The
-  production overlay loopback-binds Redis and both Victoria backends; other
+  PostgreSQL, Valkey, VictoriaMetrics, VictoriaTraces, and Grafana ports. The
+  production overlay loopback-binds Valkey and both Victoria backends; other
   exposure is an environment-level responsibility.
 - Pipeline consumers, extractors, Schema-Init, Insights, exporters, and the
   OpenTelemetry Collector are internal-only.
@@ -1101,7 +1101,7 @@ See [Monitoring](monitoring.md) for details.
 - Neo4j (clustering available in enterprise)
 - PostgreSQL (replication supported)
 - RabbitMQ (clustering supported)
-- Redis (clustering supported)
+- Valkey (clustering supported)
 
 ### Performance Tuning
 
@@ -1109,7 +1109,7 @@ See [Monitoring](monitoring.md) for details.
 - Prefetch count tuning
 - Connection pool sizing
 - Index optimization
-- Query caching strategies (Redis cache-aside pattern)
+- Query caching strategies (Valkey cache-aside pattern)
 - Pre-computed aggregate properties on graph nodes
 - Neo4j Cypher query plan optimization (CALL {} barriers, pattern comprehension)
 
@@ -1139,7 +1139,7 @@ docker compose up -d
 `docker-compose.prod.yml` is the production-shaped configuration owned here.
 It replaces literal development credentials with file-backed secrets, changes
 restart policies and database tuning, applies the production telemetry resource
-attributes and trace sample rate, and loopback-binds unauthenticated Redis and
+attributes and trace sample rate, and loopback-binds unauthenticated Valkey and
 Victoria endpoints. Render it with `just config-prod` and review the full merge
 before any approved start. This repository does not ship Kubernetes manifests.
 

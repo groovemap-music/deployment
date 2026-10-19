@@ -224,7 +224,7 @@ only to those services, so the broker and both stores stay native.
 `just smoke-erasure` is the end-to-end proof that [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md)'s
 export and deletion claims hold: a real account's activity can be exported as well-formed
 NDJSON, and after an erasure nothing keyed to that account survives in PostgreSQL, Neo4j, or
-Redis. Like `just smoke-media`, it is a versioned script rather than a runbook step, so the
+Valkey. Like `just smoke-media`, it is a versioned script rather than a runbook step, so the
 claim can be re-made on demand.
 
 **What the operator provides**: an untracked `.env` in which every `*_IMAGE` variable is an
@@ -236,11 +236,11 @@ digest, or anything not pinned by digest, and refuses an `.env` that declares no
 assignment at all — an assertion against images no environment runs would prove nothing.
 `.env` is untracked and must never be committed.
 
-**What it starts**: the schema initializer, PostgreSQL, Neo4j, Redis, and the catalog API,
+**What it starts**: the schema initializer, PostgreSQL, Neo4j, Valkey, and the catalog API,
 under the Compose project `groovemap-erasure-smoke` with `docker-compose.erasure-smoke.yml`.
 Naming the API pulls in its declared dependencies, so no extractor and no broker consumer
 run: this assertion drives the API itself rather than a catalog ingest. PostgreSQL, Neo4j, and
-Redis stay unpublished; the assertions reach them through `docker compose exec`. Only the
+Valkey stay unpublished; the assertions reach them through `docker compose exec`. Only the
 API's own health-gated port is published, on loopback.
 
 **What it seeds**: the run registers a throwaway account against the disposable stack's own
@@ -249,7 +249,7 @@ grants both published consent purposes (`product_analytics` and `model_training`
 performs a search and a recommendation request so `activity.events` and
 `activity.impressions` rows exist for the account. It asserts each store holds the account's
 data *before* erasing — PostgreSQL for the activity, subject-link, and collection rows,
-Neo4j for the account's `User` node and `COLLECTED` edge, and Redis for its recommendation and
+Neo4j for the account's `User` node and `COLLECTED` edge, and Valkey for its recommendation and
 snapshot keys — so an absence probe cannot later pass only because the seed silently never
 happened.
 
@@ -265,7 +265,7 @@ happened.
 - the `users` row is soft-erased: its email carries the `erased+` prefix and `is_active` is
   `false`;
 - no `User` node for the account remains in Neo4j;
-- no `recommend:*` or `snapshot:usercount` Redis key for the account remains.
+- no `recommend:*` or `snapshot:usercount` Valkey key for the account remains.
 
 Every absence probe is scoped to the id this run created, never a bare count another run's
 leftover row could satisfy in reverse.
@@ -280,7 +280,7 @@ from a running environment, the same isolation `just smoke-media` uses.
 `SMOKE_ERASURE_ENV_FILE`, `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_TIMEOUT`,
 `SMOKE_ERASURE_SUBNET`, and `SMOKE_ERASURE_SERVICE_PLATFORM`. The last one matters when the
 workstation's architecture is not the one the internal images are published for; it applies
-only to the schema initializer and the API, so PostgreSQL, Neo4j, and Redis stay native.
+only to the schema initializer and the API, so PostgreSQL, Neo4j, and Valkey stay native.
 
 `just check` and CI never run `just smoke-erasure`: it starts containers and mutates a live
 account's data, so it requires the same operator approval as `just smoke-media` and the other
