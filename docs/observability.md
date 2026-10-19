@@ -14,7 +14,7 @@ flowchart LR
     APPS["Application services"]
     RMQ["rabbitmq<br/>:15692"]
     PGX["postgres-exporter<br/>:9187"]
-    REDISX["redis-exporter<br/>:9121"]
+    VALKEYX["valkey-exporter<br/>:9121"]
     CADVISOR["cadvisor<br/>:8080"]
     NODE["node-exporter<br/>:9100"]
     COLLECTOR["otel-collector<br/>OTLP :4317/:4318<br/>self-metrics :8888"]
@@ -25,7 +25,7 @@ flowchart LR
     APPS -->|"OTLP/HTTP :4318"| COLLECTOR
     RMQ -->|"Prometheus scrape"| COLLECTOR
     PGX -->|"Prometheus scrape"| COLLECTOR
-    REDISX -->|"Prometheus scrape"| COLLECTOR
+    VALKEYX -->|"Prometheus scrape"| COLLECTOR
     CADVISOR -->|"Prometheus scrape"| COLLECTOR
     NODE -->|"Prometheus scrape"| COLLECTOR
     COLLECTOR -->|"self-scrape :8888"| COLLECTOR
@@ -40,7 +40,7 @@ Three collection paths meet in one collector:
 - **Application metrics are pushed.** Every GrooveMap service exports OTLP over
   HTTP/protobuf to `http://otel-collector:4318`. No application service exposes
   a Prometheus scrape endpoint for its own OTEL metrics.
-- **Infrastructure metrics are scraped.** RabbitMQ, PostgreSQL, and Redis have
+- **Infrastructure metrics are scraped.** RabbitMQ, PostgreSQL, and Valkey have
   no OTLP support, so the collector's Prometheus receiver scrapes their
   exporters and folds those series into the same pipeline. The container
   runtime and the host kernel are scraped the same way, through cAdvisor and
@@ -210,7 +210,7 @@ without touching its code; an operator can override the interval through
 
 ### Infrastructure exporters
 
-RabbitMQ, PostgreSQL, and Redis speak no OTLP, so the collector's Prometheus
+RabbitMQ, PostgreSQL, and Valkey speak no OTLP, so the collector's Prometheus
 receiver scrapes them. Neither does the container runtime or the host kernel, so
 cAdvisor and node-exporter are scraped the same way. None of these ports is
 published to the host: exporters expose server internals and have no
@@ -220,7 +220,7 @@ authentication of their own.
 | --- | --- | ---: | --- |
 | `rabbitmq` | `rabbitmq:15692` | 15s | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
 | `postgres-exporter` | `postgres-exporter:9187` | 15s | `prometheuscommunity/postgres-exporter` |
-| `redis-exporter` | `redis-exporter:9121` | 15s | `oliver006/redis_exporter` |
+| `valkey-exporter` | `valkey-exporter:9121` | 15s | `oliver006/redis_exporter`, which speaks to Valkey; the collector relabels its `redis_*` series to `valkey_*` |
 | `otel-collector` | `otel-collector:8888` | 15s | the collector's own telemetry |
 | `cadvisor` | `cadvisor:8080` | 30s | `gcr.io/cadvisor/cadvisor` — per-container CPU, memory, network, and block I/O |
 | `node-exporter` | `node-exporter:9100` | 30s | `prom/node-exporter` — host CPU, memory, load, disk, and filesystems |
@@ -270,12 +270,12 @@ unaffected: the containers it reports are the same containers either way.
 
 Both exporters take their credentials the same way the application services do:
 literal values in development, and `_FILE`-backed Docker secrets
-(`postgres_username`, `postgres_password`, `redis_password`) in production.
+(`postgres_username`, `postgres_password`, `valkey_password`) in production.
 They reuse the existing secrets — no new credential is introduced.
 
-`redis-exporter` has no container healthcheck. Its image is distroless and
+`valkey-exporter` has no container healthcheck. Its image is distroless and
 ships neither a shell nor an HTTP client, so no probe can run inside it; a
-failed exporter surfaces as a stale `redis-exporter` job on the infrastructure
+failed exporter surfaces as a stale `valkey-exporter` job on the infrastructure
 dashboard.
 
 Neo4j Community Edition has no Prometheus endpoint, so there is no Neo4j
@@ -403,7 +403,7 @@ dashboard checker and is not repeated per row.
 | --- | --- | --- | --- |
 | `http.server.request.duration` | `http_server_request_duration_seconds` | histogram (s) | `http.request.method`, `http.route`, `http.response.status_code` |
 | `http.client.request.duration` | `http_client_request_duration_seconds` | histogram (s) | `http.request.method`, `server.address`, `http.response.status_code` |
-| `db.client.operation.duration` | `db_client_operation_duration_seconds` | histogram (s) | `db.system.name` (`postgresql`\|`neo4j`\|`redis`), `db.operation.name`, `error.type`? |
+| `db.client.operation.duration` | `db_client_operation_duration_seconds` | histogram (s) | `db.system.name` (`postgresql`\|`neo4j`\|`valkey`), `db.operation.name`, `error.type`? |
 | `messaging.client.consumed.messages` | `messaging_client_consumed_messages_total` | counter | `messaging.system=rabbitmq`, `messaging.destination.name`, `messaging.operation.name`, `error.type`? |
 | `messaging.client.sent.messages` | `messaging_client_sent_messages_total` | counter | as above |
 | `messaging.client.operation.duration` | `messaging_client_operation_duration_seconds` | histogram (s) | as above |
@@ -553,6 +553,25 @@ Neo4j *latency* is not in this section: it is already covered by
 `db_client_operation_duration_seconds{db_system_name="neo4j"}`, emitted by every
 service that talks to the graph.
 
+### Valkey metrics
+
+Scraped from `valkey-exporter` (`oliver006/redis_exporter`), not pushed. The
+exporter names every series `redis_*`; the collector's `valkey-exporter` scrape
+job rewrites `redis_(.*)` to `valkey_$1` with `metric_relabel_configs`, so only
+`valkey_*` series are stored and no `redis_*` series exist in VictoriaMetrics.
+
+| Prometheus name | Kind | Meaning |
+| --- | --- | --- |
+| `valkey_up` | gauge | `1` when the exporter reached Valkey |
+| `valkey_memory_used_bytes` | gauge | Memory Valkey has allocated |
+| `valkey_memory_max_bytes` | gauge | Configured `maxmemory` (512MB in compose) |
+| `valkey_connected_clients` | gauge | Connected client connections |
+| `valkey_blocked_clients` | gauge | Clients blocked on a blocking call |
+| `valkey_commands_processed_total` | counter | Commands processed |
+| `valkey_keyspace_hits_total` | counter | Successful key lookups |
+| `valkey_keyspace_misses_total` | counter | Failed key lookups |
+| `valkey_evicted_keys_total` | counter | Keys evicted by the `maxmemory` policy |
+
 ### Span metrics
 
 RED metrics derived from spans by the collector's `spanmetrics` connector.
@@ -599,7 +618,7 @@ restart.
 | Ingestion | `groovemap-ingestion` | Download bytes, file progress, records per second per entity, publish confirm p50/p95, reconnects, errors by stage |
 | Consumers | `groovemap-consumers` | Messages per second by entity and outcome, message duration p95, batch size and flush latency by store, database operation duration, circuit breaker state, active consumers |
 | API services | `groovemap-api-services` | RED per service and route, sync duration, cache hit ratio, NLQ outcomes, insights computation duration and staleness |
-| Infrastructure | `groovemap-infrastructure` | RabbitMQ, PostgreSQL, and Redis exporter panels, plus collector points received, exported, and dropped |
+| Infrastructure | `groovemap-infrastructure` | RabbitMQ, PostgreSQL, and Valkey exporter panels, plus collector points received, exported, and dropped |
 | Runtime | `groovemap-runtime` | Per-service CPU, resident and virtual memory, threads, open file descriptors, GC collections, event-loop lag, and the tokio task and queue gauges |
 | Neo4j | `groovemap-neo4j` | Graph reachability, nodes by label, relationships by type, active transactions, store sizes, and client operation latency by service |
 | Containers & host | `groovemap-containers` | Per-container CPU, memory working set against limit, network, block I/O, restarts and OOM kills, plus host CPU, memory, load, disk, and filesystems |
@@ -686,7 +705,7 @@ single number per rule.
 | `ApiErrorRateHigh` | 5xx share of `http_server_request_duration_seconds_count` per `service_name`, 10m | `> 5%` for 10m | critical |
 | `ApiLatencyHigh` | p95 of `http_server_request_duration_seconds_bucket` per `service_name`, 10m | `> 2s` for 10m | warning |
 | `PostgresConnectionsNearMax` | `sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)` | `> 80%` for 10m | warning |
-| `RedisMemoryHigh` | `redis_memory_used_bytes / redis_memory_max_bytes` | `> 85%` for 15m | warning |
+| `ValkeyMemoryHigh` | `valkey_memory_used_bytes / valkey_memory_max_bytes` | `> 85%` for 15m | warning |
 | `RabbitMqMemoryAlarm` | `rabbitmq_process_resident_memory_bytes / rabbitmq_resident_memory_limit_bytes` | `> 90%` for 5m | critical |
 | `Neo4jDown` | `min(groovemap_neo4j_up)` | `< 1` for 5m | critical |
 | `EventLoopLagHigh` | p99 of `groovemap_runtime_event_loop_lag_seconds_bucket` per `service_name`, 10m | `> 1s` for 10m | warning |
@@ -709,7 +728,7 @@ So exactly three rules keep a no-data behaviour, one per source of telemetry:
 
 | Rule | `noDataState` | Speaks for |
 | --- | --- | --- |
-| `ScrapeTargetDown` | `NoData` | The scrape jobs: rabbitmq, postgres, redis, cadvisor, node-exporter, and the collector's own `:8888`. `up` returning nothing means there is no scrape data at all. |
+| `ScrapeTargetDown` | `NoData` | The scrape jobs: rabbitmq, postgres, valkey, cadvisor, node-exporter, and the collector's own `:8888`. `up` returning nothing means there is no scrape data at all. |
 | `ConsumersAbsent` | `Alerting` | The services that push OTLP. A consumer gauge that stopped arriving is the condition this rule exists to catch, so absence is the alert rather than a separate one. |
 | `Neo4jDown` | `NoData` | The graph probe `operations-console` pushes. It is not a scrape target, so `ScrapeTargetDown` never speaks for it. |
 
@@ -831,8 +850,8 @@ just smoke
 ```
 
 `just smoke` is `docker compose up -d --wait` followed by `docker compose ps`.
-It brings up RabbitMQ, PostgreSQL, Neo4j, Redis, the four exporters
-(`postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`), the
+It brings up RabbitMQ, PostgreSQL, Neo4j, Valkey, the four exporters
+(`postgres-exporter`, `valkey-exporter`, `cadvisor`, `node-exporter`), the
 collector, VictoriaMetrics, VictoriaTraces, Grafana, and every application
 service.
 
@@ -919,7 +938,7 @@ Expect the eleven compose service keys that `docker compose up` actually starts 
 `extractor-discogs`, `extractor-musicbrainz`, `graphinator`, `brainzgraphinator`,
 `tableinator`, `brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
 six values that come from the scrape jobs rather than from a push: `rabbitmq`,
-`postgres-exporter`, `redis-exporter`, `cadvisor`, `node-exporter`, and `otelcol-contrib`.
+`postgres-exporter`, `valkey-exporter`, `cadvisor`, `node-exporter`, and `otelcol-contrib`.
 
 Three details are easy to misread. `schema-init` runs once and exits, so it
 appears only because the one-shot bootstrap flushes on shutdown; its absence
@@ -1113,7 +1132,7 @@ curl -sG 'http://localhost:8428/api/v1/query' \
 ```
 
 Expect one row per scrape job, each `1`: `cadvisor`, `node-exporter`,
-`otelcol-contrib`, `postgres-exporter`, `rabbitmq`, `redis-exporter`. The
+`otelcol-contrib`, `postgres-exporter`, `rabbitmq`, `valkey-exporter`. The
 collector's own job is labelled `otelcol-contrib` for the reason step 4 gives.
 
 ### 7. Confirm one trace spans a publish and a consume
