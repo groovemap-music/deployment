@@ -220,7 +220,7 @@ services:
     image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
     container_name: groovemap-valkey
     hostname: valkey
-    command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
     ports:
       - "6379:6379"
     volumes:

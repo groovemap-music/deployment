@@ -398,7 +398,19 @@ REDIS_PASSWORD_FILE="/run/secrets/redis_password"
 
 - Default TTL: 3600 seconds (1 hour)
 - Max memory: 512MB in the base file (change through a reviewed Compose override)
-- Eviction policy: allkeys-lru
+- Eviction policy: `noeviction` (`--maxmemory-policy noeviction`). Valkey never
+  drops a key to make room; once `maxmemory` is reached, commands that add
+  memory (`SET`, `SETEX`, `INCR`) fail with `OOM command not allowed when used
+  memory > 'maxmemory'`, while reads, `DEL`, `GETDEL` and `EXPIRE` keep working.
+  Valkey also holds security state that exists nowhere else, namely
+  `revoked:jti:*` (logout and admin-logout token revocation) and
+  `password_changed:*` (session invalidation after a password reset or change).
+  An evicting policy such as `allkeys-lru` could silently drop those keys and
+  make a revoked token valid again, so the policy is pinned by
+  `tests/deploy/test_docker_compose_prod.py`. The trade-off is that a full
+  Valkey fails writes loudly instead of degrading quietly; watch
+  `ValkeyMemoryHigh` (see [observability](observability.md)) and raise
+  `maxmemory` through a reviewed Compose override before it fills.
 - Persistence: append-only file enabled (`--appendonly yes`) on the
   `redis_data` volume; Redis is used as a cache, but container replacement does
   not discard the volume automatically
