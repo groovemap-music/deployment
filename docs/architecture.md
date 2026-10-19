@@ -57,7 +57,7 @@ map](dockerfile-standards.md#compatibility-identifiers).
 ### Persistent volumes
 
 Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
-(`postgres_data`), Valkey (`valkey_data`; the legacy `redis_data` volume stays declared until the [cutover](maintenance.md#redis-to-valkey-cutover) cleanup), Grafana (`grafana_data`),
+(`postgres_data`), Valkey (`valkey_data`), Grafana (`grafana_data`),
 VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
 (`victoria_traces_data`). Neo4j separates `neo4j_data`, `neo4j_logs`,
 `neo4j_import`, and `neo4j_plugins`. The producers persist downloads in

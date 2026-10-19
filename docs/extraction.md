@@ -27,7 +27,6 @@ git filter-repo --force \
   --path scripts/migrate-encryption-key.sh \
   --path scripts/neo4j-entrypoint.sh \
   --path scripts/rabbitmq-entrypoint.sh \
-  --path scripts/redis-entrypoint.sh \
   --path scripts/reset-password.sh \
   --path scripts/test-database-resilience.sh \
   --path secrets.example/ --path tests/deploy/ --path tests/perftest/ \

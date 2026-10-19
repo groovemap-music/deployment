@@ -371,7 +371,7 @@ POSTGRES_POOL_MAX_SIZE=20
 
 **Connection Details**:
 
-- Protocol: RESP (Redis serialization protocol), spoken by the `valkey-py` client
+- Protocol: RESP, spoken by the `valkey-py` client
 - Default port: 6379 (override with `VALKEY_PORT`)
 - Database: 0 (default)
 - Authentication: when `VALKEY_PASSWORD` is set it is embedded in the connection URL (`valkey://:<password>@host:port/0`); omitted entirely when unset. Supports the `_FILE` secret convention (`VALKEY_PASSWORD_FILE`).
@@ -413,9 +413,7 @@ VALKEY_PASSWORD_FILE="/run/secrets/valkey_password"
   `maxmemory` through a reviewed Compose override before it fills.
 - Persistence: append-only file enabled (`--appendonly yes`) on the
   `valkey_data` volume; Valkey is used as a cache plus security state, and
-  container replacement does not discard the volume automatically. Valkey cannot
-  read the data files of Redis 7.4+, so this volume starts empty after the
-  swap; see the [Redis to Valkey cutover](maintenance.md#redis-to-valkey-cutover)
+  container replacement does not discard the volume automatically.
 
 ## JWT Configuration
 

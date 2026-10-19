@@ -247,7 +247,7 @@ services:
       start_period: 10s
 
   # The exporters read the same credentials as the application services, via
-  # the same file-backed secrets. postgres_exporter and redis_exporter (which serves Valkey too) both
+  # the same file-backed secrets. postgres_exporter and the Valkey exporter both
   # prefer the *_FILE variant when it is set; the plain values are unset here
   # anyway so a stale dev credential cannot win.
   postgres-exporter:
