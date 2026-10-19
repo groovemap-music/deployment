@@ -582,10 +582,7 @@ RabbitMQ 4.3 dropped the Mnesia metadata store: a node whose `rabbitmq_data`
 volume was created under an earlier 4.x release must have every feature flag
 from 4.0 through 4.2 enabled (`rabbitmqctl enable_feature_flag all`, which
 includes `khepri_db`) before its image is moved to a 4.3 digest. A fresh volume
-needs nothing. Valkey cannot read the AOF or RDB files of Redis 7.4+, so
-the move from Redis to Valkey was a key-by-key copy rather than an image
-bump (see [Redis to Valkey cutover](#redis-to-valkey-cutover)); later Valkey
-upgrades should still be validated against a copy of `valkey_data`.
+needs nothing. Valkey upgrades should be validated against a copy of `valkey_data`.
 
 ## Secrets
 
@@ -632,126 +629,6 @@ scripts/migrate-master-year-to-int.sh
 
 Before approval, review the script, target, backup, affected-record count,
 expected duration, validation query, and rollback. CI never invokes mutation.
-
-## Redis to Valkey cutover
-
-Valkey cannot read the RDB or AOF files of Redis 7.4+ (including Redis 8), so the
-`valkey_data` volume starts empty and `redis_data` is never mounted into Valkey.
-Everything that must survive is copied key by key by
-`scripts/migrate-redis-to-valkey.py`. Most important, revoked access-token ids
-(`revoked:jti:*`) are copied with their remaining lifetime, so a token revoked
-before the cutover is still rejected after it. Cache keys are not copied; the
-caches rebuild on demand.
-
-The script copies exactly these prefixes and nothing else:
-
-| Prefix | Holds |
-| --- | --- |
-| `revoked:jti:` | Revoked token ids (a revoked token must stay revoked) |
-| `password_changed:` | Password-change markers that invalidate older tokens |
-| `2fa_challenge:` | In-flight two-factor challenges |
-| `reset:` | Password-reset tokens |
-| `discogs:oauth:state:` | In-flight Discogs OAuth state |
-| `sync:cooldown:` | Sync cooldowns |
-
-Each key is read with `GET` and `PTTL` and written with `SET ... PX <remaining ms>`.
-A key with no TTL is copied without expiry; a key that expired between the scan
-and the read is skipped. The script exits non-zero if any key fails to copy, and
-it assumes the consumers use database 0 (the default in the URLs below). It is
-safe to re-run: it overwrites the same keys on the target.
-
-This is a live-state change. It needs the approval, snapshot, and maintenance
-record described under [Environment changes](#environment-changes). The steps
-assume a prod host that still runs the pre-swap Redis container
-(`groovemap-redis`, secret `secrets/redis_password.txt`) and has the swap
-revision of the Compose files checked out. Do not use `--remove-orphans`
-anywhere in this procedure: it would delete the old Redis container before the
-copy.
-
-1. **Snapshot and prerequisites.** Record the running image digests, take a
-   backup of `redis_data` (`docker run --rm -v <project>_redis_data:/data -v "$PWD":/backup alpine tar czf /backup/redis_data.tgz -C /data .`),
-   and confirm the catalog-api and analytics-engine images that read `VALKEY_*`
-   are promoted (see the epic comment for their tags).
-2. **Rename the secret file.** Valkey keeps the Redis password so nothing
-   outside the Compose files needs to change. Copy it before running
-   `just secrets-bootstrap`, which would otherwise generate a different one:
-
-   ```bash
-   cp -p secrets/redis_password.txt secrets/valkey_password.txt
-   ```
-
-   Keep `secrets/redis_password.txt` until cleanup so the old container can be
-   restarted for rollback. Never print either file.
-3. **Dry run against the old Redis (read-only).** Prod publishes Redis on
-   `127.0.0.1:6379`:
-
-   ```bash
-   uv run python scripts/migrate-redis-to-valkey.py --dry-run \
-     --source-url redis://127.0.0.1:6379/0 --source-password-file secrets/redis_password.txt \
-     --target-url redis://127.0.0.1:6380/0 --target-password-file secrets/valkey_password.txt
-   ```
-
-   `--dry-run` reads the source, prints the per-prefix counts, and writes
-   nothing. Record the counts.
-4. **Start Valkey next to the old Redis.** Both would publish host port 6379, so
-   give Valkey a temporary loopback port through a throwaway override file kept
-   out of the repository:
-
-   ```bash
-   printf 'services:\n  valkey:\n    ports: !override\n      - "127.0.0.1:6380:6379"\n' > /tmp/valkey-cutover.yml
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f /tmp/valkey-cutover.yml up -d valkey
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f /tmp/valkey-cutover.yml ps valkey
-   ```
-
-   Wait for `healthy`.
-5. **Quiesce the writers.** Stop `api`, `dashboard`, and `insights` so no token
-   is revoked mid-copy and lost: `docker compose -f docker-compose.yml -f docker-compose.prod.yml stop api dashboard insights`.
-6. **Run the copy** (same command as step 3, without `--dry-run`). Check the
-   printed counts match the dry run and that the exit status is 0. Any
-   `FAILED` line or non-zero exit means stop and investigate; do not continue.
-7. **Verify the copy** before switching anything:
-   - key counts match per prefix on both sides, for example
-     `docker exec groovemap-redis redis-cli -a "$(cat secrets/redis_password.txt)" --no-auth-warning --scan --pattern 'revoked:jti:*' | wc -l`
-     and the same with `docker exec groovemap-valkey valkey-cli -a "$(cat secrets/valkey_password.txt)" ...`;
-   - pick one revoked id and compare `PTTL revoked:jti:<jti>` on both: the
-     Valkey value must be at most the Redis value and within a few seconds of it;
-   - no cache keys leaked: `valkey-cli --scan --pattern 'cache:*'` is empty.
-8. **Stop the old Redis and switch consumers.** Stop (do not remove) the old
-   container so the `cache` network alias resolves only to Valkey, then start the
-   consumers with `VALKEY_HOST`/`VALKEY_PASSWORD_FILE` and drop the temporary
-   port:
-
-   ```bash
-   docker stop groovemap-redis
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d valkey api dashboard insights
-   rm /tmp/valkey-cutover.yml
-   ```
-
-9. **Verify end to end.** Replay a bearer token that was revoked before the
-   cutover against any authenticated API endpoint: it must be rejected (401),
-   while a freshly issued token is accepted. Confirm the consumers' logs show
-   no cache connection errors, the `valkey-exporter` target is up, and the
-   `ValkeyMemoryHigh` alert is not firing.
-10. **Observe, then clean up.** After the agreed soak period (the longest TTL
-    of the copied prefixes has elapsed, so nothing only the old container knew
-    can still matter):
-
-    ```bash
-    docker rm groovemap-redis
-    docker volume rm <project>_redis_data
-    rm secrets/redis_password.txt
-    ```
-
-11. **Last step: remove the `redis_data` declaration.** Only after step 10,
-    delete the `redis_data` volume and its legacy comment from the top-level
-    `volumes:` block in `docker-compose.yml` in a separate reviewed change. It
-    is deliberately kept declared until now so the old data stays recoverable.
-
-**Rollback** (any time before step 10): stop the consumers,
-`docker start groovemap-redis`, restore the pre-swap Compose revision, and
-bring the consumers back up. Tokens revoked after the switch exist only in
-Valkey, so re-run the script in the other direction (swap the source and target
-arguments) first if the window was long enough to matter.
 
 ## Promoted extraction rules
 

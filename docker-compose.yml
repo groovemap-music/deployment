@@ -1187,9 +1187,6 @@ volumes:
   neo4j_import:
   neo4j_plugins:
   valkey_data:
-  # Legacy Redis volume. Valkey cannot read Redis 7.4+ RDB/AOF, so it is not
-  # mounted by anything; it stays declared until the cutover runbook removes it.
-  redis_data:
   discogs_data:
   extractor_discogs_logs:
   extractor_musicbrainz_logs:
