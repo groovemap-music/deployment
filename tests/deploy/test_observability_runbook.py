@@ -399,7 +399,7 @@ class TestWaveTwoRunbookSteps:
         section = self._section()
         assert "/api/v1/provisioning/alert-rules" in section
         assert "/api/prometheus/grafana/api/v1/rules" in section
-        assert "seventeen" in section
+        assert "nineteen" in section
 
     def test_the_extractor_download_trap_is_recorded(self) -> None:
         """It destroyed the first execution's stack; nothing else in the doc warns."""

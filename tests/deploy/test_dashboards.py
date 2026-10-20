@@ -323,6 +323,29 @@ class TestAcceptancePanels:
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
 
+    def test_infrastructure_shows_valkey_write_rejection_and_cache_write_failures(self) -> None:
+        """The panel plots exactly what the two Valkey write alerts evaluate."""
+        metrics = self._metrics("infrastructure.json")
+        assert "valkey_errors_total" in metrics
+        assert "groovemap_api_cache_write_failures_total" in metrics
+
+    def test_valkey_write_alerts_use_the_catalogued_metrics(self) -> None:
+        exprs = {rule["title"]: rule["data"][0]["model"]["expr"] for rule in _alert_rules()}
+        assert 'valkey_errors_total{err="OOM"}' in exprs["ValkeyWritesRejected"]
+        assert "groovemap_api_cache_write_failures_total" in exprs["ValkeyCacheWriteFailures"]
+        catalog = (REPO_ROOT / "docs" / "observability.md").read_text()
+        assert "| `groovemap.api.cache.write_failures` | `groovemap_api_cache_write_failures_total` |" in catalog
+
+    def test_log_alerting_gap_is_stated_and_the_runbook_covers_maxmemory(self) -> None:
+        observability = (REPO_ROOT / "docs" / "observability.md").read_text()
+        for key in ("valkey_write_rejected", "password_changed_marker_write_failed", "password_reset_request_failed"):
+            assert f"`{key}`" in observability
+        assert "no log pipeline" in observability
+        runbook = (REPO_ROOT / "docs" / "troubleshooting.md").read_text()
+        assert "## Valkey at maxmemory" in runbook
+        assert "noeviction" in runbook
+        assert "ValkeyWritesRejected" in runbook
+
     def test_containers_covers_per_container_usage_and_host_saturation(self) -> None:
         metrics = self._metrics("containers.json")
         for metric in (
@@ -812,6 +835,8 @@ EXPECTED_ALERT_SEVERITIES = {
     "ApiLatencyHigh": "warning",
     "PostgresConnectionsNearMax": "warning",
     "ValkeyMemoryHigh": "warning",
+    "ValkeyWritesRejected": "critical",
+    "ValkeyCacheWriteFailures": "warning",
     "RabbitMqMemoryAlarm": "critical",
     "Neo4jDown": "critical",
     "EventLoopLagHigh": "warning",
