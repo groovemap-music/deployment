@@ -440,6 +440,7 @@ closed.
 | --- | --- | --- | --- |
 | `groovemap.api.sync.duration` | `groovemap_api_sync_duration_seconds` | histogram (s) | `outcome` |
 | `groovemap.api.cache` | `groovemap_api_cache_total` | counter | `outcome` (`hit`\|`miss`), `cache` |
+| `groovemap.api.cache.write_failures` | `groovemap_api_cache_write_failures_total` | counter (`{event}`) | `cache` (logical Valkey cache), `error.type` (exception class; `error_type` in Prometheus) |
 | `groovemap.api.nlq.requests` | `groovemap_api_nlq_requests_total` | counter | `outcome` |
 | `groovemap.api.activity_events` | `groovemap_api_activity_events_total` | counter | `event_type` |
 | `groovemap.api.activity_failures` | `groovemap_api_activity_failures_total` | counter | `outcome` |
@@ -570,6 +571,7 @@ job rewrites `redis_(.*)` to `valkey_$1` with `metric_relabel_configs`, so only
 | `valkey_commands_processed_total` | counter | Commands processed |
 | `valkey_keyspace_hits_total` | counter | Successful key lookups |
 | `valkey_keyspace_misses_total` | counter | Failed key lookups |
+| `valkey_errors_total` | counter | Errors Valkey returned, by `err` prefix. `err="OOM"` counts writes rejected at `maxmemory` under `noeviction`; the series appears after the first rejection |
 | `valkey_evicted_keys_total` | counter | Keys evicted by the `maxmemory` policy. Compose runs `noeviction`, so this stays at `0`; a rising value means the policy was changed |
 
 Valkey runs with `--maxmemory-policy noeviction` because it stores security
@@ -581,6 +583,43 @@ that error (the symptom is a collapsing hit ratio and more database load),
 but login 2FA challenges, logout revocation, password reset and change, OAuth
 state and snapshot saves surface it as a request error. Treat
 `ValkeyMemoryHigh` as the warning to act on, not as a cache-tuning hint.
+
+#### Alerting on rejected Valkey writes
+
+Two alert rules cover the failure after the memory warning has been missed or
+outrun. Both are metric-based, because metrics are the only telemetry this stack
+stores:
+
+- `ValkeyWritesRejected` reads `valkey_errors_total{err="OOM"}`, the server's own
+  count of commands refused with `OOM command not allowed`. It sees every
+  client, including the security writes that do not go through the cache.
+- `ValkeyCacheWriteFailures` reads `groovemap.api.cache.write_failures`, the
+  counter catalog-api increments when a cache write fails (unit `{event}`). It
+  reaches VictoriaMetrics as `groovemap_api_cache_write_failures_total`: the
+  collector's remote-write exporter turns dots into underscores, drops the
+  braces-only unit `{event}`, and appends `_total` to a monotonic counter, the
+  same path that turns `groovemap.api.cache` into `groovemap_api_cache_total`.
+  The `error.type` attribute becomes the label `error_type`.
+
+Both infer a full Valkey from a symptom. `ValkeyMemoryHigh` remains the early
+warning.
+
+**Log-based alerts are not possible with this stack.** catalog-api also logs
+rejected user-facing writes at error level under a stable `alert` key, but the
+shipped stack has no log pipeline: no Loki, no log shipper, and no OTLP logs
+pipeline in `config/otel-collector.yaml` (it defines metrics and traces only).
+Container output stays in the Docker `json-file` driver (`10m` x 3 files per
+service) and is read with `docker compose logs`. Nothing here was invented to
+change that. What that means for the three keys:
+
+| Log `alert` key | Source | Alertable here? |
+| --- | --- | --- |
+| `valkey_write_rejected` | `api/valkey_errors.py`, `api/routers/sync.py` | Not as a log. Its cause is covered by `ValkeyWritesRejected`. |
+| `password_changed_marker_write_failed` | `api/routers/auth.py` | Not as a log. Its cause (Valkey refusing the write) is covered by `ValkeyWritesRejected`. |
+| `password_reset_request_failed` | `api/routers/auth.py`, `api/notifications.py` | No. It also fires on a reset-email send failure, which no metric here observes. Read it with `docker compose logs catalog-api`. |
+
+A log pipeline is a separate piece of infrastructure to decide on and file; if it
+is added, these keys become alert-rule labels directly.
 
 ### Span metrics
 
@@ -716,6 +755,8 @@ single number per rule.
 | `ApiLatencyHigh` | p95 of `http_server_request_duration_seconds_bucket` per `service_name`, 10m | `> 2s` for 10m | warning |
 | `PostgresConnectionsNearMax` | `sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)` | `> 80%` for 10m | warning |
 | `ValkeyMemoryHigh` | `valkey_memory_used_bytes / valkey_memory_max_bytes` | `> 85%` for 15m | warning |
+| `ValkeyWritesRejected` | `sum(rate(valkey_errors_total{err="OOM"}[5m]))` | `> 0` for 5m | critical |
+| `ValkeyCacheWriteFailures` | `sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total[5m]))` | `> 0` for 10m | warning |
 | `RabbitMqMemoryAlarm` | `rabbitmq_process_resident_memory_bytes / rabbitmq_resident_memory_limit_bytes` | `> 90%` for 5m | critical |
 | `Neo4jDown` | `min(groovemap_neo4j_up)` | `< 1` for 5m | critical |
 | `EventLoopLagHigh` | p99 of `groovemap_runtime_event_loop_lag_seconds_bucket` per `service_name`, 10m | `> 1s` for 10m | warning |
@@ -1203,7 +1244,7 @@ produces `(api|insights)`, which does match.
 Rules are provisioned read-only from
 `config/grafana/provisioning/alerting/groovemap.yaml`. Grafana provisions the
 whole file or none of it, so a single malformed rule is a silent loss of all
-seventeen:
+nineteen:
 
 ```bash
 curl -s 'http://localhost:3000/api/v1/provisioning/alert-rules' \
@@ -1218,7 +1259,7 @@ for group in json.load(sys.stdin)["data"]["groups"]:
 '
 ```
 
-Expect seventeen rules in folder `GrooveMap`, group `groovemap`. `state` is
+Expect nineteen rules in folder `GrooveMap`, group `groovemap`. `state` is
 `inactive` for a healthy stack, `pending` once a condition has held for less than
 its `for` duration, and `alerting` after. `health` is `ok` for a rule that
 evaluated, `nodata` for one whose query returned nothing — which is the correct

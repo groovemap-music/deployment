@@ -109,6 +109,51 @@ docker compose exec valkey valkey-cli ping
 For Neo4j, use the environment's approved secret-access method rather than
 placing a production password directly on a shared command line.
 
+## Valkey at maxmemory: writes are rejected
+
+Alerts: `ValkeyMemoryHigh` (early warning), `ValkeyWritesRejected` and
+`ValkeyCacheWriteFailures`. Valkey runs `--maxmemory-policy noeviction` on
+purpose: it holds security state (`revoked:jti:*`, `password_changed:*`) that
+must never be evicted. At `maxmemory` it therefore evicts nothing and refuses
+every memory-adding command (SET, SETEX, SET NX, INCR) with
+`OOM command not allowed`, while reads, DEL, GETDEL, and EXPIRE keep working.
+
+What users see:
+
+- Cache writes fail quietly: the cache hit ratio falls and database load rises.
+  This is `groovemap_api_cache_write_failures_total` increasing.
+- Login 2FA challenges, logout revocation, password reset and change, and OAuth
+  state writes answer `503` with `Retry-After: 30`. Those requests are not
+  broken permanently; they succeed once Valkey accepts writes again.
+
+Diagnose with read-only commands, with approved credentials:
+
+```bash
+docker compose exec valkey valkey-cli info memory | grep -E 'used_memory_human|maxmemory_human|maxmemory_policy'
+docker compose exec valkey valkey-cli info errorstats
+docker compose exec valkey valkey-cli --bigkeys
+docker compose logs --tail=200 catalog-api | grep -E 'valkey_write_rejected|Cache write failed'
+```
+
+`errorstat_OOM` confirms rejection by the server. The infrastructure dashboard
+panel "Valkey rejected writes and cache write failures" shows when it began.
+The log keys (`valkey_write_rejected` and the others) are only readable with
+`docker compose logs`; this stack has no log pipeline to alert on them.
+
+Resolution, which changes state and needs approval before it is run:
+
+1. Find what is consuming memory (`--bigkeys`, key patterns by prefix). Cache
+   entries are safe to drop; `revoked:jti:*` and `password_changed:*` are not,
+   because deleting a revocation marker re-validates a revoked token.
+2. Either remove the excess cache keys (cache entries have TTLs and are
+   rebuilt from the database) or raise `maxmemory` in the Valkey service
+   command and recreate it, sizing the container memory limit to match.
+3. Do not switch the policy to an evicting one to make the alert go away; that
+   silently drops revocation markers.
+4. Confirm recovery: `valkey_memory_used_bytes / valkey_memory_max_bytes` back
+   under 85%, `ValkeyWritesRejected` resolved, and the cache hit ratio
+   recovering.
+
 ## Port conflicts
 
 The base stack publishes ports 3000, 5433, 5672, 6379, 7474, 7687, 8003-8007,

@@ -78,6 +78,7 @@ EXPORTER_METRICS = frozenset(
         "valkey_blocked_clients",
         "valkey_commands_processed_total",
         "valkey_connected_clients",
+        "valkey_errors_total",
         "valkey_evicted_keys_total",
         "valkey_keyspace_hits_total",
         "valkey_keyspace_misses_total",

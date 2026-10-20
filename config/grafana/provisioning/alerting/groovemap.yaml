@@ -512,6 +512,83 @@ groups:
         labels:
           severity: warning
 
+      - uid: groovemap-valkey-writes-rejected
+        title: ValkeyWritesRejected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(rate(valkey_errors_total{err="OOM"}[5m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Valkey is rejecting writes (OOM command not allowed)
+          description: >-
+            Threshold: any rejected write (valkey_errors_total with err="OOM")
+            in the last 5m, sustained 5m. Valkey runs noeviction, so once used
+            memory reaches maxmemory every memory-adding command (SET, SETEX,
+            SET NX, INCR) is refused while reads and DEL keep working. Login 2FA
+            challenges, logout revocation, password reset and OAuth state writes
+            return 503 to users, and cache writes stop. See the Valkey at
+            maxmemory entry in docs/troubleshooting.md. The series only exists
+            after the first rejection, so this rule is quiet on a healthy stack.
+        labels:
+          severity: critical
+
+      - uid: groovemap-valkey-cache-write-failures
+        title: ValkeyCacheWriteFailures
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total[5m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: Cache writes to Valkey are failing continuously
+          description: >-
+            Threshold: groovemap_api_cache_write_failures_total increasing
+            (rate over 5m above 0) for every evaluation across 10m, per service
+            and logical cache. A single blip does not hold for 10m; a full
+            Valkey (noeviction) or an unreachable one does. Cache-aside reads
+            still work, so the visible symptom is a collapsing hit ratio and
+            more database load. Check ValkeyMemoryHigh and ValkeyWritesRejected,
+            then the Valkey at maxmemory entry in docs/troubleshooting.md.
+        labels:
+          severity: warning
+
       - uid: groovemap-rabbitmq-memory-alarm
         title: RabbitMqMemoryAlarm
         condition: C
