@@ -51,7 +51,8 @@ D2 = "@sha256:" + "b" * 64
     [
         ("grafana", f"grafana/grafana:99.0.1{D2}"),  # routine version + digest bump
         ("neo4j", f"neo4j:2026.08.1-community{D2}"),  # tag format change
-        ("otel-collector", f"otel/opentelemetry-collector-contrib:0.161.0-386{D2}"),  # build-suffixed tag
+        ("otel-collector", f"otel/opentelemetry-collector-contrib:0.162.0{D2}"),  # routine version + digest bump
+        ("valkey", f"valkey/valkey:9.1.2-alpine{D2}"),  # variant suffix, not a platform
         ("cadvisor", f"gcr.io/cadvisor/cadvisor:v1.0.0{D2}"),  # registry host is part of the repository
     ],
 )
@@ -70,6 +71,10 @@ def test_third_party_policy_accepts_any_version_of_a_reviewed_repository(service
         ("grafana", f"ghcr.io/grafana/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
         ("postgres", f"postgres-evil:18{D1}", "not the reviewed postgres"),
         ("cadvisor", f"cadvisor/cadvisor:v1.0.0{D1}", "not the reviewed gcr.io/cadvisor/cadvisor"),
+        # Single-platform tags resolve to one architecture's manifest, not the index.
+        ("otel-collector", f"otel/opentelemetry-collector-contrib:0.162.0-386{D1}", "names a single platform"),
+        ("grafana", f"grafana/grafana:13.2.4-amd64{D1}", "names a single platform"),
+        ("valkey-exporter", f"oliver006/redis_exporter:v1.94.0-arm64{D1}", "names a single platform"),
     ],
 )
 def test_third_party_policy_rejects_unpinned_or_foreign_references(service: str, image: str, message: str) -> None:

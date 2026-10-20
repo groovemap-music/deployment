@@ -111,6 +111,14 @@ THIRD_PARTY_REPOSITORIES = {
 # repository[:tag]@sha256:digest, where the repository may carry a registry host:port.
 IMAGE_REFERENCE = re.compile(r"(?P<repository>[^@:]+(?::\d+)?(?:/[^@:]+)*?)(?::(?P<tag>[^@:/]+))?@sha256:[0-9a-f]{64}")
 
+# A tag that names one CPU architecture (`0.162.0-386`, `v1.2.3-arm64`) resolves to a
+# single-platform manifest, not the multi-arch index, so its digest runs on that platform
+# only. Dependabot proposed exactly this for otel-collector (0.162.0 -> 0.162.0-386): the
+# pinned linux/386 binary segfaulted at startup on an arm64 engine, and on amd64 it would
+# run as a 32-bit process. A third-party pin must be the index digest of a platform-neutral
+# tag. Variant suffixes such as `-alpine` or `-community` are not platforms and stay valid.
+PLATFORM_TAG_SUFFIX = re.compile(r"-(?:386|i386|amd64|x86_64|arm64(?:v8)?|aarch64|arm(?:v[5-7])?|armhf|ppc64le|s390x|riscv64)$")
+
 
 def check_third_party_reference(service_name: str, image: str) -> None:
     """Require a reviewed repository, a non-floating tag, and a digest; any version is fine."""
@@ -120,6 +128,9 @@ def check_third_party_reference(service_name: str, image: str) -> None:
     expected = THIRD_PARTY_REPOSITORIES[service_name]
     assert match["repository"] == expected, f"{service_name} runs repository {match['repository']}, not the reviewed {expected}"
     assert match["tag"] and match["tag"] != "latest", f"{service_name} image needs a versioned tag, not {match['tag']!r}: {image}"
+    assert not PLATFORM_TAG_SUFFIX.search(match["tag"]), (
+        f"{service_name} image tag {match['tag']!r} names a single platform; pin the multi-arch index digest of the platform-neutral tag: {image}"
+    )
 
 
 def check_declarations() -> None:
