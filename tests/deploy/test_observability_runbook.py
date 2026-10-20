@@ -419,8 +419,11 @@ class TestSecondExecutionRecord:
     SECTION_HEADING = "### Second execution, 2026-09-05"
 
     def _record(self) -> str:
+        """This record only, up to the next record, so a later record's tables are not read as its own."""
         section = _verification_section()
-        return section[section.index(self.SECTION_HEADING) :]
+        record = section[section.index(self.SECTION_HEADING) :]
+        end = record.find("\n### ", 1)
+        return record if end == -1 else record[: end + 1]
 
     def test_the_record_exists_inside_the_verification_section(self) -> None:
         assert self.SECTION_HEADING in _verification_section()
@@ -575,3 +578,64 @@ class TestSecondExecutionRecord:
 
     def test_the_trace_size_follow_up_is_recorded(self) -> None:
         assert "69,760" in self._record()
+
+
+class TestValkeyExecutionRecord:
+    """The dated local run of the Valkey relabel and alert rules (gm-deployment-uvdf).
+
+    Pinned for the same reason as the wave records: each claim has to say what was
+    observed, and the defects the run found have to stay next to their fixes.
+    """
+
+    SECTION_HEADING = "### Valkey relabel and alert execution, 2026-10-20"
+
+    def _record(self) -> str:
+        section = _verification_section()
+        record = section[section.index(self.SECTION_HEADING) :]
+        end = record.find("\n### ", 1)
+        return record if end == -1 else record[: end + 1]
+
+    def test_the_record_follows_the_second_execution(self) -> None:
+        section = _verification_section()
+        assert section.index("### Second execution, 2026-09-05") < section.index(self.SECTION_HEADING)
+
+    def test_it_ran_under_an_isolated_project_and_was_torn_down(self) -> None:
+        record = self._record()
+        assert "-p groovemap-verify" in record
+        assert "down -v --remove-orphans" in record
+        assert "127.0.0.1:" in record
+
+    def test_every_claim_has_a_result(self) -> None:
+        record = self._record()
+        table = record[record.index("**Results.**") : record.index("**Findings, fixed in the same bead.**")]
+        rows = [line for line in table.splitlines() if line.startswith("|") and "---" not in line][1:]
+        claims = {
+            "valkey_up": "`valkey_up` exists",
+            "no redis series": "series remain",
+            "rate": "`rate()` works",
+            "OOM counter": '`valkey_errors_total{err="OOM"}`',
+            "ValkeyWritesRejected": "`ValkeyWritesRejected` expression",
+            "OTLP counter": "`groovemap_api_cache_write_failures_total`",
+            "ValkeyCacheWriteFailures": "`ValkeyCacheWriteFailures` expression",
+            "alert rules load": "provisioned alert rules",
+            "dashboard": "Infrastructure dashboard",
+        }
+        for claim, marker in claims.items():
+            (row,) = [row for row in rows if marker in row.split("|")[1]]
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            assert len(cells) == 2, f"{claim}: row is not claim + result: {row}"
+            assert cells[1].startswith("Verified"), f"{claim} is not recorded as verified: {cells[1]}"
+
+    def test_the_findings_are_recorded_with_their_fixes(self) -> None:
+        record = self._record()
+        table = record[record.index("**Findings, fixed in the same bead.**") : record.index("**Notes for the next run.**")]
+        rows = [line for line in table.splitlines() if line.startswith("|") and "---" not in line][1:]
+        assert len(rows) == 2
+        for row in rows:
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            assert len(cells) == 2 and cells[1], f"finding without a fix: {row}"
+        assert "0.162.0-386" in table
+        assert "valkey_instance_info" in table
+
+    def test_the_record_does_not_embed_a_registry_digest(self) -> None:
+        assert not re.search(r"@sha256:[0-9a-f]{64}", self._record())
