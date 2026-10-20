@@ -560,6 +560,17 @@ Scraped from `valkey-exporter` (`oliver006/redis_exporter`), not pushed. The
 exporter names every series `redis_*`; the collector's `valkey-exporter` scrape
 job rewrites `redis_(.*)` to `valkey_$1` with `metric_relabel_configs`, so only
 `valkey_*` series are stored and no `redis_*` series exist in VictoriaMetrics.
+The same job renames the two `redis_*` label names the exporter copies from
+`INFO` onto `valkey_instance_info` (`valkey_mode`, `valkey_build_id`) and drops
+the third, the Redis-compatibility level (`7.2.4` on Valkey 9), because the
+real server version is already the `valkey_version` label.
+
+The Kind column is the exporter's declared type. A series renamed by
+`metric_relabel_configs` reaches the collector's pipeline unknown-typed (the
+collector logs a warning saying so at startup), so the type metadata is lost;
+names, `_total` suffixes and samples are stored unchanged, and `rate()` works on
+the counters. The 2026-10-20 execution record under
+[Verification](#verification) shows both.
 
 | Prometheus name | Kind | Meaning |
 | --- | --- | --- |
@@ -1624,6 +1635,99 @@ the services.
 | `tableinator` and `graphinator` disagree on the `process {destination}` span name. | `process artists` against `process discogs-graph-enricher-artists` in the same trace. |
 | `mcp-server` has telemetry but no place to run it. | Two API-services panels and every `groovemap_mcp_*` series have never been observed on any stack. |
 | Neither extractor can be run against a fixture. | Both download the full monthly dump set on start, with no size limit, no fixture mode, and no configurable source URL. Verifying a publish span costs tens of gigabytes. |
+
+### Valkey relabel and alert execution, 2026-10-20
+
+A targeted local run (bead `gm-deployment-uvdf`) of the Valkey path only: the
+scrape relabel, the three Valkey alert rules, and the Infrastructure dashboard's
+Valkey panels. Until this run those were checked by lint and unit tests alone.
+It was a local test, not a deployment: no live host, registry push or
+production secret was involved, and no GrooveMap service image was run. The
+OTLP counter catalog-api would emit was sent by hand instead.
+
+**Stack.** Five services from `docker-compose.yml`, under their own project
+name, with `config/validation.env` for interpolation and an uncommitted overlay:
+
+```bash
+docker compose -p groovemap-verify --env-file config/validation.env \
+  -f docker-compose.yml -f <overlay> \
+  up -d --wait valkey valkey-exporter victoria-metrics otel-collector grafana
+```
+
+The overlay changed only what a disposable run needs: Valkey's command became
+`valkey-server --appendonly no --maxmemory 4mb --maxmemory-policy noeviction`
+(so OOM is reachable in seconds); the published ports were rebound to loopback
+(`127.0.0.1:18428` VictoriaMetrics, `127.0.0.1:13000` Grafana, `127.0.0.1:14318`
+collector OTLP/HTTP, Valkey unpublished); the collector and Grafana
+`depends_on` lists were cut to `victoria-metrics` so `victoria-traces` did not
+start; container names and the bridge subnet were changed so nothing collided
+with a dev stack; and Grafana got a throwaway admin password. The absent
+rabbitmq, postgres, cadvisor and node-exporter scrape jobs report `up == 0`,
+which is expected.
+
+Every image is the one `docker-compose.yml` pins at the commit that adds this
+record, run by tag and digest. Digests stay out of this section as a rule, so
+each is given by its first twelve hex characters; the full value is the pin in
+`docker-compose.yml`.
+
+| Component | Image | Digest prefix |
+| --- | --- | --- |
+| Docker | Engine 29.5.2 (linux/arm64), Compose 5.6.0 | — |
+| `valkey` | `valkey/valkey:9.1.2-alpine` | `48332870af35` |
+| `valkey-exporter` | `oliver006/redis_exporter:v1.94.0` | `0842ef7110e6` |
+| `otel-collector` | `otel/opentelemetry-collector-contrib:0.162.0`, the multi-arch index (see the first finding below) | `39923a8e431b` |
+| `victoria-metrics` | `victoriametrics/victoria-metrics:v1.154.0` | `4bd592341587` |
+| `grafana` | `grafana/grafana:13.2.4` | `dbbc38ea2110` |
+
+**Load.** Rejected writes were driven inside the Valkey container: 64 KiB `SET`s
+until `OOM command not allowed when used memory > 'maxmemory'` (the 36th), then
+one `SET` per second for the rest of the run, plus `GET`s for hits and misses.
+`INFO errorstats` reported `errorstat_OOM:count=1` after the first rejection
+and `1082` at teardown. The cache
+counter was pushed to `http://127.0.0.1:14318/v1/metrics` as OTLP/HTTP JSON
+every 5s: a cumulative monotonic sum named `groovemap.api.cache.write_failures`,
+unit `{event}`, resource `service.name=api`, `service.namespace=groovemap`,
+`deployment.environment.name=dev`, two points with `cache` = `search` and
+`release` and `error.type=redis.exceptions.ResponseError`.
+
+**Results.** Every query ran against `http://127.0.0.1:18428/api/v1/query`
+unless it names Grafana.
+
+| Claim | Result |
+| --- | --- |
+| `valkey_up` exists after a scrape | Verified. `valkey_up{job="valkey-exporter",service_name="valkey-exporter"} 1`. |
+| No `redis_*` series remain | Verified for series names on the first run: `count({__name__=~"redis_.*"})` was empty and all 205 exporter metric names were `valkey_*`. Not true for labels: `valkey_instance_info` still carried three label names with the exporter's prefix. Fixed (second finding); after the fix, 0 of the 491 `valkey-exporter` series written in the last 20s had any such label name. |
+| `rate()` works on relabelled counters | Verified. `rate(valkey_commands_processed_total[1m])` returned `0.87`/s and the hit-ratio expression returned a value, despite the collector's warning that relabel-renamed series are unknown-typed. |
+| `valkey_memory_*` and `ValkeyMemoryHigh` | Verified. `valkey_memory_max_bytes` was `4194304` (the overlay's 4mb) and `100 * valkey_memory_used_bytes / valkey_memory_max_bytes` returned `98.2`. |
+| Writing past maxmemory yields `valkey_errors_total{err="OOM"}` | Verified. The series appeared after the first rejection with label `err="OOM"`, value `17` by the first query. |
+| The `ValkeyWritesRejected` expression returns data | Verified. `sum(rate(valkey_errors_total{err="OOM"}[5m]))` returned `1.0`. |
+| The OTLP counter arrives as `groovemap_api_cache_write_failures_total` with `service_name`, `cache`, `error_type` | Verified. Two series, one per `cache` (`search` and `release`), each `{service_name="api", error_type="redis.exceptions.ResponseError", job="groovemap/api", service_namespace="groovemap", deployment_environment_name="dev", otel_scope_name="groovemap.api"}`. |
+| The `ValkeyCacheWriteFailures` expression returns data | Verified. `sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total[5m]))` returned `0.59` (search) and `0.20` (release). |
+| Grafana loads the provisioned alert rules without errors | Verified. Provisioning logged `finished to provision alerting` with no error; `/api/v1/provisioning/alert-rules` listed all 19 rules. Grafana's own evaluation (`/api/prometheus/grafana/api/v1/rules`, 1m interval) took each Valkey rule through Pending to Firing with health `ok` and no `lastError`: `ValkeyWritesRejected` firing at 01:07 UTC (5m after its first Pending), `ValkeyCacheWriteFailures` at 01:12 with one alert per `service_name`/`cache` pair, and `ValkeyMemoryHigh` at 01:16. |
+| Grafana loads the Infrastructure dashboard and the new panel queries resolve | Verified. `/api/dashboards/uid/groovemap-infrastructure` returned it provisioned in the GrooveMap folder. Every panel query ran through `/api/ds/query` against uid `prometheus` with no error. Each Valkey panel (3, 14, 15, 16, 17) and both queries of panel 21, *Valkey rejected writes and cache write failures*, returned series; panel 21 as a 10-minute range query with Grafana resolving `$__rate_interval` to `1m0s`. |
+
+**Findings, fixed in the same bead.**
+
+| Finding | Fix |
+| --- | --- |
+| The collector did not start. Dependabot (#36) had bumped it from `0.162.0` to the per-architecture tag `0.162.0-386`, whose digest is the linux/386 manifest. On this arm64 engine the binary segfaulted on start and restarted in a loop, so no metric reached VictoriaMetrics at all; on amd64 it would have run as a 32-bit process. `scripts/check-images.py` accepted it, and its test listed the suffix as a valid "build-suffixed tag". | Pinned `0.162.0` to its manifest-list digest. The image policy now rejects tags that end in a platform (`-386`, `-amd64`, `-arm64`, and similar), so the same Dependabot bump fails CI instead of the stack. |
+| `valkey_instance_info` kept three exporter-prefixed label names from `INFO`. | The `valkey-exporter` job maps two to `valkey_mode` and `valkey_build_id` and drops the Redis-compatibility version, which would otherwise overwrite `valkey_version`. |
+
+**Notes for the next run.** VictoriaMetrics shifts an instant query at "now"
+back 30s (`-search.latencyOffset`), so a series whose first sample is younger
+than that is listed by `/api/v1/series` but missing from `/api/v1/query`; wait
+before reading an empty result as a failure. Grafana logged one unrelated error
+at startup, `Failed to read plugin provisioning files` for the absent
+`provisioning/plugins` directory.
+
+**Not verified in this run.** The other sixteen alert rules and the other eight
+dashboards were loaded but not exercised. catalog-api itself was not run, so
+this proves the collector's handling of the counter it is documented to emit,
+not that the service emits it. The production overlay was not run.
+
+**Teardown.** `docker compose -p groovemap-verify … down -v --remove-orphans`;
+afterwards `docker ps -a`, `docker network ls` and `docker volume ls` listed no
+`groovemap-verify` container, network or volume.
 
 
 ## Rollout

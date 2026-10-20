@@ -299,7 +299,7 @@ class TestCollectorScrapesInfrastructure:
     def test_valkey_series_are_relabelled_from_the_exporters_redis_names(self) -> None:
         """oliver006/redis_exporter emits redis_*; only valkey_* may be stored."""
         job = next(job for job in _scrape_configs() if job["job_name"] == "valkey-exporter")
-        (rule,) = job["metric_relabel_configs"]
+        rule = job["metric_relabel_configs"][0]
         assert rule["source_labels"] == ["__name__"]
         assert rule["target_label"] == "__name__"
         # Prometheus anchors the regex; the collector turns `$$` into a literal `$`.
@@ -314,6 +314,27 @@ class TestCollectorScrapesInfrastructure:
             assert match, exported
             assert match.expand(replacement) == stored
         assert not pattern.fullmatch("valkey_up")
+
+    def test_valkey_info_labels_are_relabelled_from_the_exporters_redis_names(self) -> None:
+        """valkey_instance_info copies redis_* label names from INFO; none may be stored.
+
+        redis_mode and redis_build_id become valkey_*. redis_version is the Redis
+        compatibility level, not the server version (that is valkey_version), so it
+        is dropped instead of being mapped onto valkey_version and overwriting it.
+        """
+        job = next(job for job in _scrape_configs() if job["job_name"] == "valkey-exporter")
+        _, labelmap, labeldrop = job["metric_relabel_configs"]
+        assert labelmap["action"] == "labelmap"
+        assert labeldrop["action"] == "labeldrop"
+        mapped = re.compile(labelmap["regex"])
+        replacement = re.sub(r"\$(\d)", r"\\\1", labelmap["replacement"].replace("$$", "$"))
+        dropped = re.compile(labeldrop["regex"])
+        exported = {"redis_mode", "redis_build_id", "redis_version", "valkey_version", "maxmemory_policy"}
+        # labelmap copies a matching label under its new name and keeps the original;
+        # labeldrop then removes every original.
+        after_map = exported | {match.expand(replacement) for name in exported if (match := mapped.fullmatch(name))}
+        stored = {name for name in after_map if not dropped.fullmatch(name)}
+        assert stored == {"valkey_mode", "valkey_build_id", "valkey_version", "maxmemory_policy"}
 
     def test_only_the_valkey_exporter_job_relabels_metrics(self) -> None:
         relabelled = {job["job_name"] for job in _scrape_configs() if "metric_relabel_configs" in job}
