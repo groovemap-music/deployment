@@ -43,11 +43,29 @@ receivers:
           # Valkey. Rewrite them at scrape time so everything stored,
           # dashboarded, and alerted on is valkey_*. `$$` is the collector's
           # escape for a literal `$` in the replacement.
+          #
+          # valkey_instance_info also carries three label names copied from
+          # the server's INFO output with the same prefix. Two are renamed. The
+          # third, redis_version, is the Redis-protocol compatibility level
+          # (7.2.4 on Valkey 9), not the server version — that is the separate
+          # valkey_version label — so it is dropped rather than mapped onto
+          # valkey_version, which it would overwrite.
+          #
+          # Renaming a series here makes the receiver treat it as
+          # unknown-typed (it logs a warning at startup). The samples, names
+          # and `_total` suffixes are stored unchanged and rate() works on
+          # them; only the HELP/TYPE metadata is lost, which VictoriaMetrics
+          # does not keep anyway. Verified on a local stack, 2026-10-20.
           metric_relabel_configs:
             - source_labels: [__name__]
               regex: redis_(.*)
               target_label: __name__
               replacement: valkey_$$1
+            - action: labelmap
+              regex: redis_(mode|build_id)
+              replacement: valkey_$$1
+            - action: labeldrop
+              regex: redis_.*
         - job_name: otel-collector
           scrape_interval: 15s
           static_configs:
