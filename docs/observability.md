@@ -474,7 +474,7 @@ The Python names come from `opentelemetry-instrumentation-system-metrics`,
 which `groovemap-runtime` installs with the process-scoped subset only.
 `docs/runtime.md` in [`python-libraries`](https://github.com/groovemap-music/python-libraries)
 is the source of truth for exactly which instruments the pinned version emits;
-the rows below were read from version `0.65b0` of that package and are
+the rows below were read from version `0.66b1` of that package (unchanged from `0.65b0`) and are
 reconciled against a running stack by the end-to-end verification.
 
 | OTEL name | Prometheus name | Kind | Attributes |
