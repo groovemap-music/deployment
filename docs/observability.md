@@ -236,6 +236,7 @@ authentication of their own.
 | Scrape job | Target | Interval | Source |
 | --- | --- | ---: | --- |
 | `rabbitmq` | `rabbitmq:15692` | 15s | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
+| `rabbitmq-detailed` | `rabbitmq:15692/metrics/detailed?family=queue_delivery_metrics&family=queue_exchange_metrics` | 15s | the same plugin's per-queue delivery and publish counters; the job name is not a compose service key |
 | `postgres-exporter` | `postgres-exporter:9187` | 15s | `prometheuscommunity/postgres-exporter` |
 | `valkey-exporter` | `valkey-exporter:9121` | 15s | `oliver006/redis_exporter`, which speaks to Valkey; the collector relabels its `redis_*` series to `valkey_*` |
 | `otel-collector` | `otel-collector:8888` | 15s | the collector's own telemetry |
@@ -244,6 +245,17 @@ authentication of their own.
 
 Job names deliberately match the docker-compose service keys, which is what the
 dashboards filter on.
+
+The broker's `:15692` endpoint is also published on `127.0.0.1` only, and it is
+the single source of queue statistics (ADR 0017). The management plugin's metrics
+collector is disabled (`management_agent.disable_metrics_collector = true`), so
+the management UI and API carry no per-queue message rates. The operations
+console, the catalog API's queue-metrics history, and the operations toolkit read
+`/metrics/detailed` (`RABBITMQ_PROMETHEUS_URL`), where
+`rabbitmq_detailed_queue_messages_acked_total` and
+`rabbitmq_detailed_queue_exchange_messages_published_total` advance per queue
+with the collector off. `return_per_object_metrics true` stays set because the
+per-queue Grafana panels depend on it.
 
 cAdvisor and node-exporter run at 30s rather than 15s. cAdvisor emits a series
 per container per interface and per device, node-exporter one per CPU per mode
@@ -671,6 +683,18 @@ As Prometheus labels those are `service_name`, `span_name`, `span_kind`, and
 The connector's default `collector.instance.id` dimension is excluded in
 `config/otel-collector.yaml`: there is one collector in this stack, so it would
 only add a constant label to every series.
+
+### RabbitMQ detailed metrics
+
+Scraped from `rabbitmq:15692/metrics/detailed` by the `rabbitmq-detailed` job,
+restricted to the `queue_delivery_metrics` and `queue_exchange_metrics` families
+so only per-queue delivery and publish counters are added. They back per-queue
+publish and ack rates (`sum by (queue) (rate(...[5m]))`).
+
+| Name | Prometheus name | Kind | Attributes |
+| --- | --- | --- | --- |
+| `rabbitmq_detailed_queue_messages_acked_total` | `rabbitmq_detailed_queue_messages_acked_total` | counter | `vhost`, `queue` |
+| `rabbitmq_detailed_queue_exchange_messages_published_total` | `rabbitmq_detailed_queue_exchange_messages_published_total` | counter | `vhost`, `queue`, `exchange` |
 
 ### Metrics that are deliberately absent
 

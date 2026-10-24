@@ -56,23 +56,28 @@ services:
       RABBITMQ_DEFAULT_QUEUE_TYPE: quorum
       RABBITMQ_DEFAULT_USER: groovemap
       RABBITMQ_DEFAULT_VHOST: /
-      # Enable management stats (disabled by default in RabbitMQ 4.x) so the
-      # dashboard can display queue depths, publish rates, and ack rates.
       # Raise max_message_size to 128 MB (default 16 MB) for large MusicBrainz
       # records such as "Various Artists" that can exceed 50 MB.
       # return_per_object_metrics exposes per-queue series on :15692. Without it
       # rabbitmq_prometheus only emits node aggregates, and the per-queue depth
       # and consumer-count panels have nothing to plot. GrooveMap runs a handful
       # of queues, so the cardinality this adds is negligible.
+      # disable_metrics_collector stops the management plugin's legacy
+      # per-queue/per-channel stats collection (ADR 0017): queue depth and
+      # publish/ack rates come from rabbitmq_prometheus /metrics/detailed, and
+      # the management plugin stays for the operator UI and the DLQ purge API.
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
         -rabbit log_levels [{connection,error},{default,warning}]
         -rabbit max_message_size 134217728
-        -rabbitmq_management disable_management_stats false
+        -rabbitmq_management_agent disable_metrics_collector true
         -rabbitmq_prometheus return_per_object_metrics true
     ports:
       - "5672:5672"      # AMQP port
       - "15672:15672"    # Management UI
-      # 15692 (rabbitmq_prometheus) stays internal — otel-collector scrapes it.
+      # 15692 (rabbitmq_prometheus) is published on loopback only so host-side
+      # operator tools can read /metrics/detailed the way they reach 15672.
+      # otel-collector still scrapes it over the internal network.
+      - "127.0.0.1:15692:15692"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
@@ -626,6 +631,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
+      RABBITMQ_PROMETHEUS_URL: http://rabbitmq:15692
       VALKEY_HOST: valkey
       STARTUP_DELAY: "5"
       DISCOGS_DATA_ROOT: /discogs-data
@@ -992,9 +998,7 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PASSWORD: groovemap
-      RABBITMQ_USERNAME: groovemap
+      RABBITMQ_PROMETHEUS_URL: http://rabbitmq:15692
       API_HOST: api
       API_PORT: "8004"
       UV_CACHE_DIR: "/tmp/.cache/uv"

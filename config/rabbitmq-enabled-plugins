@@ -1,10 +1,15 @@
 %% RabbitMQ plugin list, mounted read-only at /etc/rabbitmq/enabled_plugins.
 %%
-%% rabbitmq_management  — the management UI and HTTP API on 15672 (the
-%%                        operations console reads queue stats from it).
-%% rabbitmq_prometheus  — the Prometheus scrape endpoint on 15692, which
-%%                        otel-collector scrapes. RabbitMQ speaks no OTLP, so
-%%                        this is the only path for broker metrics.
+%% rabbitmq_management  — the operator management UI and HTTP API on 15672, and
+%%                        the catalog API's DLQ purge. Its stats collector is
+%%                        disabled (management_agent.disable_metrics_collector),
+%%                        so nothing reads queue stats from it.
+%% rabbitmq_prometheus  — the Prometheus endpoint on 15692: otel-collector scrapes
+%%                        it for the dashboards and alerts, and the operations
+%%                        console, the catalog API's queue-metrics history, and
+%%                        the operations toolkit read /metrics/detailed for queue
+%%                        depth and publish/ack rates. RabbitMQ speaks no OTLP,
+%%                        so this is the only path for broker metrics.
 %%
 %% The rabbitmq:*-management image happens to enable both today. Owning the
 %% file here makes the contract explicit and survives an image bump that
