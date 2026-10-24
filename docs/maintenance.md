@@ -601,6 +601,32 @@ overwrite existing values. Rotation is an operator procedure:
 Never commit `.env`, `secrets/`, Docker authentication, or copied production
 configuration.
 
+## Grafana Viewer token for the console
+
+The operations console shows firing Grafana alerts in its attention bar only when it
+holds a read token. It is optional: with no token the console shows the problems it
+derives from its live feed and says nothing about Grafana. The console reads the token
+server-side from a file, so it never reaches the browser.
+
+1. In Grafana, open Administration > Users and access > Service accounts and add a
+   service account (for example `operations-console`) with the **Viewer** role.
+2. Add a token to it. Choose an expiry you will remember to rotate; Grafana shows the
+   token once.
+3. Write it to `secrets/grafana_viewer_token.txt` without a trailing newline or shell
+   history (`pbpaste > secrets/grafana_viewer_token.txt` or an editor), mode 600.
+   `just secrets-bootstrap` creates this file empty when it is missing and never
+   overwrites it.
+4. Set `GRAFANA_URL` in the production environment to the Grafana address that both the
+   dashboard container and operators' browsers can reach (the console fetches alerts from
+   it and builds its deep links on it). `TRACES_URL` defaults to it.
+5. Restart the `dashboard` service and open the console: `GET /api/alerts` reports
+   `configured: true, available: true`.
+
+An empty token file reports `configured: true, available: false` and the bar shows a note
+that Grafana alerts are unavailable; that is the expected state until step 3. To rotate,
+create a new token, replace the file, restart `dashboard`, then delete the old token in
+Grafana. The development stack mounts no token, so alerts stay off there.
+
 ## Backups and restore drills
 
 Backups are environment-specific and must be tested, not merely scheduled.

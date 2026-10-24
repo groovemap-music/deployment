@@ -1,0 +1,3 @@
+# Optional — Grafana Viewer service-account token for the console's firing-alerts bar.
+# Leave the real file empty to keep alerts off; create one per docs/maintenance.md.
+your-grafana-viewer-token-here

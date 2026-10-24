@@ -999,6 +999,14 @@ services:
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       RABBITMQ_PROMETHEUS_URL: http://rabbitmq:15692
+      # Queue Trends and System Health read history from VictoriaMetrics, server-side.
+      VICTORIA_METRICS_URL: http://victoria-metrics:8428
+      # GRAFANA_URL is both fetched by the console (alerts) and handed to the browser as
+      # the base of its deep links, so it must be reachable from both. The dev default is
+      # the published port; set it to the public Grafana URL anywhere else. TRACES_URL
+      # follows it: traces are the groovemap-traces dashboard in the same Grafana.
+      GRAFANA_URL: "${GRAFANA_URL:-http://localhost:3000}"
+      TRACES_URL: "${TRACES_URL:-${GRAFANA_URL:-http://localhost:3000}}"
       API_HOST: api
       API_PORT: "8004"
       UV_CACHE_DIR: "/tmp/.cache/uv"
