@@ -160,5 +160,5 @@ def test_quick_start_lists_only_the_published_application_and_backend_ports() ->
     for port in published:
         assert f"localhost:{port}" in quick_start, f"docs/quick-start.md does not list published port {port}"
 
-    for internal_port in (8000, 8001, 8002, 8008, 8009, 8010, 8011):
+    for internal_port in (8000, 8001, 8002, 8008, 8009):
         assert f"localhost:{internal_port}" not in quick_start

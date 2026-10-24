@@ -188,8 +188,9 @@ the base Compose file:
 - API: `http://localhost:8005/health`
 - Explore: `http://localhost:8007/health`
 
-Both extractors (8000), Graphinator (8001), Tableinator (8002), Insights
-(8009), Brainztableinator (8010), and Brainzgraphinator (8011) are
+Health ports are role-based: ingestors (both extractors) use 8000, graph
+enrichers (Graphinator, Brainzgraphinator) use 8001, and SQL loaders
+(Tableinator, Brainztableinator) use 8002. Insights uses 8009. All of these are
 internal-only. Use `docker compose ps` for their Compose health status; those
 ports are not mapped to localhost.
 
