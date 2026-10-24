@@ -954,7 +954,7 @@ STARTUP_DELAY=20                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Internal health port: 8011. It is not published to the host; use
+Internal health port: 8001 (`HEALTH_PORT`). It is not published to the host; use
 `docker compose ps` for status.
 
 **Notes**: Brainzgraphinator enriches existing Neo4j nodes with MusicBrainz metadata (properties, relationships, cross-references). It skips entities without Discogs matches. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges.
@@ -988,7 +988,7 @@ STARTUP_DELAY=25                 # Seconds to wait before starting (code default
 LOG_LEVEL=INFO
 ```
 
-Internal health port: 8010. It is not published to the host; use
+Internal health port: 8002 (`HEALTH_PORT`). It is not published to the host; use
 `docker compose ps` for status.
 
 **Notes**: Brainztableinator stores all MusicBrainz data in the `musicbrainz` PostgreSQL schema — including entities without Discogs matches — with relationships and external links. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges. Unlike Graphinator/Tableinator/Brainzgraphinator, it does **not** batch writes — it commits one PostgreSQL transaction per message and instead sets RabbitMQ prefetch (channel-global QoS) equal to its connection-pool maximum, so in-flight message handlers never exceed pool capacity.

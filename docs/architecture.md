@@ -33,8 +33,8 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 
 | Source repository | Compose service | Purpose | Port(s) |
 | --- | --- | --- | --- |
-| [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `brainzgraphinator` | Enrich the Neo4j graph with MusicBrainz metadata | 8011 (internal health) |
-| [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `brainztableinator` | Store MusicBrainz data in PostgreSQL | 8010 (internal health) |
+| [`musicbrainz-graph-enricher`](https://github.com/groovemap-music/musicbrainz-graph-enricher) | `brainzgraphinator` | Enrich the Neo4j graph with MusicBrainz metadata | 8001 (internal health) |
+| [`musicbrainz-sql-loader`](https://github.com/groovemap-music/musicbrainz-sql-loader) | `brainztableinator` | Store MusicBrainz data in PostgreSQL | 8002 (internal health) |
 
 ### Infrastructure Components
 
