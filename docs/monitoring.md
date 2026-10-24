@@ -114,8 +114,9 @@ configuration. Its implementation and alert behavior belong to
 The dashboard service reads history from `VICTORIA_METRICS_URL` (in-network
 `victoria-metrics`, 90d retention) and builds its Grafana and trace deep links on
 `GRAFANA_URL` and `TRACES_URL`; the base file defaults both to
-<http://localhost:3000>. In production `GRAFANA_URL` must be reachable from both the
-dashboard container and browsers, and the optional alerts token is the
+<http://localhost:3000>. The console's server-side Grafana calls use
+`GRAFANA_API_URL` (`http://grafana:3000`, in-network); in production only `GRAFANA_URL`
+must be the browser-reachable address. The optional alerts token is the
 `grafana_viewer_token` secret (see
 [maintenance](maintenance.md#grafana-viewer-token-for-the-console)).
 Precomputed analytics behavior belongs to
