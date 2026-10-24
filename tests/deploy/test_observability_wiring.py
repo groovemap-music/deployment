@@ -77,6 +77,7 @@ HOST_EXPORTERS = ("cadvisor", "node-exporter")
 # that is what the dashboards filter on.
 EXPECTED_SCRAPE_JOBS = {
     "rabbitmq": "rabbitmq:15692",
+    "rabbitmq-detailed": "rabbitmq:15692",
     "postgres-exporter": "postgres-exporter:9187",
     "valkey-exporter": "valkey-exporter:9121",
     "otel-collector": "otel-collector:8888",
@@ -323,6 +324,23 @@ class TestCollectorScrapesInfrastructure:
         for job_name, target in EXPECTED_SCRAPE_JOBS.items():
             assert actual[job_name] == [target], job_name
 
+    def test_rabbitmq_detailed_job_scrapes_the_per_queue_families(self) -> None:
+        jobs = {job["job_name"]: job for job in _scrape_configs()}
+        job = jobs["rabbitmq-detailed"]
+        assert job["metrics_path"] == "/metrics/detailed"
+        assert job["params"] == {"family": ["queue_delivery_metrics", "queue_exchange_metrics"]}
+        assert job["scrape_interval"] == "15s"
+        assert "metrics_path" not in jobs["rabbitmq"], "the plain rabbitmq job must stay on /metrics"
+        assert "params" not in jobs["rabbitmq"]
+
+    def test_the_detailed_queue_counters_are_catalogued(self) -> None:
+        text = (REPO_ROOT / "docs" / "observability.md").read_text()
+        for metric in (
+            "rabbitmq_detailed_queue_messages_acked_total",
+            "rabbitmq_detailed_queue_exchange_messages_published_total",
+        ):
+            assert f"| `{metric}` | `{metric}` | counter |" in text
+
     def test_valkey_series_are_relabelled_from_the_exporters_redis_names(self) -> None:
         """oliver006/redis_exporter emits redis_*; only valkey_* may be stored."""
         job = next(job for job in _scrape_configs() if job["job_name"] == "valkey-exporter")
@@ -370,6 +388,8 @@ class TestCollectorScrapesInfrastructure:
     def test_job_names_match_compose_service_keys(self) -> None:
         services = _base_compose()["services"]
         for job in _scrape_configs():
+            if job["job_name"] == "rabbitmq-detailed":
+                continue  # second scrape of the rabbitmq service, on /metrics/detailed
             assert job["job_name"] in services, f"job {job['job_name']} matches no compose service"
 
     def test_every_job_sets_a_scrape_interval(self) -> None:

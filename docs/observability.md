@@ -219,6 +219,7 @@ authentication of their own.
 | Scrape job | Target | Interval | Source |
 | --- | --- | ---: | --- |
 | `rabbitmq` | `rabbitmq:15692` | 15s | `rabbitmq_prometheus` plugin, enabled through `config/rabbitmq-enabled-plugins` |
+| `rabbitmq-detailed` | `rabbitmq:15692/metrics/detailed?family=queue_delivery_metrics&family=queue_exchange_metrics` | 15s | the same plugin's per-queue delivery and publish counters; the job name is not a compose service key |
 | `postgres-exporter` | `postgres-exporter:9187` | 15s | `prometheuscommunity/postgres-exporter` |
 | `valkey-exporter` | `valkey-exporter:9121` | 15s | `oliver006/redis_exporter`, which speaks to Valkey; the collector relabels its `redis_*` series to `valkey_*` |
 | `otel-collector` | `otel-collector:8888` | 15s | the collector's own telemetry |
@@ -665,6 +666,18 @@ As Prometheus labels those are `service_name`, `span_name`, `span_kind`, and
 The connector's default `collector.instance.id` dimension is excluded in
 `config/otel-collector.yaml`: there is one collector in this stack, so it would
 only add a constant label to every series.
+
+### RabbitMQ detailed metrics
+
+Scraped from `rabbitmq:15692/metrics/detailed` by the `rabbitmq-detailed` job,
+restricted to the `queue_delivery_metrics` and `queue_exchange_metrics` families
+so only per-queue delivery and publish counters are added. They back per-queue
+publish and ack rates (`sum by (queue) (rate(...[5m]))`).
+
+| Name | Prometheus name | Kind | Attributes |
+| --- | --- | --- | --- |
+| `rabbitmq_detailed_queue_messages_acked_total` | `rabbitmq_detailed_queue_messages_acked_total` | counter | `vhost`, `queue` |
+| `rabbitmq_detailed_queue_exchange_messages_published_total` | `rabbitmq_detailed_queue_exchange_messages_published_total` | counter | `vhost`, `queue`, `exchange` |
 
 ### Metrics that are deliberately absent
 
