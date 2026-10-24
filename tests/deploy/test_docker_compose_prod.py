@@ -186,3 +186,22 @@ class TestProdValkeyPasswordWiredIntoConsumers:
         insights = _prod_compose()["services"]["insights"]
         assert insights["environment"]["VALKEY_PASSWORD_FILE"] == "/run/secrets/valkey_password"
         assert "valkey_password" in insights["secrets"]
+
+
+class TestConsoleObservabilityWiring:
+    """The redesigned console's history and link URLs, and its optional Grafana token."""
+
+    def test_dashboard_reads_history_and_links_from_the_base_file(self) -> None:
+        env = _base_compose()["services"]["dashboard"]["environment"]
+        assert env["VICTORIA_METRICS_URL"] == "http://victoria-metrics:8428"
+        assert "GRAFANA_URL" in env
+        assert "TRACES_URL" in env
+
+    def test_dashboard_token_is_a_file_secret_never_an_env_value(self) -> None:
+        dashboard = _prod_compose()["services"]["dashboard"]
+        assert dashboard["environment"]["GRAFANA_TOKEN_FILE"] == "/run/secrets/grafana_viewer_token"
+        assert "grafana_viewer_token" in dashboard["secrets"]
+        assert not any("TOKEN" in name and not name.endswith("_FILE") for name in dashboard["environment"])
+
+    def test_base_file_leaves_the_token_unset(self) -> None:
+        assert "GRAFANA_TOKEN_FILE" not in _base_compose()["services"]["dashboard"]["environment"]

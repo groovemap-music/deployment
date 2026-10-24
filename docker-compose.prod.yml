@@ -37,6 +37,11 @@ secrets:
   # only way into the dashboards.
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
+  # Optional Grafana Viewer service-account token the console reads firing alerts
+  # with. Empty by default: the console then shows only the problems it derives
+  # itself. See docs/maintenance.md#grafana-viewer-token-for-the-console.
+  grafana_viewer_token:
+    file: ./secrets/grafana_viewer_token.txt
   # The embedding pipeline's own least-privilege login (ADR 0013's 2026-09-24
   # amendment) — a member of database-schema's NOLOGIN embedding_pipeline group
   # role, never this stack's postgres_username superuser. See
@@ -478,10 +483,12 @@ services:
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
+      GRAFANA_TOKEN_FILE: /run/secrets/grafana_viewer_token
     secrets:
       - neo4j_password
       - postgres_username
       - postgres_password
+      - grafana_viewer_token
     deploy:
       restart_policy:
         condition: any
