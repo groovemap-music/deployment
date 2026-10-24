@@ -423,12 +423,17 @@ class Stack:
             return json.loads(response.read().decode())
 
     def queue_consumers(self, queue: str) -> int:
-        """Return how many consumers are attached to a queue, or 0 while it is absent."""
-        try:
-            queue_state = self._management(f"queues/%2F/{queue}")
-        except urllib.error.HTTPError:
-            return 0
-        return int(queue_state.get("consumers", 0))
+        """Return how many consumers are attached to a queue, or 0 while it is absent.
+
+        Asked of the broker itself rather than the management API: the broker runs with the
+        management metrics collector disabled (ADR 0017), so the API omits `consumers` and
+        every queue would read as having none.
+        """
+        output = self.compose_exec("rabbitmq", ["rabbitmqctl", "list_queues", "--formatter=json", "name", "consumers"])
+        for entry in json.loads(output):
+            if entry.get("name") == queue:
+                return int(entry.get("consumers", 0))
+        return 0
 
     def publish(self, exchange: str, event: dict[str, Any]) -> None:
         """Publish one contract event onto a producer's durable fanout exchange."""

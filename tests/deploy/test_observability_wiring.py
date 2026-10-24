@@ -209,7 +209,7 @@ class TestRabbitMqPrometheusPlugin:
     def test_enabled_plugins_file_lists_the_prometheus_plugin(self) -> None:
         plugins = ENABLED_PLUGINS.read_text()
         assert "rabbitmq_prometheus" in plugins
-        assert "rabbitmq_management" in plugins, "the management plugin must survive; the console reads its API"
+        assert "rabbitmq_management" in plugins, "the management plugin must survive for the operator UI and the DLQ purge API"
 
     def test_enabled_plugins_file_is_mounted_read_only(self) -> None:
         volumes = _base_compose()["services"]["rabbitmq"]["volumes"]
@@ -220,6 +220,31 @@ class TestRabbitMqPrometheusPlugin:
         depth and consumer-count panels have nothing to plot."""
         erl_args = _base_compose()["services"]["rabbitmq"]["environment"]["RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS"]
         assert "-rabbitmq_prometheus return_per_object_metrics true" in erl_args
+
+    def test_management_metrics_collector_is_disabled_without_the_legacy_override(self) -> None:
+        """Queue stats come from rabbitmq_prometheus (ADR 0017); the management
+        plugin's own collector is off and nothing re-enables its stats."""
+        erl_args = _base_compose()["services"]["rabbitmq"]["environment"]["RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS"]
+        assert "-rabbitmq_management_agent disable_metrics_collector true" in erl_args
+        assert "disable_management_stats" not in (REPO_ROOT / "docker-compose.yml").read_text()
+
+    def test_consumers_read_queue_metrics_from_prometheus(self) -> None:
+        for compose in (_base_compose(), _prod_compose()):
+            dashboard = compose["services"]["dashboard"]["environment"]
+            assert not {"RABBITMQ_HOST", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD"} & set(dashboard)
+            assert not {"RABBITMQ_USERNAME_FILE", "RABBITMQ_PASSWORD_FILE"} & set(dashboard)
+        assert _base_compose()["services"]["dashboard"]["environment"]["RABBITMQ_PROMETHEUS_URL"] == "http://rabbitmq:15692"
+        assert _base_compose()["services"]["api"]["environment"]["RABBITMQ_PROMETHEUS_URL"] == "http://rabbitmq:15692"
+
+    def test_dashboard_mounts_no_rabbitmq_secrets_in_prod(self) -> None:
+        secrets = _prod_compose()["services"]["dashboard"]["secrets"]
+        assert not {"rabbitmq_username", "rabbitmq_password"} & set(secrets)
+
+    def test_api_keeps_management_credentials_for_dlq_purge(self) -> None:
+        base_env = _base_compose()["services"]["api"]["environment"]
+        assert {"RABBITMQ_HOST", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD"} <= set(base_env)
+        prod_env = _prod_compose()["services"]["api"]["environment"]
+        assert {"RABBITMQ_USERNAME_FILE", "RABBITMQ_PASSWORD_FILE"} <= set(prod_env)
 
     def test_prometheus_port_is_published_on_loopback_only(self) -> None:
         """Host-side operator tools read /metrics/detailed; nothing public may."""

@@ -629,19 +629,18 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 
 | Variable                | Description                                  | Default           | Required |
 | ------------------------ | --------------------------------------------- | ----------------- | -------- |
-| `RABBITMQ_USERNAME`     | RabbitMQ management API username (shared with the core RabbitMQ credentials) | `groovemap`  | No       |
-| `RABBITMQ_PASSWORD`     | RabbitMQ management API password (shared with the core RabbitMQ credentials) | `groovemap`  | No       |
+| `RABBITMQ_PROMETHEUS_URL` | Base URL of the broker's `rabbitmq_prometheus` endpoint; queue stats are read from `/metrics/detailed` | `http://rabbitmq:15692` | No       |
 | `CORS_ORIGINS`                 | Comma-separated list of allowed CORS origins | (none — disabled) | No       |
 | `CACHE_WARMING_ENABLED`        | Pre-warm cache on startup                    | `true`            | No       |
 | `CACHE_WEBHOOK_SECRET`         | Secret for cache invalidation webhooks       | (none — disabled) | No       |
 | `API_HOST`                     | API service hostname for admin proxy         | `api`             | No       |
 | `API_PORT`                     | API service port for admin proxy             | `8004`            | No       |
 
-**Used By**: Dashboard only (for `CACHE_WARMING_ENABLED`, `CACHE_WEBHOOK_SECRET`); `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` and `CORS_ORIGINS` are also supported by other services — see the [RabbitMQ Configuration](#rabbitmq-configuration) and [API](#api) sections above. `API_HOST` / `API_PORT` are used by the admin proxy router to forward authenticated admin requests to the API service.
+**Used By**: Dashboard only (for `CACHE_WARMING_ENABLED`, `CACHE_WEBHOOK_SECRET`); `CORS_ORIGINS` is also supported by other services — see the [RabbitMQ Configuration](#rabbitmq-configuration) and [API](#api) sections above. `API_HOST` / `API_PORT` are used by the admin proxy router to forward authenticated admin requests to the API service.
 
 **Notes**:
 
-- The dashboard authenticates against the RabbitMQ management API using the same `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` credentials as the core RabbitMQ connection (there is no separate management-only credential pair). In production these are supplied via `RABBITMQ_USERNAME_FILE` / `RABBITMQ_PASSWORD_FILE` (Docker secrets)
+- The dashboard reads queue depth, consumers, and publish/ack rates from the broker's unauthenticated `rabbitmq_prometheus` endpoint on the internal network. It holds no RabbitMQ credential and opens no AMQP or management-API connection, so the production overlay mounts no RabbitMQ secrets into it
 - `CORS_ORIGINS` is optional; omit it to restrict cross-origin access
 - `CACHE_WEBHOOK_SECRET` enables an authenticated endpoint to invalidate cached queries
 - `API_HOST` / `API_PORT` configure the admin proxy — the dashboard forwards admin panel requests (login, extraction trigger, DLQ purge) to the API service at `http://{API_HOST}:{API_PORT}`
@@ -871,10 +870,8 @@ POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
 VALKEY_HOST="localhost"
 
-# RabbitMQ (also used to authenticate against the RabbitMQ management API)
-RABBITMQ_HOST=rabbitmq           # default: rabbitmq
-RABBITMQ_USERNAME=groovemap # default: groovemap
-RABBITMQ_PASSWORD=groovemap # default: groovemap
+# Broker metrics (queue depth and publish/ack rates)
+RABBITMQ_PROMETHEUS_URL=http://rabbitmq:15692  # default: http://rabbitmq:15692
 
 # Optional - CORS
 CORS_ORIGINS="http://localhost:8003,http://localhost:8006"  # comma-separated origins
