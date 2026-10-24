@@ -32,6 +32,10 @@ merging.
 Never replace a digest with `latest` or a tag-only reference. Do not add a
 sibling build context to this repository.
 
+The October 2026 console, broker-stats, trigger-source and health-port releases
+are coupled and have their own ordering constraints; release and roll them out
+with [the October 2026 operations console rollout](rollout-2026-10-operations-console.md).
+
 ## Wave-2 image promotion (identity and activity)
 
 The native-identity and first-party-events program
