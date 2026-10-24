@@ -228,6 +228,17 @@ authentication of their own.
 Job names deliberately match the docker-compose service keys, which is what the
 dashboards filter on.
 
+The broker's `:15692` endpoint is also published on `127.0.0.1` only, and it is
+the single source of queue statistics (ADR 0017). The management plugin's metrics
+collector is disabled (`management_agent.disable_metrics_collector = true`), so
+the management UI and API carry no per-queue message rates. The operations
+console, the catalog API's queue-metrics history, and the operations toolkit read
+`/metrics/detailed` (`RABBITMQ_PROMETHEUS_URL`), where
+`rabbitmq_detailed_queue_messages_acked_total` and
+`rabbitmq_detailed_queue_exchange_messages_published_total` advance per queue
+with the collector off. `return_per_object_metrics true` stays set because the
+per-queue Grafana panels depend on it.
+
 cAdvisor and node-exporter run at 30s rather than 15s. cAdvisor emits a series
 per container per interface and per device, node-exporter one per CPU per mode
 and per filesystem, so between them they dominate the sample count; container

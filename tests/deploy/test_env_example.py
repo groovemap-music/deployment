@@ -48,6 +48,7 @@ def test_env_example_uses_canonical_development_identity() -> None:
     assert retired_product_name not in text
     assert "RABBITMQ_USERNAME=groovemap" in text
     assert "RABBITMQ_PASSWORD=groovemap" in text
+    assert "RABBITMQ_PROMETHEUS_URL=http://localhost:15692" in text
     assert "NEO4J_PASSWORD=groovemap" in text
     assert "POSTGRES_USERNAME=groovemap" in text
     assert "POSTGRES_PASSWORD=groovemap" in text

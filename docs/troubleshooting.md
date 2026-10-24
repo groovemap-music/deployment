@@ -109,6 +109,27 @@ docker compose exec valkey valkey-cli ping
 For Neo4j, use the environment's approved secret-access method rather than
 placing a production password directly on a shared command line.
 
+## RabbitMQ message rates are empty in the management UI
+
+This is expected. The broker runs with the management metrics collector disabled
+(ADR 0017), so the management UI's publish and acknowledgement rate charts and
+the API's `message_stats` stay empty. Queue depth, consumers, and rates come from
+the `rabbitmq_prometheus` endpoint, which the operations console, the catalog
+API's queue-metrics history, and the Grafana dashboards read:
+
+```bash
+docker compose exec rabbitmq rabbitmqctl eval \
+  'application:get_env(rabbitmq_management_agent, disable_metrics_collector).'   # {ok,true}
+curl -s 'http://127.0.0.1:15692/metrics/detailed?family=queue_coarse_metrics&family=queue_delivery_metrics&family=queue_exchange_metrics' \
+  | grep -E '^rabbitmq_detailed_queue_(messages_acked_total|exchange_messages_published_total)'
+```
+
+If a console or API queue view shows no rates while those counters advance, check
+that `RABBITMQ_PROMETHEUS_URL` on the dashboard and api services points at
+`http://rabbitmq:15692`. Do not re-enable `disable_management_stats`; it restores
+a deprecated collector (`management_metrics_collection`) the broker logs a
+warning for at every start.
+
 ## Valkey at maxmemory: writes are rejected
 
 Alerts: `ValkeyMemoryHigh` (early warning), `ValkeyWritesRejected` and

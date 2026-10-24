@@ -62,9 +62,13 @@ command line.
 
 ## Queue monitoring
 
-RabbitMQ's management interface at <http://localhost:15672> shows queue depth,
-consumer count, publish rate, and acknowledgement rate. A useful incident
-snapshot records:
+RabbitMQ's management interface at <http://localhost:15672> shows queue depth
+and consumer count. Its message-rate charts are empty by design: the broker runs
+with the management metrics collector disabled (ADR 0017), so publish and
+acknowledgement rates come from the `rabbitmq_prometheus` endpoint instead
+(the operations console's live view, the Grafana pipeline-overview dashboard, or
+`curl 'http://127.0.0.1:15692/metrics/detailed?family=queue_coarse_metrics&family=queue_delivery_metrics&family=queue_exchange_metrics'`).
+A useful incident snapshot records:
 
 | Queue | Messages | Consumers | Publish rate | Ack rate | Observation time |
 | --- | ---: | ---: | ---: | ---: | --- |
