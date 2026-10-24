@@ -146,7 +146,7 @@ Run command, from the issue worktree with an ignored, digest-pinned `.env`:
 ```sh
 env -u DOCKER_DEFAULT_PLATFORM \
   SMOKE_MEDIA_PROJECT=groovemap-id-87i1-smoke4 \
-  SMOKE_MEDIA_PROJECT_DIRECTORY=/Users/Robert/workspaces/github/groovemap-music/deployment \
+  SMOKE_MEDIA_PROJECT_DIRECTORY=/path/to/shared/checkout \
   SMOKE_MEDIA_ENV_FILE="$PWD/.env" just smoke-media
 ```
 
