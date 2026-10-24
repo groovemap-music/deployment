@@ -40,7 +40,7 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 
 | Component | Compose service | Purpose | Port(s) |
 | --- | --- | --- | --- |
-| RabbitMQ | `rabbitmq` | Message broker and queue management | 5672, 15672 |
+| RabbitMQ | `rabbitmq` | Message broker; management UI (15672) and Prometheus metrics (15692, loopback) | 5672, 15672, 15692 |
 | Neo4j | `neo4j` | Graph database for relationships | 7474, 7687 |
 | PostgreSQL | `postgres` | Relational database for analytics | 5433 (mapped) |
 | Valkey | `valkey` | Cache for queries, sessions, and analytics | 6379 |
@@ -598,7 +598,7 @@ See [Explore README](https://github.com/groovemap-music/graph-explorer) for deta
 
 - Service health endpoint URLs
 - Database connection strings
-- RabbitMQ management API access
+- `RABBITMQ_PROMETHEUS_URL`: the broker's `rabbitmq_prometheus` endpoint (`http://rabbitmq:15692`); queue depth, consumers, and publish/ack rates are read from `/metrics/detailed`, so the console needs no RabbitMQ credential
 - `API_HOST` / `API_PORT` — API service connection for admin proxy
 
 See [Dashboard README](https://github.com/groovemap-music/operations-console) for details.

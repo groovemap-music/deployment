@@ -106,6 +106,7 @@ The base configuration publishes these local endpoints:
 | PostgreSQL | `localhost:5433` | `groovemap` / `groovemap` |
 | RabbitMQ management | <http://localhost:15672> | `groovemap` / `groovemap` |
 | RabbitMQ AMQP | `localhost:5672` | `groovemap` / `groovemap` |
+| RabbitMQ Prometheus metrics | <http://localhost:15692/metrics/detailed> | None; loopback only |
 | Valkey | `localhost:6379` | No base-stack password |
 | Grafana | <http://localhost:3000> | Anonymous Viewer access |
 | VictoriaMetrics | <http://localhost:8428> | None; development only |

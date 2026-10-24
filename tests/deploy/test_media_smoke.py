@@ -677,6 +677,24 @@ def test_publishing_to_an_unbound_exchange_is_an_error_not_a_silent_pass() -> No
     assert offline_stack(routed=True).publish(smoke_media.DISCOGS_EXCHANGE, {"type": "data"}) is None
 
 
+def test_consumer_counts_come_from_the_broker_not_the_management_stats() -> None:
+    # With the management metrics collector disabled the HTTP API carries no `consumers`
+    # field, so the count has to be read with rabbitmqctl inside the broker container.
+    calls: list[Any] = []
+    stack = smoke_media.Stack("groovemap-media-smoke-test", ["docker-compose.yml"], 15673)
+
+    def compose_exec(service: str, command: Any, **_kwargs: Any) -> str:
+        calls.append((service, list(command)))
+        return '[{"name":"bound","consumers":2},{"name":"unbound","consumers":0}]'
+
+    stack.compose_exec = compose_exec
+
+    assert stack.queue_consumers("bound") == 2
+    assert stack.queue_consumers("unbound") == 0
+    assert stack.queue_consumers("absent") == 0
+    assert calls[0] == ("rabbitmq", ["rabbitmqctl", "list_queues", "--formatter=json", "name", "consumers"])
+
+
 def test_a_stack_whose_consumers_never_bind_fails_before_it_publishes() -> None:
     with pytest.raises(smoke_media.SmokeError, match="never gained a consumer"):
         smoke_media.wait_for_consumers(offline_stack(consumers=0), deadline=0.0)
