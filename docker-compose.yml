@@ -410,7 +410,9 @@ services:
     hostname: victoria-metrics
     command:
       - "-storageDataPath=/victoria-metrics-data"
-      - "-retentionPeriod=15d"
+      # 90d: the operations console's history tabs offer up to 90 days and read
+      # this store (ADR 0018). Lowering it silently truncates the 30d/90d ranges.
+      - "-retentionPeriod=90d"
       - "-httpListenAddr=:8428"
     ports:
       - "8428:8428"    # vmui, the Prometheus query API, and remote write (loopback-only in prod)

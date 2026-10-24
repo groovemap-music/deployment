@@ -88,7 +88,7 @@ service runs and enforces that, along with the digest pin.
 | Service | Image | Config | State |
 | --- | --- | --- | --- |
 | `otel-collector` | `otel/opentelemetry-collector-contrib` | `config/otel-collector.yaml` (read-only mount) | stateless |
-| `victoria-metrics` | `victoriametrics/victoria-metrics` | command-line flags only | `victoria_metrics_data` volume, 15d retention |
+| `victoria-metrics` | `victoriametrics/victoria-metrics` | command-line flags only | `victoria_metrics_data` volume, 90d retention |
 | `victoria-traces` | `victoriametrics/victoria-traces` | command-line flags only | `victoria_traces_data` volume, 7d retention |
 | `grafana` | `grafana/grafana` | `config/grafana/` (read-only mount) | `grafana_data` volume |
 
@@ -207,6 +207,23 @@ Compose. The SDK defaults are `otlp` and 60000 ms. Setting
 `OTEL_METRICS_EXPORTER=none` on a single service is the supported way to mute it
 without touching its code; an operator can override the interval through
 `OTEL_METRIC_EXPORT_INTERVAL`.
+
+### Metrics retention
+
+`victoria-metrics` keeps 90 days (`-retentionPeriod=90d`, set in the base file
+and inherited by the prod overlay). The operations console's history tabs offer
+up to 90 days and read VictoriaMetrics (ADR 0018), so anything shorter silently
+empties the 30d and 90d ranges. The previous value was 15d.
+
+Projected size (an estimate from the scrape config, not a measurement: no stack
+was running when this was sized). Roughly 6,000 series at 30s (cAdvisor,
+node-exporter), 3,000 at 15s (the exporters and collector), and 2,000
+OTLP-pushed series at 60s come to about 40 million samples a day. At a
+conservative 1.5 bytes per compressed sample that is about 60 MB a day, so
+about 5.4 GB at 90 days against about 0.9 GB at 15d. Re-measure on a live stack
+with `vm_data_size_bytes` and `/api/v1/status/tsdb` on `:8428`. `HostDiskLow`
+is a percentage-of-free alert, so it needs no change for a budget this size;
+revisit it if the measured figure is several times higher.
 
 ### Infrastructure exporters
 

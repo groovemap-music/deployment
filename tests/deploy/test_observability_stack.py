@@ -102,6 +102,19 @@ class TestBackendServicesExist:
         assert "victoria_traces_data" in volumes
         assert "grafana_data" in volumes
 
+    def test_victoria_metrics_retention_covers_the_console_history_range(self) -> None:
+        """The console's history tabs offer up to 90d and read VictoriaMetrics."""
+        # The prod overlay inherits the base command; if it ever overrides it,
+        # the override is what runs in production and must meet the floor too.
+        base_flags = _base_compose()["services"]["victoria-metrics"]["command"]
+        prod_flags = _prod_compose()["services"]["victoria-metrics"].get("command", base_flags)
+        for flags in (base_flags, prod_flags):
+            retention = [flag for flag in flags if flag.startswith("-retentionPeriod=")]
+            assert len(retention) == 1
+            value = retention[0].split("=", 1)[1]
+            assert value.endswith("d")
+            assert int(value[:-1]) >= 90
+
     def test_no_second_tsdb_survives_anywhere(self) -> None:
         """VictoriaMetrics is the organisation's backend; shipping Prometheus
         alongside it means two stores, two retentions, and two truths."""
@@ -236,7 +249,7 @@ class TestSpanMetricsConnector:
 class TestVictoriaMetricsServer:
     def test_retention_is_bounded(self) -> None:
         command = _base_compose()["services"]["victoria-metrics"]["command"]
-        assert "-retentionPeriod=15d" in command
+        assert "-retentionPeriod=90d" in command
 
     def test_storage_path_and_volume_agree(self) -> None:
         service = _base_compose()["services"]["victoria-metrics"]
