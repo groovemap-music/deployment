@@ -72,7 +72,10 @@ services:
     ports:
       - "5672:5672"      # AMQP port
       - "15672:15672"    # Management UI
-      # 15692 (rabbitmq_prometheus) stays internal — otel-collector scrapes it.
+      # 15692 (rabbitmq_prometheus) is published on loopback only so host-side
+      # operator tools can read /metrics/detailed the way they reach 15672.
+      # otel-collector still scrapes it over the internal network.
+      - "127.0.0.1:15692:15692"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
