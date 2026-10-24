@@ -221,9 +221,11 @@ class TestRabbitMqPrometheusPlugin:
         erl_args = _base_compose()["services"]["rabbitmq"]["environment"]["RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS"]
         assert "-rabbitmq_prometheus return_per_object_metrics true" in erl_args
 
-    def test_prometheus_port_is_not_published(self) -> None:
-        ports = [str(port) for port in _base_compose()["services"]["rabbitmq"]["ports"]]
-        assert not any("15692" in port for port in ports), "15692 is scraped internally, not exposed"
+    def test_prometheus_port_is_published_on_loopback_only(self) -> None:
+        """Host-side operator tools read /metrics/detailed; nothing public may."""
+        for name, compose in (("base", _base_compose()), ("prod", _prod_compose())):
+            ports = [str(port) for port in compose["services"]["rabbitmq"]["ports"] if "15692" in str(port)]
+            assert ports == ["127.0.0.1:15692:15692"], f"{name}: 15692 must be bound to loopback only, got {ports}"
 
 
 class TestInfrastructureExporters:

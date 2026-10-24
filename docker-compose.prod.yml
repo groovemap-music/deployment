@@ -64,6 +64,11 @@ services:
     restart: always
     entrypoint: ["/scripts/rabbitmq-entrypoint.sh"]
     command: ["rabbitmq-server"]
+    # Keep the rabbitmq_prometheus port on loopback only: host-side operator
+    # tools reach /metrics/detailed, nothing on public interfaces does.
+    # Compose merges this with the identical base entry.
+    ports:
+      - "127.0.0.1:15692:15692"
     volumes:
       - ./scripts/rabbitmq-entrypoint.sh:/scripts/rabbitmq-entrypoint.sh:ro
     secrets:
