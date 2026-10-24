@@ -31,6 +31,16 @@ receivers:
           scrape_interval: 15s
           static_configs:
             - targets: ["rabbitmq:15692"]
+        # Per-queue delivery and publish counters live on the detailed endpoint,
+        # not on /metrics. The management collector is off (ADR 0017), so this
+        # is the only source of per-queue publish and ack rates.
+        - job_name: rabbitmq-detailed
+          scrape_interval: 15s
+          metrics_path: /metrics/detailed
+          params:
+            family: [queue_delivery_metrics, queue_exchange_metrics]
+          static_configs:
+            - targets: ["rabbitmq:15692"]
         - job_name: postgres-exporter
           scrape_interval: 15s
           static_configs:
