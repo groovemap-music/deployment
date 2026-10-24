@@ -67,6 +67,12 @@ write_secret "insights_internal_secret.txt" "$(openssl rand -hex 32)"
 # dashboards have no reachable login.
 write_secret "grafana_admin_password.txt" "$(openssl rand -base64 24)"
 
+# Grafana Viewer service-account token for the console's alerts — optional. The
+# file must exist regardless (docker-compose.prod.yml mounts it for the dashboard
+# service); empty content leaves Grafana alerts off. Create the token per
+# docs/maintenance.md, then write it to the file or re-run with GRAFANA_VIEWER_TOKEN set.
+write_secret "grafana_viewer_token.txt" "${GRAFANA_VIEWER_TOKEN:-}"
+
 # Embedding pipeline login (ADR 0013's 2026-09-24 amendment) — a member of
 # database-schema's NOLOGIN embedding_pipeline group role, never the
 # postgres_username superuser above. This only creates the credential file;

@@ -111,6 +111,13 @@ conventions, and the canonical metric catalog live in
 The operations console is published at <http://localhost:8003> in the base
 configuration. Its implementation and alert behavior belong to
 [`operations-console`](https://github.com/groovemap-music/operations-console).
+The dashboard service reads history from `VICTORIA_METRICS_URL` (in-network
+`victoria-metrics`, 90d retention) and builds its Grafana and trace deep links on
+`GRAFANA_URL` and `TRACES_URL`; the base file defaults both to
+<http://localhost:3000>. In production `GRAFANA_URL` must be reachable from both the
+dashboard container and browsers, and the optional alerts token is the
+`grafana_viewer_token` secret (see
+[maintenance](maintenance.md#grafana-viewer-token-for-the-console)).
 Precomputed analytics behavior belongs to
 [`analytics-engine`](https://github.com/groovemap-music/analytics-engine).
 
