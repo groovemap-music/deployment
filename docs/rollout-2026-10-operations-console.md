@@ -31,6 +31,13 @@ differs. Every constraint states its reason.
 - Compose commands are written for production, with both files:
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml`. For a non-production
   environment, drop `-f docker-compose.prod.yml`.
+- Every `docker compose` command parses the whole Compose file, including the `embeddings` job
+  (profile `jobs`, never started here), whose `SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` have no
+  default. When Compose answers `required variable SOURCE_DUMP_ID is missing a value` (observed
+  with Compose 5.6.1), put placeholders in the shell before the first command:
+  `export SOURCE_DUMP_ID=rollout SOURCE_DUMP_DATE=2000-01-01`. Nothing reads them in this
+  rollout. Do not put them in `.env`: [`.env.example`](../.env.example) keeps them out on purpose,
+  so that a real embedding run cannot reuse a stale dump id.
 - **[approval]** marks a step that pushes, tags, publishes, or changes a running environment.
   Ask the human for explicit approval of that exact action and target before running it.
   Approval of one step does not cover another. The approval list in
@@ -207,7 +214,8 @@ stop; a release built from a red `main` is not reviewable.
 
 **P7. Confirm the target host's architecture.** On the host that runs the stack:
 `docker info --format '{{.Architecture}}'`. Expected: `x86_64`. The release workflows publish
-`linux/amd64` images only. If not: stop.
+`linux/amd64` images only; on an `aarch64` host `pull` ends with `no matching manifest for
+linux/arm64/v8`. If not: stop.
 
 **P8. Confirm a PostgreSQL backup.** Ask the human for the timestamp of the most recent
 PostgreSQL backup and its last restore drill (see
@@ -474,8 +482,9 @@ docker inspect groovemap-api --format '{{ index .Config.Labels "com.docker.compo
 
 Expected: `<project> | <path> | <path>/docker-compose.yml,<path>/docker-compose.prod.yml`. Use
 `<path>` as `LIVE`. If `<project>` is not the base name of `<path>`, add `-p <project>` after
-`docker compose` in every command below. If the container does not exist, or the configuration
-files differ: stop.
+`docker compose` in every command below. If the container does not exist, or the list of
+configuration files is not exactly those two (a third file is an override applied by hand, which
+the commands below would not include): stop.
 
 ### 4.3 Take the pre-change snapshot
 
@@ -507,7 +516,10 @@ curl -s -K - http://127.0.0.1:15672/api/queues <<<"user = \"$(cat secrets/rabbit
 
 `curl -K -` reads the credentials from standard input, so they never appear in the process
 list. Expected: the first line is `19` (the provisioned rules), followed by any rule that is
-firing or unhealthy now; and one line per queue with its depth and consumer count.
+pending, firing or unhealthy now; and one line per queue with its depth and consumer count. A
+stack started within the last ten minutes lists a few `pending` rules that clear by themselves;
+V11 compares rule names, not states. Note any rule that stays listed (for example
+`ScrapeTargetDown`) together with the cause you find, so that V11 can tell it from a regression.
 
 ### 4.4 Confirm no extraction is running
 
@@ -517,7 +529,9 @@ for c in groovemap-extractor-discogs groovemap-extractor-musicbrainz; do
 done
 ```
 
-Expected: neither prints `running` (O1). If one does: wait for it to finish, or ask the human.
+Expected: both print `idle` (O1). If one prints `running`: wait for it to finish, or ask the human.
+An extractor starts its periodic check when the container starts, so a stack restarted in the last
+minutes can read `running` with a download in progress, not only after a trigger.
 
 ### 4.5 Keep a copy of the metrics-history rows (**[approval]**)
 
@@ -686,7 +700,9 @@ docker inspect groovemap-schema-init groovemap-rabbitmq-dlq-policy-init --format
 ```
 
 Expected: exit 0, and both one-shot containers `exit=0`. The one-shots are not in the `--wait`
-list because `up --wait` does not accept an explicitly targeted container that exits. If a
+list because `up --wait` does not accept an explicitly targeted container that exits.
+`valkey-exporter` has no healthcheck, so `--wait` only checks that it runs (see
+[Known issues](#7-known-issues-that-are-not-blockers) for why it may restart). If a
 service stays unhealthy: `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs
 --tail 200 <service>`, then section 6.
 
@@ -719,7 +735,10 @@ maintenance record.
 **V1. Every service is up.**
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml ps --all --format '{{.Service}} {{.State}} {{.Health}}'`.
 Expected: every long-running service `running`, with `healthy` wherever it has a healthcheck;
-`schema-init` and `rabbitmq-dlq-policy-init` `exited`. If not: logs of that service, then section 6.
+`schema-init` and `rabbitmq-dlq-policy-init` `exited`. `valkey-exporter` has no healthcheck, so
+its health column is empty; if it shows `restarting`, compare with the "before" snapshot
+(`ps.before`) and see Known issues before treating it as a regression. If anything else is not
+as expected: logs of that service, then section 6.
 
 **V2. The MusicBrainz consumers answer on their role ports.**
 
@@ -770,7 +789,10 @@ Expected: `t|t|t`.
 
 **V6. The console signs in.** Ask the human to write an admin's credentials to
 `$PRIVATE/admin-login.json` as `{"email": "...", "password": "..."}` (mode 600; `docker exec
-groovemap-api admin-setup --list` lists admin accounts). Then, in one shell:
+groovemap-api catalog-admin-setup --list` lists admin accounts; the command is `catalog-admin-setup`,
+not the `admin-setup` that [Administration](admin-guide.md) names). Then, in one shell, which you
+keep for V7 to V9: the login is rate limited to 5 per minute, and answers `429` with
+`Rate limit exceeded` beyond that, so sign in once per shell and do not repeat the login block.
 
 ```bash
 PRIVATE=...
@@ -790,7 +812,8 @@ empty token file, or `configured True available True` with a token. If login fai
 console cannot reach `catalog-api`'s session route (F1); check `api` health. If
 `/api/history/*` answer 503: the console cannot reach VictoriaMetrics.
 
-**V7. The console shows every service.** Same shell as V6 (re-create `TOKEN`):
+**V7. The console shows every service.** Same shell as V6 (`TOKEN` is already set; if the shell
+was lost, sign in again with the first command of V6):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8003/api/metrics | python3 -c '
@@ -807,12 +830,13 @@ for s in m["platform"]:
 Expected: both pipelines `queues_available True` with their queues; `extractor-discogs`,
 `graphinator`, `tableinator`, `extractor-musicbrainz`, `brainzgraphinator` and
 `brainztableinator` `healthy` (an extractor reads `extracting` while it runs); every platform
-service (`catalog-api`, `explore`, `insights`, `valkey`, `rabbitmq`, `victoria-metrics`,
-`victoria-traces`, `otel-collector`, `grafana`, `postgres-exporter`, `valkey-exporter`, `cadvisor`,
-`node-exporter`) `healthy`. Then open `http://<host>:8003/` in a browser, sign in, and confirm the
+service (`catalog-api`, `explore`, `insights`, `postgres`, `neo4j`, `valkey`, `rabbitmq`,
+`victoria-metrics`, `victoria-traces`, `otel-collector`, `grafana`, `postgres-exporter`,
+`valkey-exporter`, `cadvisor`, `node-exporter`) `healthy`, except `valkey-exporter`, which reads
+`unreachable` while the known issue below stands. Then open `http://<host>:8003/` in a browser, sign in, and confirm the
 Overview matrix, the System Health cards and the history tabs render.
 
-**V8. The trigger contract is the new one, without starting a run.** Same shell as V6:
+**V8. The trigger contract is the new one, without starting a run.** Same shell as V6 (`TOKEN` set):
 
 ```bash
 curl -s -o /dev/null -w 'catalog-api trigger without source %{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8004/api/admin/extractions/trigger
@@ -824,11 +848,14 @@ curl -s -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8003/admin/api/extra
 Expected: `422` (the new `catalog-api` rejects a body without `source` before contacting any
 extractor); a `conflicts with this route's source` detail and `400` (the new console refuses a
 mismatched source without calling `catalog-api`); the extraction list with a `source` key on each
-entry (`None` for runs recorded before the rollout).
+entry (`None` for runs recorded before the rollout). A database without any recorded run prints
+`0 []`; then the `200` from this route is the check, and the key shows after the first run.
 
 **V9. A real trigger reaches the right extractor (optional, [approval]).** Each press is a full
-`force_reprocess` run (O6). Only with the human's approval: press **Discogs** in the console;
-expect a toast, an extraction entry with `source` `discogs`, and
+`force_reprocess` run (O6). Only with the human's approval: press **Discogs** in the console (the same call from the shell
+is `curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8003/admin/api/extractions/trigger`,
+and `.../trigger-musicbrainz` for MusicBrainz, which takes no body);
+expect a toast or a `202` with `"source":"discogs"`, an extraction entry with `source` `discogs`, and
 `docker exec groovemap-extractor-discogs curl -sf http://localhost:8000/health` reporting
 `"extraction_status":"running"` within a minute while the MusicBrainz extractor does not. Press
 **MusicBrainz** only after the Discogs run and its consumers have finished, and expect the same for
@@ -840,8 +867,9 @@ expect a toast, an extraction entry with `source` `discogs`, and
 
 **V11. Grafana alerts are in their configured state.** Wait ten minutes after the apply (restarts
 can leave rules briefly pending), then repeat the alert command from 4.3, writing to
-`$PRIVATE/alerts.after`. Expected: `19`, and the same non-inactive rules as `alerts.before`. A
-rule firing now that was not before (for example `ScrapeTargetDown` naming a job, or
+`$PRIVATE/alerts.after`. Expected: `19`, and the same rule names as `alerts.before` (a rule that was `pending` before and
+`firing` now is the same rule: its cause did not change). A
+rule firing now whose name was not listed before (for example `ScrapeTargetDown` naming a job, or
 `ConsumersAbsent`) is a regression: investigate before closing the window.
 
 ## 6. Rollback
@@ -869,13 +897,8 @@ rule firing now that was not before (for example `ScrapeTargetDown` naming a job
    LIVE=... ; PRIVATE=...
    cd "$LIVE"
    NEW_SCHEMA=$(grep '^DATABASE_SCHEMA_IMAGE=' .env)
-   cp -p "$PRIVATE/env.before" .env
-   python3 - "$NEW_SCHEMA" <<'EOF'
-   import pathlib, sys
-   env = pathlib.Path(".env")
-   lines = [sys.argv[1] if line.startswith("DATABASE_SCHEMA_IMAGE=") else line for line in env.read_text().splitlines()]
-   env.write_text("\n".join(lines) + "\n")
-   EOF
+   cp -pf "$PRIVATE/env.before" .env
+   python3 -c 'import pathlib, sys; e = pathlib.Path(".env"); e.write_text("\n".join(sys.argv[1] if l.startswith("DATABASE_SCHEMA_IMAGE=") else l for l in e.read_text().splitlines()) + "\n")' "$NEW_SCHEMA"
    grep -E '^[A-Z_]+_IMAGE=' .env
    ```
 
@@ -892,24 +915,36 @@ rule firing now that was not before (for example `ScrapeTargetDown` naming a job
    `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`, then
    `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --force-recreate otel-collector`,
    then the wait command from 4.11.
-4. Verify: V1; the old console at `http://<host>:8003/` shows queue depths again (the management
-   API carries `messages` again); `brainzgraphinator` and `brainztableinator` are `healthy`.
+4. Verify: V1; `brainzgraphinator` and `brainztableinator` are `healthy`; the management API
+   carries queue statistics again, which is the check V3 inverted:
+   `curl -s -K - http://127.0.0.1:15672/api/queues <<<"user = \"$(cat secrets/rabbitmq_username.txt):$(cat secrets/rabbitmq_password.txt)\"" | python3 -c 'import json,sys; q=json.load(sys.stdin); print(len(q), any("messages" in x for x in q))'`
+   prints the queue count and `True`. The old console at `http://<host>:8003/` answers `200` on
+   `/api/metrics` without signing in; its queue depths are `0` whenever the queues are empty, so
+   they prove nothing on an idle broker.
 5. Tell operators to return their toolkit checkouts to the revision they ran before.
 6. Return the checkout to `main` (`git -C "$LIVE" switch main`) only when the rollforward is
    attempted again.
 
 What this rollback leaves behind: the old `catalog-api` runs against a schema without
 `queue_metrics` and `service_health_metrics`, because the new `schema-init` drops them again on
-every run. Its collector logs `❌ Error persisting metrics` every 300 seconds and the old console's
+every run. Its collector logs `❌ Error persisting metrics` and `❌ Error pruning old metrics` when it
+starts and `❌ Error persisting metrics` every 300 seconds after that, and the old console's
 Queue Trends and System Health tabs show errors. Everything else in the old console works. Never
 press the old console's MusicBrainz button: with the old `catalog-api` it starts a Discogs
 reprocess (T3).
 
 If the human wants the history tabs back, the old `schema-init` has to recreate the tables: set
-`DATABASE_SCHEMA_IMAGE` to the digest in `env.before` too, and before doing so in production,
-prove in a rehearsal that the old image applies cleanly to a database the new one has migrated.
-That has not been verified. After it recreates the empty tables, restore the rows with
-`docker exec -i groovemap-postgres pg_restore -U groovemap -d groovemap --data-only < "$PRIVATE/metrics-history.dump"`.
+`DATABASE_SCHEMA_IMAGE` to the digest in `env.before` too and run
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps schema-init`. A
+rehearsal of exactly this, against a database the new image had migrated, showed: both tables are
+recreated empty, but the container **exits 1** (`PostgreSQL schema had partial failures`, four
+`widen to BIGINT` statements on `musicbrainz.artists`, `labels`, `releases` and `release_groups`,
+each `cannot alter type of a column used by a view or rule`, the views being `graph.mb_artist`,
+`graph.mb_label`, `graph.mb_release` and `graph.mb_release_group`). Because `api` and the
+consumers start only after `schema-init` exits 0, a plain `up -d` stops there; start them with
+`up -d --no-deps` instead, and have the human accept the four failures first. Restore the rows
+with `docker exec -i groovemap-postgres pg_restore -U groovemap -d groovemap --data-only < "$PRIVATE/metrics-history.dump"`;
+the rehearsal restored all rows (56 and 20) without error.
 
 ### Roll back the Discogs consumers alone (**[approval]**)
 
@@ -943,6 +978,12 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
   endpoints, `METRICS_RETENTION_DAYS`, `METRICS_COLLECTION_INTERVAL`, the two tables, and a public
   monitoring view at `:8003` with the admin panel at `/admin`. After this rollout the console is
   one signed-in shell at `/`, and history comes from VictoriaMetrics.
+- `valkey-exporter` restarts in a loop: `oliver006/redis_exporter` fails with `Error loading redis
+  passwords from file /run/secrets/valkey_password ... invalid character` (a JSON parse error) because
+  `REDIS_PASSWORD_FILE` in `docker-compose.prod.yml` names a plain-text secret. It happens before
+  and after this rollout, shows as `unreachable` in the console, and makes `ScrapeTargetDown`
+  fire for it. The Valkey data itself is not affected. It is not caused by this rollout; compare
+  with the "before" snapshot.
 - The toolkit's `Justfile` comment on `check-queues` still says it reads the management API.
 - Every console trigger is a `force_reprocess` run, before and after this rollout (O6).
 - `catalog-api` records a run's `record_counts` for artists, labels, masters and releases only,
