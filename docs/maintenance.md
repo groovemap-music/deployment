@@ -616,14 +616,17 @@ server-side from a file, so it never reaches the browser.
    history (`pbpaste > secrets/grafana_viewer_token.txt` or an editor), mode 600.
    `just secrets-bootstrap` creates this file empty when it is missing and never
    overwrites it.
-4. Set `GRAFANA_URL` in the production environment to the Grafana address that both the
-   dashboard container and operators' browsers can reach (the console fetches alerts from
-   it and builds its deep links on it). `TRACES_URL` defaults to it.
+4. Set `GRAFANA_URL` in the production environment to the Grafana address operators'
+   browsers can reach (the console builds its deep links on it). `TRACES_URL` defaults to
+   it. The console fetches alerts from the in-network `GRAFANA_API_URL`
+   (`http://grafana:3000`), which compose already sets.
 5. Restart the `dashboard` service and open the console: `GET /api/alerts` reports
    `configured: true, available: true`.
 
-An empty token file reports `configured: true, available: false` and the bar shows a note
-that Grafana alerts are unavailable; that is the expected state until step 3. To rotate,
+An empty (or missing) token file reports `configured: false` and the bar says nothing
+about Grafana; that is the expected state until step 3. A token file that exists but
+cannot be read or decoded, or a token Grafana rejects or cannot be reached with, reports
+`configured: true, available: false` with a note. To rotate,
 create a new token, replace the file, restart `dashboard`, then delete the old token in
 Grafana. The development stack mounts no token, so alerts stay off there.
 

@@ -195,6 +195,7 @@ class TestConsoleObservabilityWiring:
         env = _base_compose()["services"]["dashboard"]["environment"]
         assert env["VICTORIA_METRICS_URL"] == "http://victoria-metrics:8428"
         assert "GRAFANA_URL" in env
+        assert env["GRAFANA_API_URL"] == "http://grafana:3000"
         assert "TRACES_URL" in env
 
     def test_dashboard_token_is_a_file_secret_never_an_env_value(self) -> None:
