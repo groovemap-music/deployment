@@ -965,14 +965,6 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
 
 ## 7. Known issues that are not blockers
 
-- The Infrastructure dashboard's RabbitMQ publish panel queries
-  `sum(rate(rabbitmq_global_messages_published_total[$__rate_interval]))`. RabbitMQ 4 does not
-  emit that metric (it emits `rabbitmq_global_messages_received_total`), so the panel stays empty.
-  `scripts/check-dashboards.py` lists the name as known, so the gate passes. Predates this rollout.
-- The Infrastructure dashboard's PostgreSQL panels query `pg_stat_database_xact_commit`,
-  `pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`, `pg_stat_database_blks_read` and
-  `pg_stat_database_deadlocks` without the `_total` suffix remote write adds, so those panels
-  stay empty ([Observability](observability.md)). Predates this rollout.
 - `catalog-api` `v0.5.0` has a tag but no image (O4).
 - The `api` service still sets `RABBITMQ_PROMETHEUS_URL`, which `catalog-api` stopped reading in
   `a9bda68`, and `config/rabbitmq-enabled-plugins` still names "the catalog API's queue-metrics
