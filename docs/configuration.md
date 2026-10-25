@@ -106,6 +106,39 @@ configuration. The sections below describe service runtime contracts; change a
 literal Compose value with a reviewed override file, not by assuming every
 source-level variable is an `.env` interpolation.
 
+### Identity ledger refresh
+
+The Identity Ledger's works list and density read precomputed views that `catalog-api` rebuilds.
+Re-attachment and backfill runs rebuild them inline whether or not anything else is set.
+After loads, a background poll in `catalog-api` compares the sources' write counts, so
+`docker-compose.yml` sets `IDENTITY_LEDGER_REFRESH_ENABLED=true` on the `api` service. The
+production and smoke overlays inherit it. `catalog-api` defaults it to `false`, and with the poll
+off, link changes from loads never reach the ledger until the next re-attachment run, and a new
+deployment answers `503` on the list and density until that run.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `IDENTITY_LEDGER_REFRESH_ENABLED` | `false` in `catalog-api`, `true` in this stack | Run the change-detection poll |
+| `IDENTITY_LEDGER_REFRESH_INTERVAL` | `300` | Seconds between polls (at least 1) |
+| `IDENTITY_LEDGER_REFRESH_QUIET` | `600` | Seconds the sources must hold still after a change before the poll refreshes |
+| `IDENTITY_LEDGER_MAX_STALENESS` | `21600` (6 h) | Age of the last refresh after which the poll refreshes a changed ledger even while writes continue |
+
+Staleness bounds, with the stack's settings: a new deployment builds the unpopulated views at the
+first poll, which starts within `IDENTITY_LEDGER_REFRESH_INTERVAL` (5 minutes) of `catalog-api`
+starting. That first build takes about 2 to 3 minutes at 50% synthetic scale and longer at full
+scale, and until it completes the works list and density answer `503` with `Retry-After`.
+After a load, the poll refreshes once the sources have been quiet for 10 minutes and the next poll
+runs, so the refresh starts within about 15 minutes of the load's last write. The refresh itself
+then takes 195 seconds at 50% scale and several minutes at full catalog size (about 6 to 7
+minutes extrapolated), so the ledger catches up about 22 minutes after the load's last write at
+full size. During continuous writes it still refreshes once the last refresh is 6 hours old.
+Every ledger payload carries `refreshed_at`, the
+instant the last refresh started, so a console shows how old the data is. A failed refresh is
+logged with `alert=identity_ledger_refresh_failed` and keeps the previous rows. See
+[`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#keeping-the-identity-ledger-fresh).
+The variables are `catalog-api` settings, not Compose interpolation inputs; change one with a
+reviewed override file.
+
 ### Structured log environment
 
 The production overlay explicitly sets `ENVIRONMENT=production` on every

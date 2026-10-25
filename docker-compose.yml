@@ -650,6 +650,12 @@ services:
       # Shared secret gating the internal /api/internal/insights/* router. MUST match the
       # insights service. Override with a random value in production.
       INSIGHTS_INTERNAL_SECRET: "${INSIGHTS_INTERNAL_SECRET:-dev-internal-insights-secret-change-in-production}"
+      # Identity Ledger freshness. The poll is off in catalog-api by default; without it
+      # link changes from loads reach the ledger only at the next re-attachment run, and
+      # a new deployment answers 503 on the works list and density until then. The
+      # interval, quiet and max-staleness settings keep catalog-api's defaults (see
+      # .env.example and docs/configuration.md#identity-ledger-refresh).
+      IDENTITY_LEDGER_REFRESH_ENABLED: "true"
     ports:
       - "8004:8004"
       - "8005:8005"

@@ -295,6 +295,10 @@ runs above, not the ordering they depend on. See
 [`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#running-both-automatically-after-each-discogs-import)
 for the full design.
 
+The Identity Ledger's views refresh on their own: inline after every applying re-attachment run,
+and after loads by the `IDENTITY_LEDGER_REFRESH_ENABLED` poll, which this stack turns on (see
+[Identity ledger refresh](configuration.md#identity-ledger-refresh)). Neither path needs a manual step.
+
 Operator notes:
 
 - Safe to re-run: a second run reports the already-repaired and already-guarded items as
