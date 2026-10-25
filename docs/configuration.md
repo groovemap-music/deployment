@@ -873,7 +873,10 @@ VALKEY_HOST="localhost"
 # Broker metrics (queue depth and publish/ack rates)
 RABBITMQ_PROMETHEUS_URL=http://rabbitmq:15692  # default: http://rabbitmq:15692
 
-# Optional - CORS
+# Optional - Session cookie
+SESSION_COOKIE_SECURE=false        # true/1/yes or false/0/no; anything else stops the console starting
+
+# Optional - CORS (off unless set; then GET-only and without credentials)
 CORS_ORIGINS="http://localhost:8003,http://localhost:8006"  # comma-separated origins
 
 # Optional - Cache
@@ -885,6 +888,34 @@ LOG_LEVEL=INFO
 ```
 
 Published health endpoint: <http://localhost:8003/health>.
+
+#### Console session cookie and HTTPS
+
+The console signs operators in with an HttpOnly session cookie
+(`__Host-groovemap_console_session`) that is **Secure by default**, whatever scheme the console
+itself sees. Only an explicit `SESSION_COOKIE_SECURE=false` turns Secure off.
+
+- **Development:** `docker-compose.yml` sets `SESSION_COOKIE_SECURE=false` on `dashboard`, because
+  the dev stack serves the console over plain http on port 8003. Without it, Safari (on any
+  host) and every browser on `http://<host>:8003` drop the Secure cookie and sign-in silently
+  returns to the login form. Chromium and Firefox accept a Secure cookie on `http://localhost`.
+- **Production:** `docker-compose.prod.yml` resets the base file's value (`!reset null`; Compose
+  merges `environment` key by key, so the opt-out would otherwise carry over), so the Secure default applies. The
+  production console must be reached over HTTPS. Reached over plain http, the browser drops
+  the cookie and sign-in silently returns to the login form; do not "fix" that with the
+  opt-out, put a TLS endpoint in front instead.
+
+The TLS endpoint in front of the production console must:
+
+- pass `Cookie` and `Set-Cookie` unchanged (no `SESSION_COOKIE_SECURE` is needed behind it);
+- pass `X-GrooveMap-Console`, `Sec-Fetch-Site`, `Origin` and `Authorization`;
+- keep the browser's `Host` header;
+- serve the console at the root of its own host name (no path prefix);
+- forward `/ws` with `Upgrade` (WebSocket);
+- not log `/ws` query strings or `Cookie`/`Set-Cookie` headers.
+
+Credentialed CORS is gone: nothing in this repository sets `CORS_ORIGINS` for `dashboard`, and
+Grafana only navigates to the console.
 
 ### Insights
 
