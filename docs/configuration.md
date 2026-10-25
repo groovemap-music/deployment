@@ -124,10 +124,15 @@ deployment answers `503` on the list and density until that run.
 | `IDENTITY_LEDGER_MAX_STALENESS` | `21600` (6 h) | Age of the last refresh after which the poll refreshes a changed ledger even while writes continue |
 
 Staleness bounds, with the stack's settings: a new deployment builds the unpopulated views at the
-first poll, within `IDENTITY_LEDGER_REFRESH_INTERVAL` (5 minutes) of `catalog-api` starting.
-After a load, the ledger catches up once the sources have been quiet for 10 minutes and the next
-poll runs, so within about 15 minutes of the load's last write. During continuous writes it still
-refreshes once the last refresh is 6 hours old. Every ledger payload carries `refreshed_at`, the
+first poll, which starts within `IDENTITY_LEDGER_REFRESH_INTERVAL` (5 minutes) of `catalog-api`
+starting. That first build takes about 2 to 3 minutes at 50% synthetic scale and longer at full
+scale, and until it completes the works list and density answer `503` with `Retry-After`.
+After a load, the poll refreshes once the sources have been quiet for 10 minutes and the next poll
+runs, so the refresh starts within about 15 minutes of the load's last write. The refresh itself
+then takes 195 seconds at 50% scale and several minutes at full catalog size (about 6 to 7
+minutes extrapolated), so the ledger catches up about 22 minutes after the load's last write at
+full size. During continuous writes it still refreshes once the last refresh is 6 hours old.
+Every ledger payload carries `refreshed_at`, the
 instant the last refresh started, so a console shows how old the data is. A failed refresh is
 logged with `alert=identity_ledger_refresh_failed` and keeps the previous rows. See
 [`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#keeping-the-identity-ledger-fresh).

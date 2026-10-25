@@ -970,15 +970,28 @@ docker logs groovemap-api 2>&1 | grep -c 'identity_ledger_refresh_failed' || tru
 ```
 
 Expected: `true`; `works 200`; an RFC 3339 `refreshed_at` and a `total`; `density 200`; a count of `0`.
-Run it after the first load, no later than one poll interval (`IDENTITY_LEDGER_REFRESH_INTERVAL`,
-300 seconds) after `catalog-api` starts: the poll builds the unpopulated views at its first
-pass. After a load, `refreshed_at` moves forward once the sources have been quiet for
-`IDENTITY_LEDGER_REFRESH_QUIET` (600 seconds) and the next poll runs; repeat the first request
-after that to confirm it advanced. If the routes answer `503` with `identity ledger not yet
-refreshed`, the poll has not completed a pass: wait one more interval, then check the `printenv`
-line (`false` or empty means the running container predates the setting; recreate `api`, 4.10)
-and the `alert=identity_ledger_refresh_failed` log lines. A non-zero failure count names a
-refresh that failed and left the previous rows in place. See
+The poll starts building the unpopulated views within one poll interval
+(`IDENTITY_LEDGER_REFRESH_INTERVAL`, 300 seconds) of `catalog-api` starting, so on a new
+deployment run it once that interval has passed. The very first build takes about 2 to 3 minutes
+at 50% synthetic scale and longer at full scale; until it completes, the works list and density
+answer `503` with `Retry-After`, which is not a failure yet. After a load, the refresh starts once
+the sources have been quiet for `IDENTITY_LEDGER_REFRESH_QUIET` (600 seconds) and the next poll
+runs, about 15 minutes after the load's last write, and then takes 195 seconds at 50% scale and
+about 6 to 7 minutes at full scale. So `refreshed_at` advances about 22 minutes after the last
+write at full size. Repeat the first request after that to confirm it advanced.
+
+Do not treat a missing or unchanged `refreshed_at` as a failure before that time has passed, or
+while a refresh is still running:
+
+```bash
+docker exec groovemap-postgres psql -U groovemap -d groovemap -Atc "select pid, now() - query_start from pg_stat_activity where query ilike '%identity_ledger_refresh(%' and pid <> pg_backend_pid()"
+```
+
+A row means a refresh is in progress and has run for that long; wait for it. If the routes still answer `503`
+with `identity ledger not yet refreshed` after the first build's time, check the `printenv` line
+(`false` or empty means the running container predates the setting; recreate `api`, 4.10) and the
+`alert=identity_ledger_refresh_failed` log lines. A non-zero failure count names a refresh that
+failed and left the previous rows in place. See
 [Identity ledger refresh](configuration.md#identity-ledger-refresh).
 
 ## 6. Rollback
