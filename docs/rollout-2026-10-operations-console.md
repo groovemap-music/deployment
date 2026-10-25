@@ -955,6 +955,32 @@ can leave rules briefly pending), then repeat the alert command from 4.3, writin
 rule firing now whose name was not listed before (for example `ScrapeTargetDown` naming a job, or
 `ConsumersAbsent`) is a regression: investigate before closing the window.
 
+**V12. The Identity Ledger answers 200 with a `refreshed_at` within the first poll interval after the first load.**
+Needs `catalog-api` `c31703b` or later; an older image ignores the setting and has no refresh
+poll. `docker-compose.yml` sets `IDENTITY_LEDGER_REFRESH_ENABLED=true` on `api` and the production
+overlay inherits it. Same shell as V6 (`TOKEN` set):
+
+```bash
+docker exec groovemap-api printenv IDENTITY_LEDGER_REFRESH_ENABLED
+curl -s -o /dev/null -w 'works %{http_code}\n' -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8004/api/admin/identity/ledger/works?page_size=1'
+curl -s -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8004/api/admin/identity/ledger/works?page_size=1' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print("refreshed_at", d.get("refreshed_at"), "total", d.get("total"))'
+curl -s -o /dev/null -w 'density %{http_code}\n' -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8004/api/admin/identity/ledger/density
+docker logs groovemap-api 2>&1 | grep -c 'identity_ledger_refresh_failed' || true
+```
+
+Expected: `true`; `works 200`; an RFC 3339 `refreshed_at` and a `total`; `density 200`; a count of `0`.
+Run it after the first load, no later than one poll interval (`IDENTITY_LEDGER_REFRESH_INTERVAL`,
+300 seconds) after `catalog-api` starts: the poll builds the unpopulated views at its first
+pass. After a load, `refreshed_at` moves forward once the sources have been quiet for
+`IDENTITY_LEDGER_REFRESH_QUIET` (600 seconds) and the next poll runs; repeat the first request
+after that to confirm it advanced. If the routes answer `503` with `identity ledger not yet
+refreshed`, the poll has not completed a pass: wait one more interval, then check the `printenv`
+line (`false` or empty means the running container predates the setting; recreate `api`, 4.10)
+and the `alert=identity_ledger_refresh_failed` log lines. A non-zero failure count names a
+refresh that failed and left the previous rows in place. See
+[Identity ledger refresh](configuration.md#identity-ledger-refresh).
+
 ## 6. Rollback
 
 ### Which parts roll back alone
