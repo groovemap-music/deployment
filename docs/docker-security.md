@@ -132,7 +132,7 @@ untracked `secrets/` directory; they are not ephemeral Swarm secrets. See
 | Insights internal key  | `INSIGHTS_INTERNAL_SECRET_FILE`     | `INSIGHTS_INTERNAL_SECRET`     |
 | Grafana admin password | `GF_SECURITY_ADMIN_PASSWORD__FILE`  | `GF_SECURITY_ADMIN_PASSWORD`   |
 
-The Dashboard holds no RabbitMQ credential: it reads queue metrics from the broker's unauthenticated `rabbitmq_prometheus` endpoint (`RABBITMQ_PROMETHEUS_URL`) on the internal network. The catalog API keeps the credentials above for the management API's DLQ purge.
+The Dashboard holds no RabbitMQ credential: it reads queue metrics from the broker's unauthenticated `rabbitmq_prometheus` endpoint (`RABBITMQ_PROMETHEUS_URL`) on the internal network. The catalog API keeps the credentials above for its AMQP connection, including the dead-letter queue purge; it no longer calls the management API.
 
 Plain env vars work in development. The production overlay (`docker-compose.prod.yml`) switches to the `_FILE` convention automatically. The shared secret-loading implementation is owned by [`python-libraries`](https://github.com/groovemap-music/python-libraries).
 

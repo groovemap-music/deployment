@@ -65,7 +65,8 @@ services:
       # disable_metrics_collector stops the management plugin's legacy
       # per-queue/per-channel stats collection (ADR 0017): queue depth and
       # publish/ack rates come from rabbitmq_prometheus /metrics/detailed, and
-      # the management plugin stays for the operator UI and the DLQ purge API.
+      # the management plugin stays for the operator UI (the catalog API purges
+      # dead-letter queues over AMQP and no longer calls its API).
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
         -rabbit log_levels [{connection,error},{default,warning}]
         -rabbit max_message_size 134217728
