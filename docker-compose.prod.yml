@@ -1,6 +1,13 @@
 ---
 # Production overrides for docker-compose.yml
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Restarts: every long-running service sets `restart: always` here, and nothing
+# in this file may set deploy.restart_policy. Docker Compose lets deploy.restart_policy
+# override `restart:`, and the engine only accepts a retry cap (max_attempts) with
+# on-failure, so `always` plus max_attempts is rejected at `up` (observed on Compose
+# 5.6.1: "maximum retry count can only be used with 'on-failure'"). `always` never
+# gives up on a crashing service; Docker backs off between attempts. Pinned by
+# tests/deploy/test_docker_compose_prod.py.
 # Note: When using deploy.replicas, container_name from base config is ignored
 #
 # Secrets: populate secrets/ from secrets.example/ and run scripts/create-secrets.sh
@@ -28,6 +35,11 @@ secrets:
     file: ./secrets/rabbitmq_username.txt
   valkey_password:
     file: ./secrets/valkey_password.txt
+  # oliver006/redis_exporter reads --redis.password-file as a JSON map of Redis
+  # URI to password, not a plain password. scripts/create-secrets.sh derives this
+  # file from valkey_password.txt on every run, so the two cannot disagree.
+  valkey_exporter_passwords:
+    file: ./secrets/valkey_exporter_passwords.json
   # Shared secret gating /api/internal/insights/* (api/routers/insights_compute.py).
   # Base docker-compose.yml falls back to a repo-published dev default when this
   # isn't set. Production must always override it with this file-backed secret.
@@ -257,8 +269,7 @@ services:
       start_period: 10s
 
   # The exporters read the same credentials as the application services, via
-  # the same file-backed secrets. postgres_exporter and the Valkey exporter both
-  # prefer the *_FILE variant when it is set; the plain values are unset here
+  # the same file-backed secrets. postgres_exporter reads the *_FILE variant when it is set; the plain values are unset here
   # anyway so a stale dev credential cannot win.
   postgres-exporter:
     restart: always
@@ -271,12 +282,14 @@ services:
       - postgres_username
       - postgres_password
 
+  # REDIS_PASSWORD_FILE names the JSON map above; its key must equal the base
+  # file's REDIS_ADDR (redis://valkey:6379) for the password to be applied.
   valkey-exporter:
     restart: always
     environment:
-      REDIS_PASSWORD_FILE: /run/secrets/valkey_password
+      REDIS_PASSWORD_FILE: /run/secrets/valkey_exporter_passwords
     secrets:
-      - valkey_password
+      - valkey_exporter_passwords
 
   # Neither host exporter publishes a port and neither takes a credential, so
   # prod only needs the restart policy. cadvisor's two capabilities and its
@@ -366,11 +379,6 @@ services:
       - api_logs:/logs
       - discogs_data:/discogs-data:ro
       - musicbrainz_data:/musicbrainz-data:ro
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   extractor-discogs:
     restart: always
@@ -383,10 +391,6 @@ services:
       - rabbitmq_password
     deploy:
       replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   extractor-musicbrainz:
     restart: always
@@ -399,10 +403,6 @@ services:
       - rabbitmq_password
     deploy:
       replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   graphinator:
     restart: always
@@ -415,11 +415,6 @@ services:
       - neo4j_password
       - rabbitmq_username
       - rabbitmq_password
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   tableinator:
     restart: always
@@ -434,11 +429,6 @@ services:
       - rabbitmq_password
       - postgres_username
       - postgres_password
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   brainzgraphinator:
     restart: always
@@ -451,11 +441,6 @@ services:
       - neo4j_password
       - rabbitmq_username
       - rabbitmq_password
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   brainztableinator:
     restart: always
@@ -470,11 +455,6 @@ services:
       - rabbitmq_password
       - postgres_username
       - postgres_password
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   dashboard:
     restart: always
@@ -489,21 +469,11 @@ services:
       - postgres_username
       - postgres_password
       - grafana_viewer_token
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   explore:
     environment:
       <<: *otel-prod-env
     restart: always
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   insights:
     restart: always
@@ -518,11 +488,6 @@ services:
       - postgres_password
       - valkey_password
       - insights_internal_secret
-    deploy:
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
 
   # A one-shot job, not a long-running service: no restart policy override. The
   # homelab provisions its own embedding_pipeline login and its secrets/ files —

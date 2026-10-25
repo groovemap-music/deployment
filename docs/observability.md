@@ -299,8 +299,9 @@ unaffected: the containers it reports are the same containers either way.
 
 Both exporters take their credentials the same way the application services do:
 literal values in development, and `_FILE`-backed Docker secrets
-(`postgres_username`, `postgres_password`, `valkey_password`) in production.
-They reuse the existing secrets — no new credential is introduced.
+(`postgres_username`, `postgres_password`, and `valkey_exporter_passwords`, the JSON map of Redis
+URI to password that `redis_exporter` reads, derived from `valkey_password`) in production.
+No new credential is introduced.
 
 `valkey-exporter` has no container healthcheck. Its image is distroless and
 ships neither a shell nor an HTTP client, so no probe can run inside it; a

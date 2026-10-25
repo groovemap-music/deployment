@@ -1,14 +1,29 @@
 # Admin Guide
 
+The operations console is one authenticated shell, signed in through `catalog-api`'s admin
+session. This guide covers the deployment side: creating the admin accounts that sign in, the
+extraction and DLQ procedures an operator runs, and where history comes from. The console's own
+behaviour is documented in `operations-console`, not here:
+
+- [Operations-console administrator guide](https://github.com/groovemap-music/operations-console/blob/main/docs/admin-guide.md):
+  signing in, the Overview, topology, run progress, platform health, the attention bar, triggers
+  and the history tabs.
+- [Operations-console configuration](https://github.com/groovemap-music/operations-console/blob/main/docs/configuration.md):
+  every setting the console reads.
+
+The release that introduced this console, and what changed with it, is in the
+[October 2026 operations-console rollout](rollout-2026-10-operations-console.md).
+
 ## Creating an Admin Account
 
-Admin accounts are created via the `admin-setup` CLI tool inside the API container:
+Admin accounts are created with the `catalog-admin-setup` CLI (the `catalog-api` package's
+`[project.scripts]` entry) inside the API container:
 
 ```
-docker exec -it groovemap-api admin-setup --email admin@example.com
+docker exec -it groovemap-api catalog-admin-setup --email admin@example.com
 ```
 
-`admin-setup` never accepts the password as a CLI argument (command-line
+`catalog-admin-setup` never accepts the password as a CLI argument (command-line
 arguments are world-readable via `/proc/*/cmdline` and land in shell
 history). The command above prompts interactively (input hidden, not
 echoed). For scripted/non-interactive use, set `ADMIN_PASSWORD` (or
@@ -20,24 +35,31 @@ Passwords must be at least 8 characters. If the email already exists, the passwo
 ## Listing Admin Accounts
 
 ```
-docker exec -it groovemap-api admin-setup --list
+docker exec -it groovemap-api catalog-admin-setup --list
 ```
 
-## Accessing the Admin Panel
+## Signing in to the Console
 
-Navigate to `http://<host>:8003/admin` and log in with your admin credentials.
-
-The monitoring dashboard at `http://<host>:8003` remains public — no login required.
+Navigate to `http://<host>:8003` (the `dashboard` service) and sign in with your admin
+credentials. Until `catalog-api` confirms an admin session the console shows only the login form;
+after sign-in the live **Overview** comes first, followed by the admin tabs. Nothing on the
+console is public except `/health` and the login page. The old `/admin` address redirects to `/`.
+See the [operations-console administrator guide](https://github.com/groovemap-music/operations-console/blob/main/docs/admin-guide.md#signing-in-to-the-console)
+for session lifetime, sign-out and WebSocket behaviour, and put no query-string logging on `/ws`
+in any reverse proxy.
 
 ## Triggering an Extraction
 
-Click **Trigger Extraction** in the admin panel. This forces a full reprocessing of all Discogs data files:
+Use **Trigger Discogs Extraction** or **Trigger MusicBrainz Extraction** in the console. Each
+trigger asks `catalog-api` to start the matching source's extractor (`extractor-discogs` or
+`extractor-musicbrainz`), which:
 
-- Downloads the latest monthly data from the Discogs S3 bucket
+- Downloads the latest dump (Discogs monthly data from the Discogs S3 bucket, or the MusicBrainz JSONL dumps)
 - Reprocesses all files regardless of existing state markers
-- Publishes records to RabbitMQ for graphinator and tableinator consumers
+- Publishes records to the `groovemap-discogs-{artists,labels,masters,releases}` or `groovemap-musicbrainz-{artists,labels,release-groups,releases}` exchanges for the source's SQL loader and graph enricher consumers
 
-The admin panel also supports triggering a **MusicBrainz extraction**, which downloads the latest MusicBrainz JSONL dumps and publishes records to the `groovemap-musicbrainz-{artists,labels,release-groups,releases}` exchanges for brainzgraphinator and brainztableinator consumers.
+See [Triggering an extraction](https://github.com/groovemap-music/operations-console/blob/main/docs/admin-guide.md#triggering-an-extraction)
+in the console guide for the routes and the per-source behaviour.
 
 Use this when:
 
@@ -45,7 +67,7 @@ Use this when:
 - You suspect data corruption and want a clean reprocess
 - A new Discogs monthly dump (or MusicBrainz twice-weekly dump) has been published and you don't want to wait for the periodic check
 
-The extraction runs asynchronously. Progress is tracked in the extraction history table.
+The extraction runs asynchronously. Progress is tracked in the extraction history table, which shows each run's source.
 
 If an extraction is already running, the trigger returns an error — wait for it to complete first.
 
@@ -61,22 +83,22 @@ Dead-letter queues (DLQs) collect messages that consumers failed to process. Eac
 
 | Queue                                                             | Consumer          |
 | ----------------------------------------------------------------- | ----------------- |
-| `groovemap-discogs-graphinator-artists.dlq`                  | Graphinator       |
-| `groovemap-discogs-graphinator-labels.dlq`                   | Graphinator       |
-| `groovemap-discogs-graphinator-masters.dlq`                  | Graphinator       |
-| `groovemap-discogs-graphinator-releases.dlq`                 | Graphinator       |
-| `groovemap-discogs-tableinator-artists.dlq`                  | Tableinator       |
-| `groovemap-discogs-tableinator-labels.dlq`                   | Tableinator       |
-| `groovemap-discogs-tableinator-masters.dlq`                  | Tableinator       |
-| `groovemap-discogs-tableinator-releases.dlq`                 | Tableinator       |
-| `groovemap-musicbrainz-brainzgraphinator-artists.dlq`        | Brainzgraphinator |
-| `groovemap-musicbrainz-brainzgraphinator-labels.dlq`         | Brainzgraphinator |
-| `groovemap-musicbrainz-brainzgraphinator-release-groups.dlq` | Brainzgraphinator |
-| `groovemap-musicbrainz-brainzgraphinator-releases.dlq`       | Brainzgraphinator |
-| `groovemap-musicbrainz-brainztableinator-artists.dlq`        | Brainztableinator |
-| `groovemap-musicbrainz-brainztableinator-labels.dlq`         | Brainztableinator |
-| `groovemap-musicbrainz-brainztableinator-release-groups.dlq` | Brainztableinator |
-| `groovemap-musicbrainz-brainztableinator-releases.dlq`       | Brainztableinator |
+| `groovemap-discogs-graphinator-artists.dlq`                  | `discogs-graph-enricher` |
+| `groovemap-discogs-graphinator-labels.dlq`                   | `discogs-graph-enricher` |
+| `groovemap-discogs-graphinator-masters.dlq`                  | `discogs-graph-enricher` |
+| `groovemap-discogs-graphinator-releases.dlq`                 | `discogs-graph-enricher` |
+| `groovemap-discogs-tableinator-artists.dlq`                  | `discogs-sql-loader` |
+| `groovemap-discogs-tableinator-labels.dlq`                   | `discogs-sql-loader` |
+| `groovemap-discogs-tableinator-masters.dlq`                  | `discogs-sql-loader` |
+| `groovemap-discogs-tableinator-releases.dlq`                 | `discogs-sql-loader` |
+| `groovemap-musicbrainz-brainzgraphinator-artists.dlq`        | `musicbrainz-graph-enricher` |
+| `groovemap-musicbrainz-brainzgraphinator-labels.dlq`         | `musicbrainz-graph-enricher` |
+| `groovemap-musicbrainz-brainzgraphinator-release-groups.dlq` | `musicbrainz-graph-enricher` |
+| `groovemap-musicbrainz-brainzgraphinator-releases.dlq`       | `musicbrainz-graph-enricher` |
+| `groovemap-musicbrainz-brainztableinator-artists.dlq`        | `musicbrainz-sql-loader` |
+| `groovemap-musicbrainz-brainztableinator-labels.dlq`         | `musicbrainz-sql-loader` |
+| `groovemap-musicbrainz-brainztableinator-release-groups.dlq` | `musicbrainz-sql-loader` |
+| `groovemap-musicbrainz-brainztableinator-releases.dlq`       | `musicbrainz-sql-loader` |
 
 **Purging** permanently deletes all messages in a DLQ. Do this when:
 
@@ -85,7 +107,7 @@ Dead-letter queues (DLQs) collect messages that consumers failed to process. Eac
 
 Purging cannot be undone.
 
-DLQ names follow the pattern `{exchange-prefix}-{consumer}-{data-type}.dlq`, using the `DISCOGS_EXCHANGE_PREFIX` and `MUSICBRAINZ_EXCHANGE_PREFIX` env vars as the base.
+DLQ names follow the pattern `{exchange-prefix}-{consumer}-{data-type}.dlq`, using the `DISCOGS_EXCHANGE_PREFIX` and `MUSICBRAINZ_EXCHANGE_PREFIX` env vars as the base. The consumer keys in the names (`graphinator`, `tableinator`, `brainzgraphinator`, `brainztableinator`) are stable wire identifiers, even though the owning repositories have descriptive names.
 
 ### DLQ Size-Cap Policy
 
@@ -153,88 +175,22 @@ To make a change durable, set the corresponding env var and rerun the idempotent
 (`docker compose up -d rabbitmq-dlq-policy-init`) so it re-declares the policy from it — this
 does not touch or restart the `rabbitmq` service itself.
 
-## Phase 3: Metrics History and Trend Analysis
+## Queue and Service History
 
-### Queue and Health History Endpoints
+The console's **Queue Trends** and **System Health** tabs read their history from
+VictoriaMetrics (`VICTORIA_METRICS_URL`, set on the `dashboard` service to
+`http://victoria-metrics:8428`). `catalog-api` no longer collects or serves metrics history, and
+there are no `METRICS_RETENTION_DAYS` or `METRICS_COLLECTION_INTERVAL` settings to tune.
 
-Two new endpoints expose time-series metrics for queue depths and service health:
+- **Retention:** the `victoria-metrics` service runs with `-retentionPeriod=90d`, which covers the
+  longest range the tabs offer (`1h`, `6h`, `24h`, `7d`, `30d`, `90d`). Lowering it silently
+  truncates the long ranges.
+- **Rate history** (publish and ack rates) comes from the `rabbitmq-detailed` scrape and begins
+  when that scrape starts.
+- **Old rows:** the PostgreSQL `queue_metrics` and `service_health_metrics` tables were dropped by
+  the schema migration; the rollout keeps a dump first
+  ([4.5](rollout-2026-10-operations-console.md#45-keep-a-copy-of-the-metrics-history-rows-approval)).
 
-```
-GET /api/admin/queues/history?range=<range>
-GET /api/admin/health/history?range=<range>
-```
-
-Both endpoints require admin authentication (Bearer token).
-
-**Valid range values:**
-
-| Range  | Description             | Data Granularity  |
-| ------ | ----------------------- | ----------------- |
-| `1h`   | Last 1 hour             | 5-minute buckets  |
-| `6h`   | Last 6 hours            | 5-minute buckets  |
-| `24h`  | Last 24 hours (default) | 15-minute buckets |
-| `7d`   | Last 7 days             | 1-hour buckets    |
-| `30d`  | Last 30 days            | 6-hour buckets    |
-| `90d`  | Last 90 days            | 1-day buckets     |
-| `365d` | Last 365 days           | 1-day buckets     |
-
-Granularity is selected automatically based on the requested range. Omitting the `range` parameter defaults to `24h`.
-
-### Background Metrics Collector
-
-A background collector runs inside the API service and periodically samples queue depths and service health. Collected data is stored in PostgreSQL for historical querying.
-
-The collector interval is controlled by the `METRICS_COLLECTION_INTERVAL` environment variable (default: 300 seconds / 5 minutes).
-
-### New Environment Variables
-
-| Variable                      | Default | Description                                                                              |
-| ----------------------------- | ------- | ---------------------------------------------------------------------------------------- |
-| `METRICS_RETENTION_DAYS`      | `366`   | How many days of metrics to retain in the database. Older rows are pruned automatically. |
-| `METRICS_COLLECTION_INTERVAL` | `300`   | Seconds between each metrics collection cycle in the background collector.               |
-
-Set these in your `docker-compose.yml` or environment file:
-
-```
-METRICS_RETENTION_DAYS=366
-METRICS_COLLECTION_INTERVAL=300
-```
-
-### New Database Tables
-
-Metrics are stored in two PostgreSQL tables:
-
-**`queue_metrics`** — RabbitMQ queue depth snapshots:
-
-| Column                    | Type         | Description                                      |
-| ------------------------- | ------------ | ------------------------------------------------ |
-| `id`                      | bigint       | Primary key (generated always as identity)       |
-| `recorded_at`             | timestamptz  | When the sample was taken                        |
-| `queue_name`              | varchar(100) | Name of the RabbitMQ queue                       |
-| `messages_ready`          | integer      | Number of ready messages at sample time          |
-| `messages_unacknowledged` | integer      | Number of unacknowledged messages at sample time |
-| `consumers`               | integer      | Number of active consumers at sample time        |
-| `publish_rate`            | real         | Message publish rate                             |
-| `ack_rate`                | real         | Message acknowledgement rate                     |
-
-**`service_health_metrics`** — Per-service health check results:
-
-| Column             | Type        | Description                                             |
-| ------------------ | ----------- | ------------------------------------------------------- |
-| `id`               | bigint      | Primary key (generated always as identity)              |
-| `recorded_at`      | timestamptz | When the sample was taken                               |
-| `service_name`     | varchar(50) | Name of the service (e.g. `graphinator`, `tableinator`) |
-| `status`           | varchar(20) | Health status (`healthy`, `unhealthy`, `unknown`)       |
-| `response_time_ms` | real        | Health check response time in milliseconds              |
-| `endpoint_stats`   | jsonb       | Per-endpoint latency statistics (API service only)      |
-
-Both tables are indexed on `recorded_at` for efficient range queries. Rows older than `METRICS_RETENTION_DAYS` are pruned automatically.
-
-### Dashboard: Queue Trends and System Health Tabs
-
-The admin panel (`http://<host>:8003/admin`) exposes two new tabs backed by the history endpoints:
-
-- **Queue Trends** — Line charts showing message depth over time for each RabbitMQ queue. Use the range selector (1h / 6h / 24h / 7d / 30d / 90d / 365d) to zoom in or out.
-- **System Health** — Status timeline showing per-service health over the selected range. Unhealthy periods are highlighted in red; response time is shown as a secondary series.
-
-Both tabs auto-refresh every 60 seconds and respect the currently selected time range.
+The history routes, the series the tabs depend on, and the tab behaviour are in the console's
+[metrics history section](https://github.com/groovemap-music/operations-console/blob/main/docs/admin-guide.md#metrics-history-and-trend-analysis)
+and [configuration](https://github.com/groovemap-music/operations-console/blob/main/docs/configuration.md).

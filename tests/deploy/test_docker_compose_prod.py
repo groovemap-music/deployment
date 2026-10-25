@@ -206,3 +206,66 @@ class TestConsoleObservabilityWiring:
 
     def test_base_file_leaves_the_token_unset(self) -> None:
         assert "GRAFANA_TOKEN_FILE" not in _base_compose()["services"]["dashboard"]["environment"]
+
+
+def test_valkey_exporter_reads_a_json_password_map_not_the_plain_secret() -> None:
+    """redis_exporter's --redis.password-file is a JSON map of URI to password.
+
+    Pointing it at the plain valkey_password secret made it crash-loop. It must
+    read the derived map, and the password itself must not enter its environment.
+    """
+    exporter = _prod_compose()["services"]["valkey-exporter"]
+    secret_file = _prod_compose()["secrets"]["valkey_exporter_passwords"]["file"]
+
+    assert exporter["environment"] == {"REDIS_PASSWORD_FILE": "/run/secrets/valkey_exporter_passwords"}
+    assert exporter["secrets"] == ["valkey_exporter_passwords"]
+    assert secret_file == "./secrets/valkey_exporter_passwords.json"
+
+
+def _effective_restart_settings() -> dict[str, tuple[str | None, dict[str, Any] | None]]:
+    """Per service: the ``restart:`` value and ``deploy.restart_policy`` after the overlay is applied."""
+    base = _base_compose()["services"]
+    prod = _prod_compose()["services"]
+    effective: dict[str, tuple[str | None, dict[str, Any] | None]] = {}
+    for name, spec in base.items():
+        overlay = prod.get(name) or {}
+        restart = overlay.get("restart", spec.get("restart"))
+        policy = ((overlay.get("deploy") or {}).get("restart_policy")) or ((spec.get("deploy") or {}).get("restart_policy"))
+        effective[name] = (restart, policy)
+    return effective
+
+
+def test_prod_restart_uses_one_mechanism_per_service() -> None:
+    """The prod overlay restarts services through ``restart:`` alone.
+
+    Docker Compose lets ``deploy.restart_policy`` override ``restart:``, and the
+    engine only takes a retry cap (``max_attempts``) with ``on-failure``. The old
+    overlay set ``restart: always`` and ``deploy.restart_policy`` with
+    ``condition: any`` and ``max_attempts: 3``, which the engine rejects at
+    ``docker compose up`` ("maximum retry count can only be used with
+    'on-failure'", Compose 5.6.1). Setting both mechanisms is also ambiguous, so
+    neither combination may return.
+    """
+    for name, (restart, policy) in _effective_restart_settings().items():
+        if policy is None:
+            continue
+        assert restart is None, f"{name}: sets both restart: {restart!r} and deploy.restart_policy; use one mechanism"
+        if "max_attempts" in policy:
+            assert policy.get("condition") == "on-failure", f"{name}: max_attempts is only valid with condition: on-failure"
+
+
+def test_prod_long_running_services_restart_always() -> None:
+    """Restart-on-crash is not weakened: every service the overlay manages restarts ``always``.
+
+    Services the overlay leaves alone (one-shot ``schema-init`` and
+    ``rabbitmq-dlq-policy-init``, the ``embeddings`` job) keep their base value.
+    """
+    prod = _prod_compose()["services"]
+    effective = _effective_restart_settings()
+    one_shots = {"schema-init", "rabbitmq-dlq-policy-init", "embeddings"}
+
+    for name in prod:
+        if name in one_shots:
+            continue
+        assert effective[name][0] == "always", f"{name}: prod restart is {effective[name][0]!r}, expected 'always'"
+    assert not (one_shots & {name for name in prod if (prod[name] or {}).get("restart")}), "one-shot jobs must not get a restart policy"

@@ -95,15 +95,16 @@ networks:
 
 ### 7. Restart Policies (Production)
 
-Production deployment includes automatic restart policies:
+Production sets `restart: always` on every long-running service in `docker-compose.prod.yml`, so a
+crashed container is restarted (with Docker's backoff between attempts) and comes back after a daemon
+or host restart. The one-shot `schema-init`, `rabbitmq-dlq-policy-init` and `embeddings` jobs keep the
+base file's policy.
 
-```yaml
-deploy:
-  restart_policy:
-    condition: any
-    delay: 5s
-    max_attempts: 3
-```
+The overlay does not set `deploy.restart_policy`. Docker Compose lets it override `restart:`, and the
+engine accepts a retry cap (`max_attempts`) only with `on-failure`, so `restart: always` together
+with `max_attempts` fails at `docker compose up` with `maximum retry count can only be used with
+'on-failure'` (observed on Compose 5.6.1). A test (`tests/deploy/test_docker_compose_prod.py`) keeps
+both mechanisms from being combined. The fix relies on no minimum Compose version.
 
 ## Environment Variables
 
@@ -177,6 +178,7 @@ This creates `secrets/` (mode `700`) with one file per secret (mode `600`):
 | `rabbitmq_password.txt` | `openssl rand -base64 24` |
 | `neo4j_password.txt` | `openssl rand -base64 24` |
 | `valkey_password.txt` | `openssl rand -base64 24` |
+| `valkey_exporter_passwords.json` | Derived from `valkey_password.txt` by `scripts/create-secrets.sh` on every run: `{"redis://valkey:6379": "<password>"}` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 | `grafana_admin_password.txt` | `openssl rand -base64 24`; required because production disables anonymous access |
 
@@ -190,7 +192,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 **Neo4j note**: Neo4j does not natively support the `_FILE` convention. The production overlay overrides Neo4j's entrypoint with `scripts/neo4j-entrypoint.sh`, which reads `/run/secrets/neo4j_password` and sets `NEO4J_AUTH=neo4j/<password>` before delegating to the official Neo4j entrypoint.
 
-**Valkey note**: Valkey does not natively support the `_FILE` convention either. The production overlay overrides Valkey's entrypoint with `scripts/valkey-entrypoint.sh`, which reads `/run/secrets/valkey_password` and appends `--requirepass <password>` before delegating to the official Valkey entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Valkey is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces. The `valkey-exporter` reads the same secret through its `REDIS_PASSWORD_FILE` variable (the upstream exporter's name).
+**Valkey note**: Valkey does not natively support the `_FILE` convention either. The production overlay overrides Valkey's entrypoint with `scripts/valkey-entrypoint.sh`, which reads `/run/secrets/valkey_password` and appends `--requirepass <password>` before delegating to the official Valkey entrypoint. It also rebinds the published port to `127.0.0.1:6379` instead of the base file's `0.0.0.0:6379`, since Valkey is meant to be reached over the internal `groovemap` docker network by api/dashboard/insights, not from the host's public interfaces. The `valkey-exporter` authenticates with the same password, but `oliver006/redis_exporter` reads `REDIS_PASSWORD_FILE` (its `--redis.password-file`) as a JSON map of Redis URI to password rather than a plain password, so it reads the derived `valkey_exporter_passwords` secret instead. The map's URI must equal the base file's `REDIS_ADDR` for the exporter. The password stays out of the exporter's environment and out of the rendered Compose configuration.
 
 ### Running Securely
 
