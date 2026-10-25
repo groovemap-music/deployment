@@ -620,7 +620,7 @@ Expected differences, and nothing else:
   disable_metrics_collector true` in place of `-rabbitmq_management disable_management_stats
   false`; a port `127.0.0.1:15692 -> 15692`.
 - `victoria-metrics`: `-retentionPeriod=90d` (was `15d`).
-- `api`: the new image; `RABBITMQ_PROMETHEUS_URL: http://rabbitmq:15692` added.
+- `api`: the new image.
 - `dashboard`: the new image; `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`,
   `RABBITMQ_USERNAME_FILE` and `RABBITMQ_PASSWORD_FILE` removed; `RABBITMQ_PROMETHEUS_URL`,
   `VICTORIA_METRICS_URL`, `GRAFANA_API_URL`, `GRAFANA_URL`, `TRACES_URL` and
@@ -965,18 +965,7 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
 
 ## 7. Known issues that are not blockers
 
-- The Infrastructure dashboard's RabbitMQ publish panel queries
-  `sum(rate(rabbitmq_global_messages_published_total[$__rate_interval]))`. RabbitMQ 4 does not
-  emit that metric (it emits `rabbitmq_global_messages_received_total`), so the panel stays empty.
-  `scripts/check-dashboards.py` lists the name as known, so the gate passes. Predates this rollout.
-- The Infrastructure dashboard's PostgreSQL panels query `pg_stat_database_xact_commit`,
-  `pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`, `pg_stat_database_blks_read` and
-  `pg_stat_database_deadlocks` without the `_total` suffix remote write adds, so those panels
-  stay empty ([Observability](observability.md)). Predates this rollout.
 - `catalog-api` `v0.5.0` has a tag but no image (O4).
-- The `api` service still sets `RABBITMQ_PROMETHEUS_URL`, which `catalog-api` stopped reading in
-  `a9bda68`, and `config/rabbitmq-enabled-plugins` still names "the catalog API's queue-metrics
-  history" as a reader of `/metrics/detailed`. Both are stale and harmless.
 - The toolkit's `Justfile` comment on `check-queues` still says it reads the management API.
 - Every console trigger is a `force_reprocess` run, before and after this rollout (O6).
 - `catalog-api` records a run's `record_counts` for artists, labels, masters and releases only,

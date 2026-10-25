@@ -199,6 +199,21 @@ class TestDashboardInventory:
                     assert "." not in metric, (name, metric)
 
 
+# Names a panel once queried that the stack does not store: RabbitMQ 4 has no
+# rabbitmq_global_messages_published_total (publishes are ..._received_total),
+# and remote write appends _total to the postgres-exporter counters.
+NOT_EMITTED_METRICS = frozenset(
+    {
+        "rabbitmq_global_messages_published_total",
+        "pg_stat_database_xact_commit",
+        "pg_stat_database_xact_rollback",
+        "pg_stat_database_blks_hit",
+        "pg_stat_database_blks_read",
+        "pg_stat_database_deadlocks",
+    }
+)
+
+
 class TestAcceptancePanels:
     """Each dashboard must actually plot what the bead asked it to plot."""
 
@@ -322,6 +337,21 @@ class TestAcceptancePanels:
         assert "otelcol_receiver_accepted_metric_points_total" in metrics
         assert "otelcol_exporter_sent_metric_points_total" in metrics
         assert "otelcol_exporter_send_failed_metric_points_total" in metrics
+
+    def test_infrastructure_queries_only_names_the_stack_emits(self) -> None:
+        """Names that look right but are never stored leave a panel silently empty."""
+        metrics = self._metrics("infrastructure.json")
+        assert metrics.isdisjoint(NOT_EMITTED_METRICS), sorted(metrics & NOT_EMITTED_METRICS)
+
+    def test_infrastructure_publish_panel_reads_what_publishers_send(self) -> None:
+        """RabbitMQ 4 counts publishes in rabbitmq_global_messages_received_total."""
+        metrics = self._metrics("infrastructure.json")
+        assert "rabbitmq_global_messages_received_total" in metrics
+
+    def test_infrastructure_postgresql_counters_carry_the_remote_write_suffix(self) -> None:
+        metrics = self._metrics("infrastructure.json")
+        for counter in ("xact_commit", "xact_rollback", "blks_hit", "blks_read", "deadlocks"):
+            assert f"pg_stat_database_{counter}_total" in metrics, counter
 
     def test_infrastructure_shows_valkey_write_rejection_and_cache_write_failures(self) -> None:
         """The panel plots exactly what the two Valkey write alerts evaluate."""
@@ -529,6 +559,17 @@ class TestCheckerRejectsBrokenDashboards:
         dashboard["panels"][0]["targets"][0]["expr"] = "sum(groovemap_typo_total)"
         problems = checker.check_dashboard(Path("bad.json"), dashboard, self.allowed)
         assert any("groovemap_typo_total" in problem for problem in problems)
+
+    def test_the_exporter_allowlist_names_nothing_the_stack_does_not_emit(self) -> None:
+        assert checker.EXPORTER_METRICS.isdisjoint(NOT_EMITTED_METRICS), sorted(checker.EXPORTER_METRICS & NOT_EMITTED_METRICS)
+
+    def test_a_panel_referencing_a_name_the_stack_does_not_emit_is_rejected(self) -> None:
+        allowed = checker.load_catalog() | checker.EXPORTER_METRICS
+        for metric in sorted(NOT_EMITTED_METRICS):
+            dashboard = _minimal_dashboard()
+            dashboard["panels"][0]["targets"][0]["expr"] = f"sum(rate({metric}[5m]))"
+            problems = checker.check_dashboard(Path("bad.json"), dashboard, allowed)
+            assert any(metric in problem for problem in problems), metric
 
     def test_a_hard_coded_datasource_uid_is_rejected(self) -> None:
         dashboard = _minimal_dashboard()
