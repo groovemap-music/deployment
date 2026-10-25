@@ -37,6 +37,18 @@ random_password() {
   python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(36)), end="")'
 }
 
+# Like write_secret, but always rewritten: the content is derived from another
+# secret, so a stale copy would disagree with its source.
+write_derived_secret() {
+  local name="$1"
+  local value="$2"
+  local path="$SECRETS_DIR/$name"
+  rm -f "$path"
+  (umask 077 && printf '%s' "$value" >"$path")
+  chmod 600 "$path"
+  echo "[ok]   $name derived"
+}
+
 # JWT secret key (hex, 32 bytes = 64 hex chars)
 write_secret "jwt_secret_key.txt" "$(openssl rand -hex 32)"
 
@@ -66,6 +78,15 @@ write_secret "neo4j_password.txt" "$(random_password)"
 
 # Valkey password (requirepass — see scripts/valkey-entrypoint.sh)
 write_secret "valkey_password.txt" "$(random_password)"
+
+# valkey-exporter's password file. oliver006/redis_exporter reads
+# --redis.password-file as a JSON map of Redis URI to password; the URI must equal
+# REDIS_ADDR in docker-compose.yml. Derived from valkey_password.txt (whether just
+# created or already present) and refreshed on every run.
+VALKEY_EXPORTER_ADDR="redis://valkey:6379"
+write_derived_secret "valkey_exporter_passwords.json" \
+  "$(python3 -c 'import json, sys; print(json.dumps({sys.argv[1]: open(sys.argv[2]).read()}), end="")' \
+    "$VALKEY_EXPORTER_ADDR" "$SECRETS_DIR/valkey_password.txt")"
 
 # Shared secret gating /api/internal/insights/* — MUST match between api and
 # insights (both read the same secrets/insights_internal_secret.txt file).

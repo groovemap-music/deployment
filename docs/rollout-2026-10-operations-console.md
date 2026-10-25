@@ -585,17 +585,21 @@ Check: `grep -E '^(DATABASE_SCHEMA|CATALOG_API|OPERATIONS_CONSOLE|MUSICBRAINZ_GR
 Expected: eight lines, each image line ending in the digest from `digests.txt`, and no
 `sha256:1111…` validation digest anywhere in the file.
 
-### 4.8 Create the new secret file
+### 4.8 Create the new secret files
 
-`docker-compose.prod.yml` now mounts `secrets/grafana_viewer_token.txt` into `dashboard`, and
-Compose refuses to create the container when a secret's file is missing.
+`docker-compose.prod.yml` now mounts `secrets/grafana_viewer_token.txt` into `dashboard` and
+`secrets/valkey_exporter_passwords.json` into `valkey-exporter`, and Compose refuses to create a
+container when a secret's file is missing. The second file is derived from the existing
+`valkey_password.txt` (a JSON map of Redis URI to password, the format `valkey-exporter` reads) and
+is rewritten on every run, so it cannot disagree with Valkey's password.
 
 ```bash
 cd "$LIVE" && just secrets-bootstrap
 ```
 
-Expected: `[ok]   grafana_viewer_token.txt created` (or `[skip]` if it exists) and `[skip]` for
-every other file. If any other file reports `[ok]`, stop: a live secret file was missing and a
+Expected: `[ok]   grafana_viewer_token.txt created` (or `[skip]` if it exists),
+`[ok]   valkey_exporter_passwords.json derived`, and `[skip]` for every other file. If any other
+file reports `[ok]`, stop: a live secret file was missing and a
 new random value was just written; the matching service still holds the old one. An empty token
 file means the attention bar shows no Grafana alerts. To turn alerts on, follow
 [Grafana Viewer token for the console](maintenance.md#grafana-viewer-token-for-the-console)
@@ -622,6 +626,8 @@ Expected differences, and nothing else:
   `VICTORIA_METRICS_URL`, `GRAFANA_API_URL`, `GRAFANA_URL`, `TRACES_URL` and
   `GRAFANA_TOKEN_FILE` added; secrets `rabbitmq_username` and `rabbitmq_password` replaced by
   `grafana_viewer_token`; a top-level `grafana_viewer_token` secret.
+- `valkey-exporter`: `REDIS_PASSWORD_FILE` now names the new `valkey_exporter_passwords` secret
+  (a JSON map) instead of `valkey_password`; a top-level `valkey_exporter_passwords` secret.
 - `brainzgraphinator` and `brainztableinator`: new images; healthchecks on `8001` and `8002`.
 - `graphinator`, `tableinator`, `schema-init`: new images.
 
@@ -701,8 +707,7 @@ docker inspect groovemap-schema-init groovemap-rabbitmq-dlq-policy-init --format
 
 Expected: exit 0, and both one-shot containers `exit=0`. The one-shots are not in the `--wait`
 list because `up --wait` does not accept an explicitly targeted container that exits.
-`valkey-exporter` has no healthcheck, so `--wait` only checks that it runs (see
-[Known issues](#7-known-issues-that-are-not-blockers) for why it may restart). If a
+`valkey-exporter` has no healthcheck, so `--wait` only checks that it runs. If a
 service stays unhealthy: `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs
 --tail 200 <service>`, then section 6.
 
@@ -736,8 +741,8 @@ maintenance record.
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml ps --all --format '{{.Service}} {{.State}} {{.Health}}'`.
 Expected: every long-running service `running`, with `healthy` wherever it has a healthcheck;
 `schema-init` and `rabbitmq-dlq-policy-init` `exited`. `valkey-exporter` has no healthcheck, so
-its health column is empty; if it shows `restarting`, compare with the "before" snapshot
-(`ps.before`) and see Known issues before treating it as a regression. If anything else is not
+its health column is empty; if it shows `restarting`, check its logs for a password file error
+before anything else (4.8). If anything else is not
 as expected: logs of that service, then section 6.
 
 **V2. The MusicBrainz consumers answer on their role ports.**
@@ -831,8 +836,7 @@ Expected: both pipelines `queues_available True` with their queues; `extractor-d
 `brainztableinator` `healthy` (an extractor reads `extracting` while it runs); every platform
 service (`catalog-api`, `explore`, `insights`, `postgres`, `neo4j`, `valkey`, `rabbitmq`,
 `victoria-metrics`, `victoria-traces`, `otel-collector`, `grafana`, `postgres-exporter`,
-`valkey-exporter`, `cadvisor`, `node-exporter`) `healthy`, except `valkey-exporter`, which reads
-`unreachable` while the known issue below stands. Then open `http://<host>:8003/` in a browser, sign in, and confirm the
+`valkey-exporter`, `cadvisor`, `node-exporter`) `healthy`. Then open `http://<host>:8003/` in a browser, sign in, and confirm the
 Overview matrix, the System Health cards and the history tabs render.
 
 **V8. The trigger contract is the new one, without starting a run.** Same shell as V6 (`TOKEN` set):
@@ -973,12 +977,6 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
 - The `api` service still sets `RABBITMQ_PROMETHEUS_URL`, which `catalog-api` stopped reading in
   `a9bda68`, and `config/rabbitmq-enabled-plugins` still names "the catalog API's queue-metrics
   history" as a reader of `/metrics/detailed`. Both are stale and harmless.
-- `valkey-exporter` restarts in a loop: `oliver006/redis_exporter` fails with `Error loading redis
-  passwords from file /run/secrets/valkey_password ... invalid character` (a JSON parse error) because
-  `REDIS_PASSWORD_FILE` in `docker-compose.prod.yml` names a plain-text secret. It happens before
-  and after this rollout, shows as `unreachable` in the console, and makes `ScrapeTargetDown`
-  fire for it. The Valkey data itself is not affected. It is not caused by this rollout; compare
-  with the "before" snapshot.
 - The toolkit's `Justfile` comment on `check-queues` still says it reads the management API.
 - Every console trigger is a `force_reprocess` run, before and after this rollout (O6).
 - `catalog-api` records a run's `record_counts` for artists, labels, masters and releases only,
