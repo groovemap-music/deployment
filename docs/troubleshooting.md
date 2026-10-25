@@ -125,7 +125,7 @@ curl -s 'http://127.0.0.1:15692/metrics/detailed?family=queue_coarse_metrics&fam
 ```
 
 If a console or API queue view shows no rates while those counters advance, check
-that `RABBITMQ_PROMETHEUS_URL` on the dashboard and api services points at
+that `RABBITMQ_PROMETHEUS_URL` on the dashboard service points at
 `http://rabbitmq:15692`. Do not re-enable `disable_management_stats`; it restores
 a deprecated collector (`management_metrics_collection`) the broker logs a
 warning for at every start.

@@ -235,7 +235,7 @@ class TestRabbitMqPrometheusPlugin:
             assert not {"RABBITMQ_HOST", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD"} & set(dashboard)
             assert not {"RABBITMQ_USERNAME_FILE", "RABBITMQ_PASSWORD_FILE"} & set(dashboard)
         assert _base_compose()["services"]["dashboard"]["environment"]["RABBITMQ_PROMETHEUS_URL"] == "http://rabbitmq:15692"
-        assert _base_compose()["services"]["api"]["environment"]["RABBITMQ_PROMETHEUS_URL"] == "http://rabbitmq:15692"
+        assert "RABBITMQ_PROMETHEUS_URL" not in _base_compose()["services"]["api"]["environment"]
 
     def test_dashboard_mounts_no_rabbitmq_secrets_in_prod(self) -> None:
         secrets = _prod_compose()["services"]["dashboard"]["secrets"]
