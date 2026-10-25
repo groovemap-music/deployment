@@ -210,7 +210,7 @@ class TestRabbitMqPrometheusPlugin:
     def test_enabled_plugins_file_lists_the_prometheus_plugin(self) -> None:
         plugins = ENABLED_PLUGINS.read_text()
         assert "rabbitmq_prometheus" in plugins
-        assert "rabbitmq_management" in plugins, "the management plugin must survive for the operator UI and the DLQ purge API"
+        assert "rabbitmq_management" in plugins, "the management plugin must survive for the operator UI"
 
     def test_enabled_plugins_file_is_mounted_read_only(self) -> None:
         volumes = _base_compose()["services"]["rabbitmq"]["volumes"]
@@ -241,7 +241,7 @@ class TestRabbitMqPrometheusPlugin:
         secrets = _prod_compose()["services"]["dashboard"]["secrets"]
         assert not {"rabbitmq_username", "rabbitmq_password"} & set(secrets)
 
-    def test_api_keeps_management_credentials_for_dlq_purge(self) -> None:
+    def test_api_keeps_amqp_credentials_for_dlq_purge(self) -> None:
         base_env = _base_compose()["services"]["api"]["environment"]
         assert {"RABBITMQ_HOST", "RABBITMQ_USERNAME", "RABBITMQ_PASSWORD"} <= set(base_env)
         prod_env = _prod_compose()["services"]["api"]["environment"]

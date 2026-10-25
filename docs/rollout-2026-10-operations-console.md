@@ -13,7 +13,11 @@ This guide releases and deploys the work that landed across nine repositories on
 - the PostgreSQL metrics-history collector, its two routes and its two tables retired;
 - extraction triggers that name their source and reach that source's extractor;
 - role-based health ports for the four consumers (graph enrichers on `8001`, SQL loaders on
-  `8002`), and consumers that exit with status 1 when their startup gives up.
+  `8002`), and consumers that exit with status 1 when their startup gives up;
+- a hardened console: the admin session is an HttpOnly cookie that is Secure by default (the
+  production console must be reached over HTTPS), credentialed CORS is gone, and
+  `catalog-api` purges dead-letter queues over AMQP, so it no longer needs the RabbitMQ
+  management API.
 
 It is written for an operator or agent with no other context. Work through it from top to
 bottom. Every step names a command, the result to expect, and what to do when the result
@@ -51,17 +55,18 @@ differs. Every constraint states its reason.
 | Repository | Image variable | Minimum commit | Why that commit | `main` when this guide was written |
 | --- | --- | --- | --- | --- |
 | `database-schema` | `DATABASE_SCHEMA_IMAGE` | `d0c8c90` and `825bd5c` | `d0c8c90` adds the `extraction_history.source` column and contains the table drop (`94860d5`); `825bd5c` adds `public.identity_link_events`, which the `musicbrainz-sql-loader` release needs | `ddcb54a` |
-| `catalog-api` | `CATALOG_API_IMAGE` | `af4f363` | contains the session route (`596a853`), the retired collector (`b8f5adb`), source routing (`9066cb7`) and the source-aware tracker (`af4f363`) | `ae619f0` |
-| `operations-console` | `OPERATIONS_CONSOLE_IMAGE` | `506832d` | contains every console change, ending with the role-based health ports (`e51b7fa`) | `910aa5e` |
+| `catalog-api` | `CATALOG_API_IMAGE` | `b9154f4` | contains the session route (`596a853`), the retired collector (`b8f5adb`), source routing (`9066cb7`), the source-aware tracker (`af4f363`), the AMQP dead-letter purge (`683b21b`) and per-source `record_counts` (`1846ce0`) | `b9154f4` |
+| `operations-console` | `OPERATIONS_CONSOLE_IMAGE` | `061775d` | contains every console change, ending with the HttpOnly session cookie (molecule `3vi9`, `357e73a`), server-side queue events (`zkk3`) and per-run e2e ports (`zz2c`), merged as `udba`; the role-based health ports (`e51b7fa`) are below it | `061775d` |
 | `musicbrainz-graph-enricher` | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `de11b1a` | health on `8001` (`e1ad948`), empty `HEALTH_PORT` rejected (`5d8dfa9`), exit 1 (`de11b1a`) | `09d40bb` |
 | `musicbrainz-sql-loader` | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `9353776` | health on `8002` (`30de8e0`), exit 1 (`9353776`) | `384e202` |
 | `discogs-graph-enricher` | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `4d70985` | `HEALTH_PORT` override (`204bc85`), exit 1 (`4d70985`) | `361116d` |
 | `discogs-sql-loader` | `DISCOGS_SQL_LOADER_IMAGE` | `6b8fa03` | `HEALTH_PORT` override (`5faa9b5`), exit 1 (`6b8fa03`) | `1b320dc` |
 | `operations-toolkit` | none: operators run it from a checkout | `89a9d12` | queue CLIs read `/metrics/detailed` | `49e0935` |
-| `deployment` | none: unversioned, applied from `main` | `a1d98f8` | contains all seven deployment commits below | `5a82509` |
+| `deployment` | none: unversioned, applied from `main` | `98605ab` | contains all eight deployment commits below; `98605ab` is the last (`SESSION_COOKIE_SECURE` for development, reset in production) | `ee607d9` |
 
 Unchanged by this rollout: `discogs-ingestion`, `musicbrainz-ingestion`, `graph-explorer` and
-`analytics-engine`. Leave `DISCOGS_INGESTION_IMAGE`, `MUSICBRAINZ_INGESTION_IMAGE`,
+`analytics-engine`. (`graph-explorer` `main` has since moved to Node 26.12.1, `ce62a4a`; nothing
+here needs it, so it ships whenever the human chooses.) Leave `DISCOGS_INGESTION_IMAGE`, `MUSICBRAINZ_INGESTION_IMAGE`,
 `GRAPH_EXPLORER_IMAGE` and `ANALYTICS_ENGINE_IMAGE` as they are. Both extractors' released
 images already serve `POST /trigger` and the `/health` fields the new tracker reads. `design`
 holds ADRs 0017 and 0018 and deploys nothing.
@@ -76,15 +81,19 @@ holds ADRs 0017 and 0018 and deploys nothing.
   `57787bf` the console's `VICTORIA_METRICS_URL`, `GRAFANA_URL`, `TRACES_URL`,
   `GRAFANA_TOKEN_FILE` and the `grafana_viewer_token` secret; `0327f97`
   `GRAFANA_API_URL=http://grafana:3000`; `b47655d` `brainzgraphinator` and
-  `brainztableinator` healthchecks on `8001` and `8002`.
+  `brainztableinator` healthchecks on `8001` and `8002`; `98605ab` `SESSION_COOKIE_SECURE=false`
+  on the base file's `dashboard` and `SESSION_COOKIE_SECURE: !reset null` in the production overlay.
 - `operations-console`, molecules `xcg` (live queue metrics from `/metrics/detailed`, no
   AMQP), `t34` (authenticated shell, Overview matrix, VictoriaMetrics history, attention bar,
   event feed, deep links, run progress, topology drill-down), `wcew` (both trigger paths send
   `source`; catalog-api contract promoted to `9066cb7`), `azaz` (`GRAFANA_API_URL`), `q91q`
-  (health for every long-running service), `k5lm` (role-based health URLs).
+  (health for every long-running service), `k5lm` (role-based health URLs), `3vi9` (HttpOnly
+  session cookie, same-origin checks, CORS off by default), `zkk3` (queue events computed on the
+  server), `zz2c` (per-run e2e ports), merged together as `udba`.
 - `catalog-api`, molecules `nfk4` (`GET /api/admin/auth/session`), `w8uc` (collector moved to
   `/metrics/detailed`), `gz4r` (collector and history routes retired), `intt` (trigger routed by
-  `source`, `source` persisted), `dl86` (tracker requires `source`).
+  `source`, `source` persisted), `dl86` (tracker requires `source`), `p6wx` (dead-letter purge over
+  AMQP, per-source `record_counts`).
 - `database-schema`, molecules `739r` (drop `queue_metrics` and `service_health_metrics`) and
   `3poz` (nullable `extraction_history.source` with a CHECK and an index).
 - `operations-toolkit`, molecule `539` (`check-queues`, `monitor-queues`, `system-monitor` read
@@ -102,8 +111,8 @@ compatibility of this program's changes only; the human must confirm that the re
 | Repository | Other work since the last tag (molecule ids, newest first) |
 | --- | --- |
 | `database-schema` (since `v0.4.1`) | `igu0` publication hygiene; `09mv` `public.identity_link_events`; `8gsl` filelock cooldown removed; `8kc2`, `ixhu`, `kazl`, `b0mk` Strata insights tables and a `musicbrainz.releases (release_group_mbid)` index; `jmd9`, `yn5v`, `uxd1` dependency security; `x45l`, `f4k9`, `afan` MusicBrainz schema research; `hqjp`, `2xe0` compact similar-artist lists; `5wsk` SQL/PGQ removal; `jb9b` tested runtime revision; `ug3v` per-track credit graph relations; `19g5` artist kNN through the embedding refresh; `7e690d3` and Dependabot updates |
-| `catalog-api` (since `v0.5.0`) | `j0sd` publication hygiene; `s74h` filelock cooldown removed; `n8vb`, `31ag`, `m4mn`, `r8c7`, `l1x9`, `3s01`, `bcre` Strata routes; `9xas`, `p04r`, `dqah` dependency security; `7hu4` keep a recorded `date_added`; `2zsq` similar artists from precomputed lists (behind a switch); `gtcr`, `qk92`, `foix` Valkey hardening; Dependabot updates. `v0.5.0` itself was never published (see [Known issues](#7-known-issues-that-are-not-blockers)), so its content (the Valkey client migration among it) also reaches production for the first time |
-| `operations-console` (since `v0.1.1`) | `ux1n` publication hygiene; `5cq` filelock cooldown removed; `nd3` Node.js toolchain security bump; and the 36 merges that were already on `origin/main` before this program's, among them `gvm` (OpenTelemetry metrics export; its `7fd8e30` removed the Prometheus `/metrics` endpoint), `wmi` (tracing), `4ww` (Redis payload fallback removed) and `0nc` (Valkey relabel) |
+| `catalog-api` (since `v0.5.0`) | `j0sd` publication hygiene; `s74h` filelock cooldown removed; `n8vb`, `31ag`, `m4mn`, `r8c7`, `l1x9`, `3s01`, `bcre` Strata routes; `9xas`, `p04r`, `dqah` dependency security; `7hu4` keep a recorded `date_added`; `2zsq` similar artists from precomputed lists (behind a switch); `gtcr`, `qk92`, `foix` Valkey hardening; Dependabot updates; `za77` and `cn2v` (Identity Ledger backfill and read-only admin routes). `v0.5.0` itself was never published (see [Known issues](#7-known-issues-that-are-not-blockers)), so its content (the Valkey client migration among it) also reaches production for the first time |
+| `operations-console` (since `v0.1.1`) | `ux1n` publication hygiene; `ipcv`, `mb0p`, `7kua` and the Degrees brand promotion (`85845d4`); `5cq` filelock cooldown removed; `nd3` Node.js toolchain security bump; and the 36 merges that were already on `origin/main` before this program's, among them `gvm` (OpenTelemetry metrics export; its `7fd8e30` removed the Prometheus `/metrics` endpoint), `wmi` (tracing), `4ww` (Redis payload fallback removed) and `0nc` (Valkey relabel) |
 | `musicbrainz-sql-loader` (since `v0.4.0`) | `44v` publication hygiene; `nxc` Strata M6 Discogs-link changes recorded at load (needs `database-schema` `825bd5c`); `1sb`, `kdl`, `ou7`, `uy2` dependency work; Dependabot updates |
 | `musicbrainz-graph-enricher` (since `v0.3.1`) | `mvg` publication hygiene; `nhz`, `8ix`, `uwc`, `d7f` dependency work; `569` tag-mapping spike documentation; Dependabot updates |
 | `discogs-graph-enricher` (since `v0.3.0`) | `j8x` publication hygiene; `80g` stop projecting the Discogs `0` master sentinel as a Master; `t1h` consumer-cancel hang fix; `zxw` bounded log files; dependency work; Dependabot updates |
@@ -142,11 +151,16 @@ wants to approve the whole rollout at once, record that statement and its scope.
 **P2. Check the tools.**
 
 ```bash
-gh auth status && docker buildx version && just --version && uv --version && python3 --version
+gh auth status && docker buildx version && docker compose version --short && just --version && uv --version && python3 --version
 ```
 
 Expected: `gh` is logged in to an account that can push to `groovemap-music`, and every command
-prints a version. If not: stop.
+prints a version. Docker Compose must be **2.24.0 or later** (the version that introduced the
+`!reset` and `!override` YAML tags; checked here with 5.6.1 only): the production overlay
+resets `SESSION_COOKIE_SECURE` with `!reset null`, and the smoke overlays
+(`docker-compose.erasure-smoke.yml`, `docker-compose.media-smoke.yml`) already use `!reset`. An
+older Compose rejects the tag or ignores it, and the dev opt-out would then reach production.
+If not: stop.
 
 **P3. Check every clone is clean, on `main`, and pushed.**
 
@@ -184,14 +198,14 @@ while read -r r c; do
 done <<'EOF'
 database-schema d0c8c90
 database-schema 825bd5c
-catalog-api af4f363
-operations-console 506832d
+catalog-api b9154f4
+operations-console 061775d
 musicbrainz-graph-enricher de11b1a
 musicbrainz-sql-loader 9353776
 discogs-graph-enricher 4d70985
 discogs-sql-loader 6b8fa03
 operations-toolkit 89a9d12
-deployment a1d98f8
+deployment 98605ab
 EOF
 ```
 
@@ -234,6 +248,22 @@ configuration does not set `major_version_zero`. Ask the human: `1.0.0` (the def
 `0.5.0` (bump with `--increment MINOR`, see [3.1](#31-database-schema)). The consumers pin
 `database-schema` by git revision, so either choice is safe for them.
 
+**P11. Find out how the production console is reached, and stop if it is plain HTTP.** The
+console's session cookie is Secure by default, and the production overlay does not opt out.
+Ask the human: what URL do operators open for the console, and what terminates TLS in front of
+port `8003`? Expected: an `https://` URL served by a TLS endpoint that meets
+[the requirements](configuration.md#console-session-cookie-and-https) (passes `Cookie` and
+`Set-Cookie` unchanged; passes `X-GrooveMap-Console`, `Sec-Fetch-Site`, `Origin` and
+`Authorization`; keeps the browser's `Host`; serves the console at the root of its own host
+name; forwards `/ws` with `Upgrade`; does not log `/ws` query strings, `Cookie` or
+`Set-Cookie`). **If operators reach the console over plain `http://<host>:8003`, stop and tell
+the human.** After the rollout, sign-in over plain HTTP fails without any error message: the
+browser drops the Secure cookie and the page returns to the login form. Observed: Chromium and
+Firefox still sign in on `http://localhost`, which they treat as a secure context, but Safari
+(WebKit) on `http://localhost`, and every browser on a non-localhost host name, stay on the login
+form. Do not work around it with `SESSION_COOKIE_SECURE=false` in production; an HTTPS endpoint
+in front of the console is the fix, and it is the human's decision to provide one first.
+
 ## 2. Hard constraints
 
 Each constraint below is what makes the order in sections 3 and 4 necessary. The single
@@ -245,8 +275,9 @@ Compose apply in [4.10](#410-apply-approval) satisfies all of them; the staged a
 | # | Ship together | Reason |
 | --- | --- | --- |
 | T1 | The `musicbrainz-graph-enricher` and `musicbrainz-sql-loader` releases, `deployment` `b47655d`, and `operations-console` `e51b7fa` | The released images (up to `v0.3.1` and `v0.4.0`) serve `/health` on `8011` and `8010`. `b47655d` probes `8001` and `8002`, and the console polls `8001` and `8002`. Any mix marks both containers unhealthy and shows them down in the console, even though they consume normally. |
-| T2 | The broker flip (`deployment` `10d307c`) with the console (`506832d`), `catalog-api` (`af4f363`) and the toolkit (`89a9d12`) | With `disable_metrics_collector true`, the management API's `GET /api/queues` omits `messages`, `messages_ready`, `messages_unacknowledged`, `consumers` and `message_stats` (checked against the pinned `rabbitmq:4-management` image, RabbitMQ 4.3.6). Console `v0.1.1` and the toolkit before `765b115` read those fields and report 0 for every queue, and the `catalog-api` collector up to `v0.5.0` records 0. Console `v0.1.1` also opens an AMQP connection with the `RABBITMQ_*` credentials that `10d307c` removes from its service. |
+| T2 | The broker flip (`deployment` `10d307c`) with the console (`061775d`), `catalog-api` (`b9154f4`) and the toolkit (`89a9d12`) | With `disable_metrics_collector true`, the management API's `GET /api/queues` omits `messages`, `messages_ready`, `messages_unacknowledged`, `consumers` and `message_stats` (checked against the pinned `rabbitmq:4-management` image, RabbitMQ 4.3.6). Console `v0.1.1` and the toolkit before `765b115` read those fields and report 0 for every queue, and the `catalog-api` collector up to `v0.5.0` records 0. Console `v0.1.1` also opens an AMQP connection with the `RABBITMQ_*` credentials that `10d307c` removes from its service. |
 | T3 | `operations-console` (`4de8342` or later) with `catalog-api` (`9066cb7` or later) | `catalog-api` from `9066cb7` answers 422 to a trigger without a `source`; console `v0.1.1`'s Discogs button posts no body, so it fails. The reverse is worse: `catalog-api` up to `v0.5.0` ignores the body and always posts `{"force_reprocess": true}` to the Discogs extractor, so a MusicBrainz button press, from either console, starts a full Discogs reprocess. Never press a trigger button while the running `catalog-api` predates `9066cb7`. |
+| T4 | The console image (`061775d`) with `deployment` `98605ab` and an HTTPS endpoint in front of the production console | The new console's cookie is Secure and the setting must ship in the same change as the image: the production overlay must reset the base file's `SESSION_COOKIE_SECURE=false`, and the operators must reach the console over HTTPS (P11). Without that, every operator is stuck on the login form. |
 
 ### What must come first
 
@@ -363,7 +394,7 @@ generated entry lists it only under `Feat`):
 
 ### 3.2 `catalog-api`
 
-Minimum `af4f363`; next version `0.6.0`. Breaking changes, none marked in the commits:
+Minimum `b9154f4`; next version `0.6.0`. Breaking changes, none marked in the commits:
 
 - `a9bda68` `refactor(admin)`: `GET /api/admin/queues/history`, `GET /api/admin/health/history`,
   the background metrics collector and the `METRICS_COLLECTION_INTERVAL` and
@@ -377,6 +408,11 @@ Minimum `af4f363`; next version `0.6.0`. Breaking changes, none marked in the co
   Discogs-only fallback for one release. The response and the extraction list carry `source`.
 - `3e92a90`: needs `database-schema` `d0c8c90` or later applied; it writes
   `extraction_history.source`.
+- `683b21b` `feat(admin)`: dead-letter queues are purged over AMQP instead of the RabbitMQ
+  management API, so `catalog-api` no longer needs the management API or its port. Nothing in
+  the deployment changes for it; the management plugin stays enabled for the operators' own use.
+- `1846ce0` `fix(admin)`: a run's `record_counts` carry only the entity types of that run's
+  source, so a MusicBrainz run records `release_groups` and no longer a meaningless `masters: 0`.
 - This is the first published image after `v0.4.0`: `v0.5.0` was tagged but never published.
 
 ### 3.3 `musicbrainz-graph-enricher`
@@ -411,7 +447,7 @@ when startup gives up.
 
 ### 3.7 `operations-console`
 
-Minimum `506832d`; next version `0.2.0`. Breaking changes, none marked:
+Minimum `061775d`; next version `0.2.0`. Breaking changes, none marked:
 
 - `933e5fd` `feat(console)`: one authenticated shell at `/`. `/api/metrics`, `/api/services`,
   `/api/queues`, `/api/queue-prefixes`, `/api/topology`, `/api/databases`, `/api/history/*`,
@@ -432,7 +468,25 @@ Minimum `506832d`; next version `0.2.0`. Breaking changes, none marked:
 - `4de8342`: both trigger proxies send `source`; requires `catalog-api` `9066cb7` or later.
 - `e51b7fa`: `brainzgraphinator` and `brainztableinator` are polled on `8001` and `8002`;
   requires the releases from 3.3 and 3.4.
-- New settings: `VICTORIA_METRICS_URL`, `GRAFANA_URL`, `GRAFANA_API_URL`, `TRACES_URL`,
+- `357e73a` (`3vi9`): the admin session is an HttpOnly, SameSite=Strict cookie
+  (`__Host-groovemap_console_session` when Secure) instead of a bearer in the browser's
+  `localStorage`. The cookie is **Secure by default**, whatever scheme the console sees; only an
+  explicit `SESSION_COOKIE_SECURE=false` (accepted: `true`/`1`/`yes`, `false`/`0`/`no`; anything
+  else, including the old `auto`, stops the console starting) turns Secure off. Consequences:
+  - Every operator signs in once after the upgrade: the new console revokes and removes any
+    `localStorage` bearer.
+  - Plain-HTTP access fails silently (P11). The development stack sets
+    `SESSION_COOKIE_SECURE=false`; production resets it and needs HTTPS.
+  - Credentialed CORS is gone: CORS is off unless `CORS_ORIGINS` is set, then GET-only and
+    without credentials. Nothing in `deployment` sets `CORS_ORIGINS` for `dashboard`, and Grafana
+    only navigates to the console.
+  - A mutating request must be same-origin, and `POST /admin/api/login` answers `403` to a
+    request with neither an `Authorization` nor an `X-GrooveMap-Console` header, and its body no
+    longer carries `access_token`. A request that sends `Authorization: Bearer` is exempt from
+    the same-origin checks, so the verification curls in V8 and V9 still work. Take the token
+    from `catalog-api`'s own login (V6).
+- `afe07b7` (`zkk3`): stalled and no-consumer queue events are detected on the server.
+- New settings: `SESSION_COOKIE_SECURE`, `VICTORIA_METRICS_URL`, `GRAFANA_URL`, `GRAFANA_API_URL`, `TRACES_URL`,
   `GRAFANA_TOKEN_FILE`, `SESSION_CACHE_SECONDS`. Another session's `7fd8e30` (shipping in the same
   release) removed the Prometheus `/metrics` endpoint; nothing in this deployment scrapes it.
 
@@ -555,7 +609,7 @@ were created with, and the Grafana provisioning files are unchanged between the 
 LIVE=... ; PRIVATE=...
 cd "$LIVE"
 git fetch origin && git merge --ff-only origin/main
-git merge-base --is-ancestor a1d98f8 HEAD && echo ok
+git merge-base --is-ancestor 98605ab HEAD && echo ok
 git diff --stat "$(cat "$PRIVATE/deployment-rollback-sha")" HEAD -- docker-compose.yml docker-compose.prod.yml config scripts
 ```
 
@@ -621,7 +675,9 @@ Expected differences, and nothing else:
   false`; a port `127.0.0.1:15692 -> 15692`.
 - `victoria-metrics`: `-retentionPeriod=90d` (was `15d`).
 - `api`: the new image.
-- `dashboard`: the new image; `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`,
+- `dashboard`: the new image; **no `SESSION_COOKIE_SECURE`** in the render (the base file sets
+  `false`; the production overlay resets it; if it appears, stop: the Compose version is too old
+  for `!reset`, P2); `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`,
   `RABBITMQ_USERNAME_FILE` and `RABBITMQ_PASSWORD_FILE` removed; `RABBITMQ_PROMETHEUS_URL`,
   `VICTORIA_METRICS_URL`, `GRAFANA_API_URL`, `GRAFANA_URL`, `TRACES_URL` and
   `GRAFANA_TOKEN_FILE` added; secrets `rabbitmq_username` and `rabbitmq_password` replaced by
@@ -792,15 +848,18 @@ docker exec groovemap-postgres psql -U groovemap -d groovemap -Atc "select to_re
 
 Expected: `t|t|t`.
 
-**V6. The console signs in.** Ask the human to write an admin's credentials to
+**V6. The console accepts a `catalog-api` session.** Ask the human to write an admin's credentials to
 `$PRIVATE/admin-login.json` as `{"email": "...", "password": "..."}` (mode 600; `docker exec
-groovemap-api catalog-admin-setup --list` lists admin accounts). Then, in one shell, which you
-keep for V7 to V9: the login is rate limited to 5 per minute, and answers `429` with
-`Rate limit exceeded` beyond that, so sign in once per shell and do not repeat the login block.
+groovemap-api catalog-admin-setup --list` lists admin accounts). The console's own
+`POST /admin/api/login` no longer returns a token (3.7), so take the token from `catalog-api`'s
+login and send it to the console as `Authorization: Bearer`, which the console accepts ahead of
+the cookie. Then, in one shell, which you keep for V7 to V9: the login is rate limited to 5 per
+minute, and answers `429` with `Rate limit exceeded` beyond that, so sign in once per shell and
+do not repeat the login block.
 
 ```bash
 PRIVATE=...
-TOKEN=$(curl -sf -X POST http://127.0.0.1:8003/admin/api/login -H 'Content-Type: application/json' --data @"$PRIVATE/admin-login.json" \
+TOKEN=$(curl -sf -X POST http://127.0.0.1:8004/api/admin/auth/login -H 'Content-Type: application/json' --data @"$PRIVATE/admin-login.json" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 curl -s -o /dev/null -w 'anonymous /api/metrics %{http_code}\n' http://127.0.0.1:8003/api/metrics
 for p in /api/session /api/links /api/alerts '/api/history/queues?range=1h' '/api/history/health?range=1h'; do
@@ -812,9 +871,27 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8003/api/alerts | pyt
 
 Expected: `anonymous /api/metrics 401`; `200` for each of the five routes; `/api/links` returns
 `GRAFANA_URL` as `grafana` (and `traces`); alerts `configured False available False` with an
-empty token file, or `configured True available True` with a token. If login fails with 503: the
+empty token file, or `configured True available True` with a token. If `/api/session` answers 503: the
 console cannot reach `catalog-api`'s session route (F1); check `api` health. If
 `/api/history/*` answer 503: the console cannot reach VictoriaMetrics.
+
+**V6b. The session cookie is Secure, and the production container carries no opt-out.** Run
+the first command on the host, the second from a machine that reaches the console the way the
+operators do (P11), with `CONSOLE_URL` set to that `https://` URL:
+
+```bash
+docker inspect groovemap-dashboard --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -c '^SESSION_COOKIE_SECURE=' || true
+curl -sf -D - -o /dev/null -X POST "$CONSOLE_URL/admin/api/login" -H 'Content-Type: application/json' \
+  -H 'X-GrooveMap-Console: 1' --data @"$PRIVATE/admin-login.json" | grep -i '^set-cookie'
+```
+
+Expected: `0` (no `SESSION_COOKIE_SECURE` variable in the running production container), then a
+`set-cookie: __Host-groovemap_console_session=...; HttpOnly; Max-Age=3600; Path=/; SameSite=strict; Secure`
+header (attribute order and case may differ): the `__Host-` prefix, `Secure` and `HttpOnly`. If
+the count is `1`: the dev opt-out reached production; stop and check 4.9. If the cookie lacks
+`Secure` or the `__Host-` prefix, or there is no `Set-Cookie`: the TLS endpoint is altering
+headers or the console runs an older image. The login block spends one of `catalog-api`'s five
+logins per minute; run it once.
 
 **V7. The console shows every service.** Same shell as V6 (`TOKEN` is already set; if the shell
 was lost, sign in again with the first command of V6):
@@ -836,8 +913,11 @@ Expected: both pipelines `queues_available True` with their queues; `extractor-d
 `brainztableinator` `healthy` (an extractor reads `extracting` while it runs); every platform
 service (`catalog-api`, `explore`, `insights`, `postgres`, `neo4j`, `valkey`, `rabbitmq`,
 `victoria-metrics`, `victoria-traces`, `otel-collector`, `grafana`, `postgres-exporter`,
-`valkey-exporter`, `cadvisor`, `node-exporter`) `healthy`. Then open `http://<host>:8003/` in a browser, sign in, and confirm the
-Overview matrix, the System Health cards and the history tabs render.
+`valkey-exporter`, `cadvisor`, `node-exporter`) `healthy`. Then open the console's **HTTPS** URL (P11) in a browser, sign in with the
+admin's credentials, and confirm the Overview matrix, the System Health cards and the history
+tabs render. Sign-in works in Chromium, Firefox and Safari there. On plain `http://<host>:8003`
+it does not (Safari anywhere, and any browser on a non-localhost host): the browser drops the Secure
+cookie and the page silently returns to the login form; that is P11, not a console fault.
 
 **V8. The trigger contract is the new one, without starting a run.** Same shell as V6 (`TOKEN` set):
 
@@ -921,12 +1001,18 @@ rule firing now whose name was not listed before (for example `ScrapeTargetDown`
 4. Verify: V1; `brainzgraphinator` and `brainztableinator` are `healthy`; the management API
    carries queue statistics again, which is the check V3 inverted:
    `curl -s -K - http://127.0.0.1:15672/api/queues <<<"user = \"$(cat secrets/rabbitmq_username.txt):$(cat secrets/rabbitmq_password.txt)\"" | python3 -c 'import json,sys; q=json.load(sys.stdin); print(len(q), any("messages" in x for x in q))'`
-   prints the queue count and `True`. The old console at `http://<host>:8003/` answers `200` on
+   prints the queue count and `True`. The old console (plain `http://<host>:8003/` works again, since it sets no Secure cookie) answers `200` on
    `/api/metrics` without signing in; its queue depths are `0` whenever the queues are empty, so
    they prove nothing on an idle broker.
 5. Tell operators to return their toolkit checkouts to the revision they ran before.
 6. Return the checkout to `main` (`git -C "$LIVE" switch main`) only when the rollforward is
    attempted again.
+
+Sign-in across the rollback: going back to the old console image is safe. It keeps its bearer
+in `localStorage` and the new cookie means nothing to it, so every operator signs in again.
+Rolling forward again revokes and removes any `localStorage` bearer, so every operator signs in
+once more; this is expected, and worth announcing before either move. Rolling back the image
+does not need a deployment revert for the cookie: the old console ignores `SESSION_COOKIE_SECURE`.
 
 What this rollback leaves behind: the old `catalog-api` runs against a schema without
 `queue_metrics` and `service_health_metrics`, because the new `schema-init` drops them again on
@@ -966,10 +1052,7 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
 ## 7. Known issues that are not blockers
 
 - `catalog-api` `v0.5.0` has a tag but no image (O4).
-- The toolkit's `Justfile` comment on `check-queues` still says it reads the management API.
 - Every console trigger is a `force_reprocess` run, before and after this rollout (O6).
-- `catalog-api` records a run's `record_counts` for artists, labels, masters and releases only,
-  so a MusicBrainz run's `release_groups` count is not recorded.
 - The console's 30-day and 90-day history fill over time: publish and ack rates start with the
   `rabbitmq-detailed` scrape, and queue depth reaches back at most the 15 days the old retention
   kept.
