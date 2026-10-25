@@ -95,15 +95,16 @@ networks:
 
 ### 7. Restart Policies (Production)
 
-Production deployment includes automatic restart policies:
+Production sets `restart: always` on every long-running service in `docker-compose.prod.yml`, so a
+crashed container is restarted (with Docker's backoff between attempts) and comes back after a daemon
+or host restart. The one-shot `schema-init`, `rabbitmq-dlq-policy-init` and `embeddings` jobs keep the
+base file's policy.
 
-```yaml
-deploy:
-  restart_policy:
-    condition: any
-    delay: 5s
-    max_attempts: 3
-```
+The overlay does not set `deploy.restart_policy`. Docker Compose lets it override `restart:`, and the
+engine accepts a retry cap (`max_attempts`) only with `on-failure`, so `restart: always` together
+with `max_attempts` fails at `docker compose up` with `maximum retry count can only be used with
+'on-failure'` (observed on Compose 5.6.1). A test (`tests/deploy/test_docker_compose_prod.py`) keeps
+both mechanisms from being combined. The fix relies on no minimum Compose version.
 
 ## Environment Variables
 
