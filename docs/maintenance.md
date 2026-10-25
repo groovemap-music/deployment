@@ -634,6 +634,18 @@ cannot be read or decoded, or a token Grafana rejects or cannot be reached with,
 create a new token, replace the file, restart `dashboard`, then delete the old token in
 Grafana. The development stack mounts no token, so alerts stay off there.
 
+## Console sign-in over HTTPS
+
+The console's session cookie is Secure by default. The dev stack opts out
+(`SESSION_COOKIE_SECURE=false` on `dashboard` in `docker-compose.yml`); the production overlay
+must not, so the production console has to be reached over HTTPS. Over plain http the cookie is
+dropped and sign-in silently returns to the login form. Check how operators reach the console
+before any console image bump, and see
+[Console session cookie and HTTPS](configuration.md#console-session-cookie-and-https) for what the
+TLS endpoint must forward. After upgrading from a console that kept its bearer in
+`localStorage`, every operator signs in once; rolling back to that image also needs a new
+sign-in.
+
 ## Backups and restore drills
 
 Backups are environment-specific and must be tested, not merely scheduled.

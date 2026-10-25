@@ -208,6 +208,35 @@ class TestConsoleObservabilityWiring:
         assert "GRAFANA_TOKEN_FILE" not in _base_compose()["services"]["dashboard"]["environment"]
 
 
+class TestConsoleSessionCookie:
+    """The console's Secure session cookie: opted out in dev, never in production."""
+
+    # The values the console accepts; anything else stops it starting.
+    ACCEPTED = frozenset({"true", "1", "yes", "false", "0", "no"})
+
+    def test_dev_stack_opts_out_so_plain_http_sign_in_works(self) -> None:
+        env = _base_compose()["services"]["dashboard"]["environment"]
+        assert str(env["SESSION_COOKIE_SECURE"]).lower() == "false"
+        assert str(env["SESSION_COOKIE_SECURE"]).lower() in self.ACCEPTED
+
+    def test_prod_overlay_resets_the_dev_opt_out_so_the_secure_default_applies(self) -> None:
+        """Compose merges environment key by key, so the base opt-out would carry into prod.
+
+        The overlay must `!reset` it (the test loader reads the tagged ``null`` as the string
+        ``"null"``); a value of its own, true or false, is not the console's default.
+        """
+        env = _prod_compose()["services"]["dashboard"]["environment"]
+        assert "SESSION_COOKIE_SECURE" in env
+        assert env["SESSION_COOKIE_SECURE"] in (None, "null")
+        assert "SESSION_COOKIE_SECURE: !reset null" in (REPO_ROOT / "docker-compose.prod.yml").read_text()
+
+    def test_no_other_prod_service_sets_the_cookie_setting(self) -> None:
+        for name, service in _prod_compose()["services"].items():
+            if name == "dashboard":
+                continue
+            assert "SESSION_COOKIE_SECURE" not in (service.get("environment") or {}), name
+
+
 def test_valkey_exporter_reads_a_json_password_map_not_the_plain_secret() -> None:
     """redis_exporter's --redis.password-file is a JSON map of URI to password.
 

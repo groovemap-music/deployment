@@ -460,6 +460,11 @@ services:
     restart: always
     environment:
       <<: *otel-prod-env
+      # The base file opts out of the console's Secure session cookie for plain-http dev.
+      # Environments merge key by key, so without this the opt-out would carry into
+      # production. Reset it: the console's Secure default applies, and the production
+      # console must be reached over HTTPS (docs/configuration.md).
+      SESSION_COOKIE_SECURE: !reset null
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username

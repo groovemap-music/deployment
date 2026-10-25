@@ -1010,6 +1010,11 @@ services:
       TRACES_URL: "${TRACES_URL:-${GRAFANA_URL:-http://localhost:3000}}"
       API_HOST: api
       API_PORT: "8004"
+      # The console's session cookie is HttpOnly and Secure by default. The dev stack
+      # serves it over plain http on :8003, and Safari (and any browser on a non-localhost
+      # host) drops a Secure cookie there, so sign-in would silently fail. The production
+      # overlay never sets this: production reaches the console over HTTPS.
+      SESSION_COOKIE_SECURE: "false"
       UV_CACHE_DIR: "/tmp/.cache/uv"
     ports:
       - "8003:8003"
