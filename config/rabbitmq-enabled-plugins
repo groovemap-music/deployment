@@ -1,9 +1,11 @@
 %% RabbitMQ plugin list, mounted read-only at /etc/rabbitmq/enabled_plugins.
 %%
-%% rabbitmq_management  — the operator management UI and HTTP API on 15672, and
-%%                        the catalog API's DLQ purge. Its stats collector is
-%%                        disabled (management_agent.disable_metrics_collector),
-%%                        so nothing reads queue stats from it.
+%% rabbitmq_management  — the operator management UI and HTTP API on 15672. Its
+%%                        stats collector is disabled
+%%                        (management_agent.disable_metrics_collector), so
+%%                        nothing reads queue stats from it. The catalog API
+%%                        purges dead-letter queues over AMQP and no longer
+%%                        calls this API.
 %% rabbitmq_prometheus  — the Prometheus endpoint on 15692: otel-collector scrapes
 %%                        it for the dashboards and alerts, and the operations
 %%                        console and the operations toolkit read
