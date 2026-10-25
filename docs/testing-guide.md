@@ -51,6 +51,19 @@ iterating:
 their output. Review them locally and do not attach an unredacted render to a
 ticket or commit it.
 
+### Branch protection recommendation
+
+Dependabot PR #40 moved both RabbitMQ images to the 4.4.0 digest and merged
+while the Required validation job was failing, because `main` has no required
+status checks. The recommendation is to require the "Required result" check in
+`main`'s branch protection so a red PR cannot merge. This is a recommendation
+only; nothing has been applied to GitHub.
+
+The RabbitMQ image is pinned once, on the `rabbitmq` service in
+`docker-compose.yml`. `scripts/check-rabbitmq-dlq-policy.py` derives the expected
+image from that service and requires `rabbitmq-dlq-policy-init` to match it, so a
+Dependabot digest bump cannot desync the two.
+
 ## Validation flow
 
 ```mermaid
