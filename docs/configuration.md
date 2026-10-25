@@ -1072,6 +1072,7 @@ This creates `secrets/` with these files (all `chmod 600`, directory `chmod 700`
 | `rabbitmq_password.txt` | `openssl rand -base64 24` |
 | `rabbitmq_username.txt` | `groovemap` |
 | `valkey_password.txt` | `openssl rand -base64 24` |
+| `valkey_exporter_passwords.json` | Derived from `valkey_password.txt` by `scripts/create-secrets.sh` on every run (JSON map of Redis URI to password, for `valkey-exporter`) |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
 | `grafana_admin_password.txt` | `openssl rand -base64 24`; Grafana admin login |
 

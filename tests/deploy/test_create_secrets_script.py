@@ -9,11 +9,14 @@ was added.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import shutil
 import subprocess
 from pathlib import Path
+
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -96,3 +99,34 @@ def test_existing_secret_files_are_never_overwritten(tmp_path: Path) -> None:
     subprocess.run([_BASH, str(tmp_path / "scripts" / "create-secrets.sh")], capture_output=True, check=True, timeout=30)
     after = {name: (secrets_dir / name).read_text() for name in GENERATED_PASSWORD_FILES}
     assert after == before
+
+
+def test_valkey_exporter_password_file_is_derived_from_the_valkey_password(tmp_path: Path) -> None:
+    """oliver006/redis_exporter reads a JSON map of Redis URI to password.
+
+    The map is derived from valkey_password.txt, and its URI is the base file's
+    REDIS_ADDR for the exporter, so the exporter authenticates with the
+    password Valkey was started with.
+    """
+    secrets_dir = _run_in_scratch(tmp_path)
+    password = (secrets_dir / "valkey_password.txt").read_text()
+    mapping = json.loads((secrets_dir / "valkey_exporter_passwords.json").read_text())
+
+    assert mapping == {"redis://valkey:6379": password}
+    assert (secrets_dir / "valkey_exporter_passwords.json").stat().st_mode & 0o777 == 0o600
+    base = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    assert base["services"]["valkey-exporter"]["environment"]["REDIS_ADDR"] in mapping
+
+
+def test_valkey_exporter_password_file_follows_an_existing_valkey_password(tmp_path: Path) -> None:
+    """An existing valkey_password.txt is kept, and the derived map is refreshed to match it."""
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "valkey_password.txt").write_text('pa/ss+"word\\')
+    (secrets_dir / "valkey_exporter_passwords.json").write_text('{"redis://valkey:6379": "stale"}')
+
+    _run_in_scratch(tmp_path)
+
+    assert (secrets_dir / "valkey_password.txt").read_text() == 'pa/ss+"word\\'
+    mapping = json.loads((secrets_dir / "valkey_exporter_passwords.json").read_text())
+    assert mapping == {"redis://valkey:6379": 'pa/ss+"word\\'}

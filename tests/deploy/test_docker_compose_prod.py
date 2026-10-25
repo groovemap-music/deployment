@@ -206,3 +206,17 @@ class TestConsoleObservabilityWiring:
 
     def test_base_file_leaves_the_token_unset(self) -> None:
         assert "GRAFANA_TOKEN_FILE" not in _base_compose()["services"]["dashboard"]["environment"]
+
+
+def test_valkey_exporter_reads_a_json_password_map_not_the_plain_secret() -> None:
+    """redis_exporter's --redis.password-file is a JSON map of URI to password.
+
+    Pointing it at the plain valkey_password secret made it crash-loop. It must
+    read the derived map, and the password itself must not enter its environment.
+    """
+    exporter = _prod_compose()["services"]["valkey-exporter"]
+    secret_file = _prod_compose()["secrets"]["valkey_exporter_passwords"]["file"]
+
+    assert exporter["environment"] == {"REDIS_PASSWORD_FILE": "/run/secrets/valkey_exporter_passwords"}
+    assert exporter["secrets"] == ["valkey_exporter_passwords"]
+    assert secret_file == "./secrets/valkey_exporter_passwords.json"

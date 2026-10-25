@@ -306,10 +306,12 @@ class TestExporterCredentialsInProd:
         assert exporter["environment"]["DATA_SOURCE_PASS"] is None
         assert set(exporter["secrets"]) == {"postgres_username", "postgres_password"}
 
-    def test_valkey_exporter_reads_the_file_backed_password(self) -> None:
+    def test_valkey_exporter_reads_the_file_backed_password_map(self) -> None:
+        # redis_exporter's --redis.password-file is a JSON map of URI to password
+        # (derived from valkey_password by scripts/create-secrets.sh), not the plain secret.
         exporter = _prod_compose()["services"]["valkey-exporter"]
-        assert exporter["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/valkey_password"
-        assert "valkey_password" in exporter["secrets"]
+        assert exporter["environment"]["REDIS_PASSWORD_FILE"] == "/run/secrets/valkey_exporter_passwords"
+        assert "valkey_exporter_passwords" in exporter["secrets"]
 
 
 class TestCollectorScrapesInfrastructure:

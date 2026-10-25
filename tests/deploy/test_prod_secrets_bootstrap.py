@@ -53,14 +53,14 @@ def _service_secret_refs() -> dict[str, list[str]]:
 
 
 def _bootstrapped_secret_files() -> set[str]:
-    """Filenames that ``scripts/create-secrets.sh`` writes via ``write_secret``."""
+    """Filenames that ``scripts/create-secrets.sh`` writes via ``write_secret`` or ``write_derived_secret``."""
     text = CREATE_SECRETS.read_text(encoding="utf-8")
     written: set[str] = set()
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        match = re.match(r'write_secret\s+"([^"]+)"', stripped)
+        match = re.match(r'write_(?:derived_)?secret\s+"([^"]+)"', stripped)
         if match:
             written.add(match.group(1))
     return written
