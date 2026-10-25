@@ -9,6 +9,8 @@ was added.
 
 from __future__ import annotations
 
+import math
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -45,3 +47,52 @@ def test_generates_valkey_password_secret(tmp_path: Path) -> None:
     # Every other secret must still be generated too (no regression).
     assert (secrets_dir / "neo4j_password.txt").exists()
     assert (secrets_dir / "rabbitmq_password.txt").exists()
+
+
+GENERATED_PASSWORD_FILES = (
+    "postgres_password.txt",
+    "rabbitmq_password.txt",
+    "neo4j_password.txt",
+    "valkey_password.txt",
+    "grafana_admin_password.txt",
+    "embedding_pipeline_password.txt",
+)
+# 192 bits was the entropy of the previous `openssl rand -base64 24`.
+MIN_ENTROPY_BITS = 192
+RUNS = 25
+
+
+def _run_in_scratch(tmp_path: Path) -> Path:
+    scratch_scripts = tmp_path / "scripts"
+    scratch_scripts.mkdir(parents=True)
+    scratch_script = scratch_scripts / "create-secrets.sh"
+    shutil.copy(SCRIPT, scratch_script)
+    scratch_script.chmod(0o755)
+    result = subprocess.run([_BASH, str(scratch_script)], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    return tmp_path / "secrets"
+
+
+def test_generated_passwords_use_a_safe_alphabet(tmp_path: Path) -> None:
+    seen: dict[str, set[str]] = {name: set() for name in GENERATED_PASSWORD_FILES}
+    for run in range(RUNS):
+        secrets_dir = _run_in_scratch(tmp_path / f"run{run}")
+        for name in GENERATED_PASSWORD_FILES:
+            value = (secrets_dir / name).read_text()
+            assert re.fullmatch(r"[A-Za-z0-9]+", value), f"{name} has unsafe characters"
+            assert len(value) * math.log2(62) >= MIN_ENTROPY_BITS, f"{name} is too short"
+            seen[name].add(value)
+    # Distinct per run and per file: nothing is constant or shared.
+    for name, values in seen.items():
+        assert len(values) == RUNS, name
+    assert len(set().union(*seen.values())) == RUNS * len(GENERATED_PASSWORD_FILES)
+
+
+def test_existing_secret_files_are_never_overwritten(tmp_path: Path) -> None:
+    secrets_dir = _run_in_scratch(tmp_path)
+    before = {name: (secrets_dir / name).read_text() for name in GENERATED_PASSWORD_FILES}
+    (secrets_dir / "neo4j_password.txt").write_text("kept/+value")
+    before["neo4j_password.txt"] = "kept/+value"
+    subprocess.run([_BASH, str(tmp_path / "scripts" / "create-secrets.sh")], capture_output=True, check=True, timeout=30)
+    after = {name: (secrets_dir / name).read_text() for name in GENERATED_PASSWORD_FILES}
+    assert after == before
