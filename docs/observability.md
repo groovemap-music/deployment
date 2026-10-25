@@ -1629,8 +1629,13 @@ land as `pg_stat_database_xact_commit_total` and so on. The panels ask for the
 unsuffixed name and can therefore never fill. A sixth,
 `rabbitmq_global_messages_published_total`, does not exist in RabbitMQ 4 at all —
 the publish-side counter is now `rabbitmq_global_messages_received_total`. All
-six are recorded as follow-ups; none is a wave-2 regression, and none was
-changed here.
+six were recorded as follow-ups; none is a wave-2 regression, and none was
+changed in that run. Bead `gm-deployment-rk8o` has since corrected all six
+panel queries: the PostgreSQL panels use the `_total` names and the publish
+panel reads `rabbitmq_global_messages_received_total`, which counts every
+message received from publishers on any protocol and, unlike
+`rabbitmq_channel_messages_published_total`, does not lose its history when a
+channel closes.
 
 **Alert rules.** All seventeen provisioned into folder `GrooveMap`, group
 `groovemap`, and all seventeen evaluated with `health=ok`:
@@ -1671,8 +1676,8 @@ the services.
 
 | Follow-up | Evidence |
 | --- | --- |
-| Five Infrastructure panel queries name `pg_stat_database_xact_commit`, `pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`, `pg_stat_database_blks_read`, and `pg_stat_database_deadlocks`; remote write stores them with a `_total` suffix. | Three PostgreSQL panels are permanently empty. The suffixed names are present in VictoriaMetrics and the unsuffixed ones are absent. |
-| The Infrastructure RabbitMQ publish-rate query names `rabbitmq_global_messages_published_total`, which RabbitMQ 4 does not emit. | The broker's `:15692` endpoint publishes `rabbitmq_global_messages_received_total` and no `_published_` counter at all. |
+| Five Infrastructure panel queries name `pg_stat_database_xact_commit`, `pg_stat_database_xact_rollback`, `pg_stat_database_blks_hit`, `pg_stat_database_blks_read`, and `pg_stat_database_deadlocks`; remote write stores them with a `_total` suffix. | Three PostgreSQL panels were permanently empty. The suffixed names are present in VictoriaMetrics and the unsuffixed ones are absent. Fixed in `gm-deployment-rk8o`. |
+| The Infrastructure RabbitMQ publish-rate query names `rabbitmq_global_messages_published_total`, which RabbitMQ 4 does not emit. | The broker's `:15692` endpoint publishes `rabbitmq_global_messages_received_total` and no `_published_` counter at all. Fixed in `gm-deployment-rk8o`. |
 | An extractor opens one `extract {source} {entity}` root span per file, so one file is one unbounded trace. | 69,760 spans in one trace from a partial artists file; a completed releases file would be orders of magnitude larger. |
 | `tableinator` and `graphinator` disagree on the `process {destination}` span name. | `process artists` against `process discogs-graph-enricher-artists` in the same trace. |
 | `mcp-server` has telemetry but no place to run it. | Two API-services panels and every `groovemap_mcp_*` series have never been observed on any stack. |
