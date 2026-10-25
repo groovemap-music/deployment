@@ -789,8 +789,7 @@ Expected: `t|t|t`.
 
 **V6. The console signs in.** Ask the human to write an admin's credentials to
 `$PRIVATE/admin-login.json` as `{"email": "...", "password": "..."}` (mode 600; `docker exec
-groovemap-api catalog-admin-setup --list` lists admin accounts; the command is `catalog-admin-setup`,
-not the `admin-setup` that [Administration](admin-guide.md) names). Then, in one shell, which you
+groovemap-api catalog-admin-setup --list` lists admin accounts). Then, in one shell, which you
 keep for V7 to V9: the login is rate limited to 5 per minute, and answers `429` with
 `Rate limit exceeded` beyond that, so sign in once per shell and do not repeat the login block.
 
@@ -974,10 +973,6 @@ graphinator tableinator`. Expected: both `healthy`; their health ports do not ch
 - The `api` service still sets `RABBITMQ_PROMETHEUS_URL`, which `catalog-api` stopped reading in
   `a9bda68`, and `config/rabbitmq-enabled-plugins` still names "the catalog API's queue-metrics
   history" as a reader of `/metrics/detailed`. Both are stale and harmless.
-- [Administration](admin-guide.md) still describes the retired collector, the two history
-  endpoints, `METRICS_RETENTION_DAYS`, `METRICS_COLLECTION_INTERVAL`, the two tables, and a public
-  monitoring view at `:8003` with the admin panel at `/admin`. After this rollout the console is
-  one signed-in shell at `/`, and history comes from VictoriaMetrics.
 - `valkey-exporter` restarts in a loop: `oliver006/redis_exporter` fails with `Error loading redis
   passwords from file /run/secrets/valkey_password ... invalid character` (a JSON parse error) because
   `REDIS_PASSWORD_FILE` in `docker-compose.prod.yml` names a plain-text secret. It happens before
