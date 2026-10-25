@@ -170,6 +170,31 @@ class TestComposeRunsTheBrokerStockAndDeclaresThePolicyAfterHealthy:
         with pytest.raises(AssertionError, match="wait for the broker to be healthy"):
             checker["check_compose"](yaml.dump(compose))
 
+    def test_init_service_on_a_different_digest_than_rabbitmq_fails(self) -> None:
+        """A Dependabot digest bump to one service only (PR #40 desynced the checker's own
+        copy) must fail the check, whatever the digests are."""
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        broker_image: str = compose["services"]["rabbitmq"]["image"]
+        compose["services"]["rabbitmq-dlq-policy-init"]["image"] = re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64, broker_image)
+        assert compose["services"]["rabbitmq-dlq-policy-init"]["image"] != broker_image
+        with pytest.raises(AssertionError, match="reuse rabbitmq's own"):
+            checker["check_compose"](yaml.dump(compose))
+
+    def test_a_digest_bump_applied_to_both_services_passes(self) -> None:
+        """The checker holds no copy of the digest, so bumping both services together is clean."""
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        bumped = re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "1" * 64, compose["services"]["rabbitmq"]["image"])
+        compose["services"]["rabbitmq"]["image"] = bumped
+        compose["services"]["rabbitmq-dlq-policy-init"]["image"] = bumped
+        checker["check_compose"](yaml.dump(compose))
+
+    def test_an_unpinned_rabbitmq_image_fails(self) -> None:
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        compose["services"]["rabbitmq"]["image"] = "rabbitmq:4-management"
+        compose["services"]["rabbitmq-dlq-policy-init"]["image"] = "rabbitmq:4-management"
+        with pytest.raises(AssertionError, match="digest-pinned"):
+            checker["check_compose"](yaml.dump(compose))
+
     def test_init_service_using_a_new_third_party_image_fails(self) -> None:
         compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
         compose["services"]["rabbitmq-dlq-policy-init"]["image"] = "curlimages/curl:latest"

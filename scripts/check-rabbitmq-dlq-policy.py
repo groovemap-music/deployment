@@ -38,7 +38,10 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[1]
 
-RABBITMQ_IMAGE = "rabbitmq:4-management@sha256:14f0bd24fd0314bac3c89bff2c736ad8ce4cd0ff800fdce0d784f55f595895e8"
+# The broker image is deliberately NOT pinned here: Dependabot bumps the digest in
+# docker-compose.yml, and a second copy in this file desynced from it (PR #40, RabbitMQ
+# 4.4.0). The init service is checked against the rabbitmq service's own image instead.
+RABBITMQ_IMAGE_PATTERN = r"rabbitmq:[\w.-]*management@sha256:[0-9a-f]{64}"
 
 POLICY_NAME = "catalog-dlq-cap"
 POLICY_PATTERN = r"^groovemap-.*\.dlq$"
@@ -139,7 +142,8 @@ def check_compose(compose_text: str) -> None:
     assert "rabbitmq-dlq-policy-init" in services, "the DLQ-cap policy must be provisioned by a compose service"
     init_service = services["rabbitmq-dlq-policy-init"]
 
-    assert init_service["image"] == RABBITMQ_IMAGE, "the init service must reuse rabbitmq's own pinned image"
+    assert re.fullmatch(RABBITMQ_IMAGE_PATTERN, rabbitmq["image"]), "the rabbitmq service must use a digest-pinned rabbitmq:*-management image"
+    assert init_service["image"] == rabbitmq["image"], "the init service must reuse rabbitmq's own pinned image"
     assert init_service.get("entrypoint") == ["/scripts/rabbitmq-dlq-policy-init.sh"]
     assert init_service.get("restart") == "no", "a one-shot provisioning step must not restart"
 
