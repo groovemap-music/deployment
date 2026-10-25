@@ -6,10 +6,10 @@
 %%                        so nothing reads queue stats from it.
 %% rabbitmq_prometheus  — the Prometheus endpoint on 15692: otel-collector scrapes
 %%                        it for the dashboards and alerts, and the operations
-%%                        console, the catalog API's queue-metrics history, and
-%%                        the operations toolkit read /metrics/detailed for queue
-%%                        depth and publish/ack rates. RabbitMQ speaks no OTLP,
-%%                        so this is the only path for broker metrics.
+%%                        console and the operations toolkit read
+%%                        /metrics/detailed for queue depth and publish/ack rates.
+%%                        RabbitMQ speaks no OTLP, so this is the only path for
+%%                        broker metrics.
 %%
 %% The rabbitmq:*-management image happens to enable both today. Owning the
 %% file here makes the contract explicit and survives an image bump that

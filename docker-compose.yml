@@ -631,7 +631,6 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
-      RABBITMQ_PROMETHEUS_URL: http://rabbitmq:15692
       VALKEY_HOST: valkey
       STARTUP_DELAY: "5"
       DISCOGS_DATA_ROOT: /discogs-data

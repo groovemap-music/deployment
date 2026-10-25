@@ -250,7 +250,7 @@ The broker's `:15692` endpoint is also published on `127.0.0.1` only, and it is
 the single source of queue statistics (ADR 0017). The management plugin's metrics
 collector is disabled (`management_agent.disable_metrics_collector = true`), so
 the management UI and API carry no per-queue message rates. The operations
-console, the catalog API's queue-metrics history, and the operations toolkit read
+console, the otel-collector, and the operations toolkit read
 `/metrics/detailed` (`RABBITMQ_PROMETHEUS_URL`), where
 `rabbitmq_detailed_queue_messages_acked_total` and
 `rabbitmq_detailed_queue_exchange_messages_published_total` advance per queue
