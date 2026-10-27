@@ -570,7 +570,7 @@ See [Logging Guide](https://github.com/groovemap-music/catalog-api/blob/main/doc
 | `STUCK_CHECK_INTERVAL`  | Seconds between stuck-state checks      | `30`          | 5-300     |
 | `STARTUP_IDLE_TIMEOUT`  | Seconds after startup with no messages before entering idle mode | `30` | — |
 | `IDLE_LOG_INTERVAL`     | Seconds between idle status log lines   | `300` (5 min) | —         |
-| `STARTUP_DELAY`         | Seconds to wait before starting (Compose: `15` Graphinator, `20` Tableinator and Brainzgraphinator, `25` Brainztableinator) | `5` | — |
+| `STARTUP_DELAY`         | Seconds to wait before starting (Compose: `15` Graphinator, `20` Tableinator and Brainzgraphinator, `25` Brainztableinator). Read only by these consumers; `api` and `insights` do not read it and are ordered by `depends_on` health conditions | `5` | — |
 | `HEALTH_PORT`           | Internal health port                    | `8001` graph consumers, `8002` table consumers | — |
 
 **Used By**: Graphinator, Tableinator, Brainzgraphinator, Brainztableinator

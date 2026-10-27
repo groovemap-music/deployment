@@ -6,12 +6,15 @@ Covers:
   ENTRYPOINT), so the dead ``STARTUP_DELAY: "30"`` knob must not remain on
   extractor-discogs/extractor-musicbrainz — it silently did nothing and misled
   operators into believing a startup stagger existed.
-- The Python consumer images run a PID-1 shell
-  (``/app/start.sh``) that sleeps ``STARTUP_DELAY`` seconds before ``exec``-ing
-  python. A non-interactive shell installs no SIGTERM handler, so without an init
-  process forwarding signals, a stop/restart landing in that window is silently
-  ignored until Docker's SIGKILL grace period. ``init: true`` (tini as PID 1) fixes
-  this uniformly for every affected service.
+- The api and insights images (catalog-api, analytics-engine) use a direct
+  ENTRYPOINT with no start.sh shim and never read ``STARTUP_DELAY``; their startup
+  ordering comes from ``depends_on`` health conditions. The remaining consumer
+  images run a PID-1 shell (``/app/start.sh``) that sleeps ``STARTUP_DELAY``
+  seconds before ``exec``-ing python. A non-interactive shell installs no SIGTERM
+  handler, so without an init process forwarding signals, a stop/restart landing
+  in that window is silently ignored until Docker's SIGKILL grace period.
+  ``init: true`` (tini as PID 1) fixes this uniformly and also gives every Python
+  service signal forwarding and zombie reaping.
 - Operator helpers that invoke the API container must match the
   Compose ``container_name:`` the API service actually runs under.
 
@@ -29,10 +32,13 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Every Python service whose Dockerfile builds a /app/start.sh shim that sleeps
-# STARTUP_DELAY before `exec`-ing python (i.e. runs a real PID-1 shell at startup).
-# schema-init execs python directly (no shim) and extractor-* runs the raw Rust
-# binary (no shim) so neither needs init: true for this reason.
+# Python services that must run under tini (init: true). The consumer images
+# (graphinator, tableinator, ...) build a /app/start.sh shim that sleeps
+# STARTUP_DELAY before `exec`-ing python (a real PID-1 shell). api and insights
+# have a direct ENTRYPOINT and no shim; they keep init: true for signal
+# forwarding and zombie reaping, and are ordered by depends_on, not a delay.
+# schema-init execs python directly and extractor-* runs the raw Rust binary,
+# so neither needs init: true.
 PYTHON_START_SH_SERVICES = [
     "api",
     "graphinator",
@@ -76,7 +82,7 @@ class TestExtractorStartupDelayRemoved:
 
 
 class TestPythonServicesForwardSignalsDuringStartupDelay:
-    """Use init so SIGTERM reaches each Python image's PID-1 shell."""
+    """Use init so signals reach each Python service's real process (and the start.sh shell where one exists)."""
 
     def test_start_sh_python_services_have_init_true(self) -> None:
         compose = _base_compose()
