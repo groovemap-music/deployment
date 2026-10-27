@@ -1,71 +1,49 @@
 # Platform Targeting Configuration
 
-This document explains how GrooveMap handles platform-specific Python package wheels to ensure compatibility with
-our Docker build environments.
+This document explains how the deployment repository handles CPU architectures. It builds no images and installs no
+service packages, so platform targeting here is about which image manifests an environment promotes and which
+architecture each container runs on.
 
-## Problem
+## Internal GrooveMap images
 
-Some Python packages (like Pillow) include platform-specific wheels for iOS that are incompatible with Docker builds on
-Linux. These wheels cause `uv sync` to fail with errors like:
+Each source repository builds and publishes its own image. The released internal images currently target
+`linux/amd64`. When promoting a release, resolve the GHCR manifest digest for the environment's architecture (see
+[Promote a service release](maintenance.md#promote-a-service-release)), and re-resolve it for any platform other than
+the one the release workflow published.
 
-```
-failed to parse `pillow-11.3.0-cp313-cp313-ios_13_0_arm64_iphoneos.whl` as wheel filename:
-The wheel filename has an invalid platform tag: Unknown platform tag format: ios_13_0_arm64_iphoneos
-```
+## Third-party images
 
-## Solution
+Database, broker, cache, exporter, and telemetry images in `docker-compose.yml` must be pinned to the **multi-arch
+index digest of a platform-neutral tag**, so every engine pulls its native build. `scripts/check-images.py`
+(`PLATFORM_TAG_SUFFIX`) rejects a tag that names one architecture, such as `0.162.0-386` or `v1.2.3-arm64`: that tag
+resolves to a single-platform manifest whose digest runs on that platform only. Variant suffixes such as `-alpine` or
+`-community` are not platforms and stay valid.
 
-We use uv's built-in environment restrictions feature to limit which platform wheels are included in `uv.lock`.
+The check exists because Dependabot once proposed a single-platform `-386` collector tag; the pinned `linux/386`
+binary segfaulted at startup on an arm64 engine.
 
-### Configuration
+## Disposable smoke stacks
 
-In `pyproject.toml`, we've added:
+On a workstation whose architecture differs from the released images (for example Apple silicon), the smoke overlays
+pin only the internal application services to their released platform, so Docker emulates them while the broker,
+stores, and cache stay host-native:
 
-```toml
-[tool.uv]
-environments = [
-    # Only support Linux platforms that we build for in CI/CD
-    "sys_platform == 'linux' and platform_machine == 'x86_64'",  # linux/amd64
-    "sys_platform == 'linux' and platform_machine == 'aarch64'",  # linux/arm64
-    # Also support local development on macOS
-    "sys_platform == 'darwin' and platform_machine == 'x86_64'",  # macOS Intel
-    "sys_platform == 'darwin' and platform_machine == 'arm64'",   # macOS Apple Silicon
-]
-```
+| Overlay | Internal-service platform |
+| --- | --- |
+| `docker-compose.smoke.yml` (`just smoke-infra`, `just smoke-released`) | `linux/amd64` |
+| `docker-compose.media-smoke.yml` (`just smoke-media`) | `SMOKE_MEDIA_SERVICE_PLATFORM`, default `linux/amd64` |
+| `docker-compose.erasure-smoke.yml` (`just smoke-erasure`) | `SMOKE_ERASURE_SERVICE_PLATFORM`, default `linux/amd64` |
+| `docker-compose.released-fixture-smoke.yml` (`just smoke-released-fixture`) | `SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM`, default `linux/amd64` |
 
-### Supported Platforms
+Set the variable to the architecture an environment actually promotes.
 
-This configuration ensures `uv.lock` only includes wheels for:
+## Validation toolchain
 
-1. **Linux amd64** (x86_64) - Used in production Docker containers
-1. **Linux arm64** (aarch64) - Used in production Docker containers on ARM
-1. **macOS Intel** (x86_64) - For local development on Intel Macs
-1. **macOS Apple Silicon** (arm64) - For local development on M1/M2/M3 Macs
-
-### Benefits
-
-1. **No manual cleanup needed**: iOS and other incompatible wheels are automatically excluded
-1. **Consistent builds**: Docker builds work reliably across all platforms
-1. **Smaller lock file**: Only includes relevant wheels for our target platforms
-1. **Future-proof**: Any new incompatible platforms are automatically excluded
-
-## Usage
-
-When upgrading packages:
-
-```bash
-# The platform restrictions are automatically applied
-./scripts/update-project.sh
-```
-
-Or when manually updating the lock file:
-
-```bash
-# uv automatically respects the environment restrictions
-uv lock
-```
+`just check` runs on the host. `.mise.toml` pins Python, uv, just, and gitleaks, and `uv.lock` is a universal lock for
+the validation dependencies in `pyproject.toml`; it carries no `[tool.uv] environments` restriction because nothing in
+this repository is installed into an image.
 
 ## References
 
-- [uv Environment Configuration](https://docs.astral.sh/uv/reference/settings/#environments)
-- [PEP 427 - Wheel Binary Package Format](https://www.python.org/dev/peps/pep-0427/)
+- [Docker multi-platform images](https://docs.docker.com/build/building/multi-platform/)
+- [Container image standards](dockerfile-standards.md)

@@ -143,7 +143,7 @@ in a loop) and risks stalling the source queue instead of the broker just holdin
 the ones most relevant to an incident in progress — at the cost of losing the oldest, already
 undiagnosed entries once a DLQ is truly overflowing. Operators who need full retention should
 watch the per-queue depth panels (`rabbitmq_queue_messages_ready` and friends on the
-"GrooveMap Infrastructure" dashboard, gm-deployment-dqh.2) and drain or purge a DLQ before it
+"GrooveMap · Infrastructure" dashboard, gm-deployment-dqh.2) and drain or purge a DLQ before it
 approaches the cap.
 
 **Defaults**, each overridable via an env var read by `scripts/rabbitmq-dlq-policy-init.sh` — set

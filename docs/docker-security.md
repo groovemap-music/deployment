@@ -48,8 +48,9 @@ security_opt:
 
 ### 4. Read-Only Root Filesystem
 
-Schema-init, API, every consumer, Dashboard, Explore, and Insights use read-only
-root filesystems with an explicit temporary filesystem:
+Schema-init, API, every consumer, Dashboard, Explore, Insights, and the
+embeddings job use read-only root filesystems with an explicit temporary
+filesystem:
 
 ```yaml
 read_only: true
@@ -131,6 +132,8 @@ untracked `secrets/` directory; they are not ephemeral Swarm secrets. See
 | Valkey password        | `VALKEY_PASSWORD_FILE`              | `VALKEY_PASSWORD`              |
 | Insights internal key  | `INSIGHTS_INTERNAL_SECRET_FILE`     | `INSIGHTS_INTERNAL_SECRET`     |
 | Grafana admin password | `GF_SECURITY_ADMIN_PASSWORD__FILE`  | `GF_SECURITY_ADMIN_PASSWORD`   |
+| Grafana viewer token   | `GRAFANA_TOKEN_FILE`                | (none; read only from a file)  |
+| Embedding pipeline login | `EMBEDDING_PIPELINE_POSTGRES_USERNAME_FILE` / `EMBEDDING_PIPELINE_POSTGRES_PASSWORD_FILE` | `EMBEDDING_PIPELINE_POSTGRES_USERNAME` / `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` |
 
 The Dashboard holds no RabbitMQ credential: it reads queue metrics from the broker's unauthenticated `rabbitmq_prometheus` endpoint (`RABBITMQ_PROMETHEUS_URL`) on the internal network. The catalog API keeps the credentials above for its AMQP connection, including the dead-letter queue purge; it no longer calls the management API.
 
@@ -173,14 +176,17 @@ This creates `secrets/` (mode `700`) with one file per secret (mode `600`):
 | `resend_api_key.txt` | Optional Resend API key; empty disables delivery |
 | `nlq_api_key.txt` | Optional NLQ provider API key; empty unless enabled |
 | `postgres_username.txt` | `groovemap` |
-| `postgres_password.txt` | `openssl rand -base64 24` |
+| `postgres_password.txt` | 36 random `[A-Za-z0-9]` characters |
 | `rabbitmq_username.txt` | `groovemap` |
-| `rabbitmq_password.txt` | `openssl rand -base64 24` |
-| `neo4j_password.txt` | `openssl rand -base64 24` |
-| `valkey_password.txt` | `openssl rand -base64 24` |
+| `rabbitmq_password.txt` | 36 random `[A-Za-z0-9]` characters |
+| `neo4j_password.txt` | 36 random `[A-Za-z0-9]` characters |
+| `valkey_password.txt` | 36 random `[A-Za-z0-9]` characters |
 | `valkey_exporter_passwords.json` | Derived from `valkey_password.txt` by `scripts/create-secrets.sh` on every run: `{"redis://valkey:6379": "<password>"}` |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
-| `grafana_admin_password.txt` | `openssl rand -base64 24`; required because production disables anonymous access |
+| `grafana_admin_password.txt` | 36 random `[A-Za-z0-9]` characters; required because production disables anonymous access |
+| `grafana_viewer_token.txt` | Optional Grafana Viewer service-account token (`GRAFANA_VIEWER_TOKEN`); empty turns the console's alerts off |
+| `embedding_pipeline_username.txt` | `embedding_pipeline` |
+| `embedding_pipeline_password.txt` | 36 random `[A-Za-z0-9]` characters; the embedding pipeline's own least-privilege login |
 
 Use `secrets.example/` as a reference for each file's format and generation command.
 
@@ -258,10 +264,10 @@ docker compose exec extractor-discogs id
 docker compose exec extractor-musicbrainz id
 
 # Check capabilities
-docker compose exec extractor-discogs capsh --print
+docker inspect groovemap-extractor-discogs | jq '.[0].HostConfig.CapDrop'
 
-# Verify read-only filesystem
-docker compose exec extractor-discogs touch /test.txt  # Should fail
+# Verify read-only filesystem (the extractors are not read-only; see above)
+docker compose exec api touch /test.txt  # Should fail
 
 # Check security options
 docker inspect groovemap-extractor-discogs | jq '.[0].HostConfig.SecurityOpt'

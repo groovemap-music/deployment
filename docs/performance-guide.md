@@ -80,7 +80,8 @@ The base broker sets:
 - quorum queues by default;
 - `max_message_size` to 128 MiB for large MusicBrainz records;
 - `nofile` soft and hard limits to 65,536; and
-- management and per-object Prometheus metrics for queue-level dashboards.
+- the management UI with its legacy stats collector disabled (ADR 0017), and
+  per-object `rabbitmq_prometheus` metrics for queue-level dashboards.
 
 Do not change queue type, message size, or acknowledgement behavior as a local
 performance experiment. Those are compatibility and durability contracts.

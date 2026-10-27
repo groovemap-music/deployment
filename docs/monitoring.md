@@ -39,10 +39,14 @@ The base configuration publishes these probes:
 | Graph explorer | <http://localhost:8007/health> |
 | Neo4j HTTP | <http://localhost:7474> |
 | RabbitMQ management | <http://localhost:15672> |
+| Grafana | <http://localhost:3000/api/health> |
+| VictoriaMetrics | <http://localhost:8428/health> |
 
 Compose also evaluates container-native checks for PostgreSQL, Neo4j,
-RabbitMQ, Valkey, the schema initializer, and every long-running application.
-Use `docker compose ps` as the canonical summary of those checks.
+RabbitMQ, Valkey, the exporters and telemetry backends that ship a probe, and
+every long-running application. The schema initializer has no healthcheck: it
+is a one-shot job, and dependents wait for it to exit successfully. Use
+`docker compose ps` as the canonical summary of those checks.
 
 ## Dependency inspection
 
@@ -66,7 +70,8 @@ RabbitMQ's management interface at <http://localhost:15672> shows queue depth
 and consumer count. Its message-rate charts are empty by design: the broker runs
 with the management metrics collector disabled (ADR 0017), so publish and
 acknowledgement rates come from the `rabbitmq_prometheus` endpoint instead
-(the operations console's live view, the Grafana pipeline-overview dashboard, or
+(the operations console's live view, the broker-wide rates on the Grafana
+Infrastructure dashboard, or
 `curl 'http://127.0.0.1:15692/metrics/detailed?family=queue_coarse_metrics&family=queue_delivery_metrics&family=queue_exchange_metrics'`).
 A useful incident snapshot records:
 

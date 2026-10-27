@@ -46,7 +46,7 @@ RETURN alias.name as alias_name, primary.name as primary_name;
 
 ```cypher
 MATCH (member:Artist)-[:MEMBER_OF]->(band:Artist {name: "The Beatles"})
-RETURN member.name, member.real_name
+RETURN member.name, member.id
 ORDER BY member.name;
 ```
 
@@ -180,16 +180,21 @@ LIMIT 20;
 
 ```cypher
 MATCH (r:Release)-[:DERIVED_FROM]->(m:Master {title: "Dark Side of the Moon"})
-RETURN r.title, r.year, r.country, r.format
+RETURN r.title, r.year, r.country, r.formats
 ORDER BY r.year;
 ```
 
-#### Find main release of a master
+#### Find the earliest release of a master
+
+The graph does not carry Discogs' `main_release` pointer; it stays in the PostgreSQL
+`masters.data` document (`data->>'main_release'`).
 
 ```cypher
 MATCH (m:Master {title: "Kind of Blue"})<-[:DERIVED_FROM]-(r:Release)
-WHERE r.id = m.main_release
-RETURN r.title, r.year, r.country;
+WHERE r.year IS NOT NULL
+RETURN r.title, r.year, r.country
+ORDER BY r.year
+LIMIT 1;
 ```
 
 #### Count releases per country for a master
@@ -283,18 +288,16 @@ LIMIT 20;
 > **Note**: This requires the Neo4j **Graph Data Science (GDS)** plugin, which is **not** included in this
 > project's `docker-compose.yml` (only `apoc` is installed by default — see the `NEO4J_PLUGINS` setting).
 > Add `"graph-data-science"` to `NEO4J_PLUGINS` and restart Neo4j before running this query.
+> GDS 2.x runs algorithms on a named in-memory projection; drop it with `gds.graph.drop` afterwards.
 
 ```cypher
-CALL gds.pageRank.stream({
-  nodeProjection: 'Artist',
-  relationshipProjection: {
-    BY: {
-      orientation: 'REVERSE'
-    }
-  }
-})
+CALL gds.graph.project('artist-releases', ['Artist', 'Release'], 'BY');
+
+CALL gds.pageRank.stream('artist-releases')
 YIELD nodeId, score
-RETURN gds.util.asNode(nodeId).name AS artist, score
+WITH gds.util.asNode(nodeId) AS node, score
+WHERE node:Artist
+RETURN node.name AS artist, score
 ORDER BY score DESC
 LIMIT 20;
 ```
@@ -310,7 +313,7 @@ PostgreSQL provides fast structured queries and full-text search capabilities on
 ```sql
 SELECT
     data->>'name' as name,
-    data->>'real_name' as real_name,
+    data->>'realname' as real_name,
     data->>'profile' as profile
 FROM artists
 WHERE data->>'name' ILIKE '%pink%floyd%'
@@ -330,10 +333,10 @@ WHERE data->>'name' = 'Miles Davis';
 ```sql
 SELECT
     data->>'name' as artist_name,
-    data->>'real_name' as real_name
+    data->>'realname' as real_name
 FROM artists
-WHERE data->>'real_name' IS NOT NULL
-AND data->>'real_name' != ''
+WHERE data->>'realname' IS NOT NULL
+AND data->>'realname' != ''
 ORDER BY data->>'name'
 LIMIT 20;
 ```
@@ -372,7 +375,7 @@ ORDER BY (data->>'year')::int;
 SELECT
     data->>'title' as title,
     data->>'country' as country,
-    data->'format' as format
+    data->'formats' as formats
 FROM releases
 WHERE (data->>'year')::int = 1969
 ORDER BY data->>'title'
@@ -507,9 +510,9 @@ The raw provider fields remain the provenance record, so a query against them st
 SELECT
     data->>'title' as title,
     data->>'year' as year,
-    data->'format' as format
+    data->'formats' as formats
 FROM releases
-WHERE data->'format' @> '["Vinyl"]'
+WHERE data->'formats' @> '[{"name": "Vinyl"}]'
 AND (data->>'year')::int >= 1960
 ORDER BY (data->>'year')::int
 LIMIT 20;
@@ -587,13 +590,16 @@ LIMIT 20;
 
 #### Tracklist analysis
 
+The tracklist keeps the dump's XML wrapper, so the tracks are the `track` element under
+`tracklist` (an object rather than an array when a release has a single track):
+
 ```sql
 SELECT
     data->>'title' as album,
     data->>'year' as year,
-    jsonb_array_length(data->'tracklist') as track_count
+    jsonb_array_length(data->'tracklist'->'track') as track_count
 FROM releases
-WHERE data->'tracklist' IS NOT NULL
+WHERE jsonb_typeof(data->'tracklist'->'track') = 'array'
 ORDER BY track_count DESC
 LIMIT 20;
 ```
@@ -659,15 +665,15 @@ curl "http://localhost:8004/api/trends?name=Blue%20Note&type=label"
 ### User Collection (requires JWT authentication)
 
 ```bash
-# Register a user account
+# Register a user account (password: minimum 8 characters)
 curl -X POST "http://localhost:8004/api/auth/register" \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "secret"}'
+  -d '{"email": "user@example.com", "password": "correct-horse-battery"}'
 
 # Login to receive a JWT token
 curl -X POST "http://localhost:8004/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "secret"}'
+  -d '{"email": "user@example.com", "password": "correct-horse-battery"}'
 
 # Use the token to query your collection
 curl "http://localhost:8004/api/user/collection?limit=50" \
@@ -743,7 +749,7 @@ curl "http://localhost:8004/api/expand?node_id=Electronic&type=genre&category=re
 ### Insights (Precomputed Analytics)
 
 ```bash
-# Top artists by release count
+# Top artists by graph centrality
 curl "http://localhost:8004/api/insights/top-artists"
 
 # Genre trends over time (filter by genre)
@@ -894,4 +900,4 @@ AND (data->>'year')::int = 1959;
 
 ______________________________________________________________________
 
-**Last Updated**: 2026-03-14
+**Last Updated**: 2026-10-26

@@ -10,7 +10,7 @@
 
 ## Overview
 
-GrooveMap is built as a microservices platform that processes large-scale music data from Discogs and transforms it into queryable knowledge graphs and relational databases. The architecture emphasizes scalability, reliability, and performance.
+GrooveMap is built as a microservices platform that processes large-scale music data from Discogs and MusicBrainz and transforms it into queryable knowledge graphs and relational databases. The architecture emphasizes scalability, reliability, and performance.
 
 ## Core Services
 
@@ -48,6 +48,15 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | VictoriaTraces | `victoria-traces` | Trace store and Tempo-compatible query API | 10428 (published in base; loopback in production) |
 | OpenTelemetry Collector | `otel-collector` | OTLP ingest, infrastructure scrapes, and backend export | 4317, 4318, 8888, 13133 (internal) |
 | Grafana | `grafana` | Provisioned metrics and trace dashboards | 3000 |
+| PostgreSQL exporter | `postgres-exporter` | PostgreSQL metrics for the collector | 9187 (internal) |
+| Valkey exporter | `valkey-exporter` | Valkey metrics for the collector | 9121 (internal) |
+| cAdvisor | `cadvisor` | Per-container CPU, memory, network, and OOM metrics | 8080 (internal) |
+| Node exporter | `node-exporter` | Host CPU, memory, load, and filesystem metrics | 9100 (internal) |
+| DLQ policy initializer | `rabbitmq-dlq-policy-init` | One-shot: declares the catalog dead-letter queue size-cap policy | — |
+
+The `embeddings` service is a one-shot `analytics-engine` job in the `jobs` profile,
+run monthly rather than started by `docker compose up`; see
+[Maintenance](maintenance.md#monthly-embedding-refresh).
 
 Compose service, hostname, container, exchange, and queue names are retained
 compatibility identifiers. Canonical product and image identities come from
@@ -95,7 +104,7 @@ graph TD
     SCHEMA -->|0. Create schemas| NEO4J
     SCHEMA -->|0. Create schemas| PG
     S3 -->|1a. Download & Parse XML| EXT_D
-    MB -->|1b. Parse JSONL| EXT_MB
+    MB -->|1b. Download & Parse JSONL| EXT_MB
     EXT_D -->|2a. 4 Discogs exchanges| RMQ
     EXT_MB -->|2b. 4 MB exchanges| RMQ
     RMQ -->|3a. Artists/Labels/Releases/Masters| GRAPH
@@ -147,7 +156,7 @@ graph TD
     INSIGHTS -.->|Store Results| PG
     INSIGHTS -.->|Cache Results| VALKEY
 
-    DASH -.->|Cache| VALKEY
+    DASH -.->|Admin proxy| API
     DASH -.->|Stats| NEO4J
     DASH -.->|Stats| PG
 
@@ -162,7 +171,7 @@ graph TD
 
 ### Dashboard Monitoring
 
-Shows the Dashboard service's monitoring connections to pipeline services and infrastructure. The Dashboard monitors pipeline services grouped by source (Discogs and MusicBrainz). It does not monitor API, Explore, or Insights health.
+Shows the Dashboard service's monitoring connections to pipeline services and infrastructure. The Dashboard monitors pipeline services grouped by source (Discogs and MusicBrainz). Its platform-health view also probes the API, Explore, and Insights health ports, Valkey, and the observability services, and its history views read VictoriaMetrics.
 
 ```mermaid
 graph TD
@@ -194,7 +203,7 @@ graph TD
     DASH -.->|Stats| RMQ
     DASH -.->|Stats| NEO4J
     DASH -.->|Stats| PG
-    DASH -.->|Cache| VALKEY
+    DASH -.->|Health ping| VALKEY
 
     style DASH fill:#fce4ec,stroke:#880e4f,stroke-width:2px
     style EXT_D fill:#ffccbc,stroke:#d84315,stroke-width:2px
@@ -244,7 +253,7 @@ graph LR
 gave each source its own repository, image, and binary:
 
 - **discogs-ingestion**: Downloads XML dumps from Discogs S3 bucket, high-performance XML parsing (20,000-400,000+ records/sec), SHA256 hash-based deduplication
-- **musicbrainz-ingestion**: Parses MusicBrainz JSONL dumps (xz-compressed), extracts Discogs IDs from URL relationships, publishes to MusicBrainz-specific fanout exchanges
+- **musicbrainz-ingestion**: Downloads and verifies MusicBrainz JSON dumps (xz-compressed archives), parses their JSONL, extracts Discogs IDs from URL relationships, publishes to MusicBrainz-specific fanout exchanges
 - Both publish JSON messages to per-data-type RabbitMQ fanout exchanges
 - Each runs as a separate container with its own state markers
 
@@ -267,6 +276,9 @@ gave each source its own repository, image, and binary:
 - `groovemap-musicbrainz-releases`: MusicBrainz release data with Discogs cross-references
 
 Each consumer independently declares and binds its own queues to these exchanges.
+Queues are named `{exchange_prefix}-{consumer}-{entity}` (for example
+`groovemap-discogs-graphinator-artists`), and each has a `.dlx` dead-letter exchange and
+`.dlq` dead-letter queue.
 
 **Message Types**:
 
@@ -290,8 +302,8 @@ See [Database Schema — Extractor Message Format](https://github.com/groovemap-
 **discogs-graph-enricher** (Compose service `graphinator`, Neo4j):
 
 - Consumes messages from all 4 queues
-- Creates nodes: Artist, Label, Release, Master, Genre, Style
-- Builds relationships: BY, ON, MEMBER_OF, DERIVED_FROM, etc.
+- Creates nodes: Artist, Label, Release, Master, Genre, Style, Person, Company, Medium, MediaFamily
+- Builds relationships: BY, ON, MEMBER_OF, DERIVED_FROM, ISSUED_ON, CREDITED_TO, etc.
 - On `extraction_complete`: deletes stub nodes (no `sha256` property) created by cross-type MERGE operations
 - **Post-import computation** (after releases complete): Runs `compute_genre_style_stats()` to pre-compute aggregate properties on Genre and Style nodes (release_count, artist_count, label_count, style_count/genre_count, first_year). Uses `CALL {} IN TRANSACTIONS OF 1 ROWS` to process each node in its own transaction (avoids 120s timeout for mega-genres like Rock/Electronic). These properties replace expensive runtime traversals (~200M DB hits → 6 DB hits per query).
 
@@ -350,14 +362,15 @@ See [MusicBrainz Sync Guide](https://github.com/groovemap-music/musicbrainz-grap
 - Genre tree hierarchy (`/api/genre-tree` — genre/style tree derived from release co-occurrence)
 - Graph statistics (`/api/graph/stats` — aggregate node counts across all entity types)
 - MusicBrainz enrichment status (`/api/enrichment/status` — coverage statistics for MB-enriched entities)
-- MusicBrainz artist metadata (`/api/musicbrainz/artist/{artist_id}` — MB properties for a Discogs artist)
-- MusicBrainz artist relationships (`/api/musicbrainz/artist/{artist_id}/relationships` — MB-sourced edges)
-- MusicBrainz artist external links (`/api/musicbrainz/artist/{artist_id}/external-links` — Wikipedia, Wikidata, etc.)
+- MusicBrainz artist metadata (`/api/artist/{artist_id}/musicbrainz` — MB properties for a Discogs artist)
+- MusicBrainz artist relationships (`/api/artist/{artist_id}/relationships` — MB-sourced edges)
+- MusicBrainz artist external links (`/api/artist/{artist_id}/external-links` — Wikipedia, Wikidata, etc.)
 
 **MCP Server** (AI assistant integration):
 
-- Thin HTTP client that proxies all 12 tools through the API service — no direct database access
-- Tools: search, entity details (artist/label/release/genre/style), path finder, trends, graph stats, collaborators, genre tree, natural-language query
+- Thin HTTP client that proxies all 16 tools through the API service — no direct database access
+- Catalog tools: search, entity details (artist/label/release/genre/style), path finder, trends, graph stats, collaborators, genre tree, natural-language query, release lookup by provider identifier
+- Delegated tools: recommendation-outcome recording and consent read/update, on the user's own behalf
 - Transports: stdio (Claude Desktop, Cursor, Zed) or streamable-http (hosted)
 
 **Insights Service** (precomputed analytics):
@@ -368,11 +381,12 @@ See [MusicBrainz Sync Guide](https://github.com/groovemap-music/musicbrainz-grap
 - Label longevity rankings (`/api/insights/label-longevity`)
 - Monthly release anniversaries (`/api/insights/this-month`)
 - Data completeness scores (`/api/insights/data-completeness`)
+- Style atlas and style co-tags (`/api/insights/style-atlas`, `/api/insights/style-atlas/cotags`)
 - Computation status monitoring (`/api/insights/status`)
 
 **Why insights needs a shared secret** (`INSIGHTS_INTERNAL_SECRET`):
 
-Insights holds no database credentials — it never connects to Neo4j. Every request involving it makes two hops through the API service:
+Insights holds no Neo4j credentials — it never connects to Neo4j (it holds only its own PostgreSQL and Valkey connections). Every request involving it makes two hops through the API service:
 
 1. **Public hop** — a user calls `/api/insights/*` on the API, which proxies to the insights container.
 2. **Internal hop** — insights computes its analytics by calling back to `/api/internal/insights/*` on the API, which runs the actual Neo4j aggregate queries.
@@ -382,13 +396,14 @@ The `internal` prefix on hop 2 is only a URL path: those routes live on the **sa
 **Explore Service** (static frontend):
 
 - Serves the D3.js force-directed graph UI and Plotly.js trends frontend
-- All graph query API calls are made from the browser to the **API service** (port 8004)
+- The browser sends same-origin `/api/*` requests to Explore, which proxies them to the **API service** (`API_BASE_URL`, port 8004)
 
 **Dashboard Service**:
 
 - Real-time WebSocket updates
 - System health monitoring
 - Queue metrics and processing rates
+- Queue and health history read from VictoriaMetrics (up to the 90-day retention)
 - Interactive visualizations
 
 ## Component Details
@@ -418,7 +433,7 @@ The `internal` prefix on hop 2 is only a URL path: those routes live on the **sa
 - `PERIODIC_CHECK_DAYS`: Update check interval
 - `RABBITMQ_HOST`: RabbitMQ hostname
 - `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`: RabbitMQ auth credentials
-- `DISCOGS_EXCHANGE_PREFIX`: Exchange name prefix (default: `groovemap-discogs` for Discogs, `groovemap-musicbrainz` for MB)
+- `DISCOGS_EXCHANGE_PREFIX` / `MUSICBRAINZ_EXCHANGE_PREFIX`: Exchange name prefix (defaults: `groovemap-discogs` and `groovemap-musicbrainz`)
 
 Each source owns its own producer repository and image:
 [`discogs-ingestion`](https://github.com/groovemap-music/discogs-ingestion) and
@@ -432,7 +447,7 @@ See the matching README for details.
 - Create all Neo4j constraints and indexes on first run
 - Create all PostgreSQL tables and indexes on first run
 - Run as a one-shot init container before any other service starts
-- All DDL uses `IF NOT EXISTS` — safe to re-run, never drops schema objects
+- All DDL uses `IF NOT EXISTS` — safe to re-run; it drops only objects a recorded decision has retired, always with `DROP ... IF EXISTS`
 
 **Key Features**:
 
@@ -471,7 +486,7 @@ See the [database-schema repository](https://github.com/groovemap-music/database
 
 **Configuration**:
 
-- `NEO4J_HOST`: Neo4j bolt URL
+- `NEO4J_HOST`: Neo4j hostname (wrapped as `bolt://<host>:7687`) or a full connection URI
 - `NEO4J_USERNAME`, `NEO4J_PASSWORD`: Auth credentials
 - `CONSUMER_CANCEL_DELAY`: Idle timeout before shutdown
 
@@ -495,7 +510,7 @@ See [Graphinator README](https://github.com/groovemap-music/discogs-graph-enrich
 
 **Configuration**:
 
-- `POSTGRES_HOST`: PostgreSQL host:port
+- `POSTGRES_HOST`: PostgreSQL host, optionally with an embedded port (`POSTGRES_PORT` otherwise, default 5432)
 - `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`: Auth credentials
 - `POSTGRES_DATABASE`: Database name
 
@@ -591,13 +606,15 @@ See [Explore README](https://github.com/groovemap-music/graph-explorer) for deta
 - Responsive HTML/CSS/JS frontend
 - Activity log and event tracking
 - Admin proxy router — forwards authenticated admin requests to the API service
-- Extraction trigger (forces full reprocessing) and history table
+- Per-source extraction trigger (forces full reprocessing) and history table
 - Dead-letter queue purge interface
 
 **Configuration**:
 
 - Service health endpoint URLs
 - Database connection strings
+- `VICTORIA_METRICS_URL`: history store for the Queue Trends and System Health views
+- `GRAFANA_API_URL` (in-network alert reads) and `GRAFANA_URL` / `TRACES_URL` (browser-facing deep links)
 - `RABBITMQ_PROMETHEUS_URL`: the broker's `rabbitmq_prometheus` endpoint (`http://rabbitmq:15692`); queue depth, consumers, and publish/ack rates are read from `/metrics/detailed`, so the console needs no RabbitMQ credential
 - `API_HOST` / `API_PORT` — API service connection for admin proxy
 
@@ -608,7 +625,7 @@ See [Dashboard README](https://github.com/groovemap-music/operations-console) fo
 **Responsibilities**:
 
 - Run scheduled batch analytics by fetching raw query data from the API service over HTTP
-- Compute artist centrality, genre trends, label longevity, anniversaries, data completeness, community enrichment, and release rarity
+- Compute artist centrality, genre trends, style year counts, the style atlas, style landmarks, style co-tags, label longevity, anniversaries, data completeness, community enrichment, release rarity, and the activity summary
 - Store precomputed results in PostgreSQL `insights.*` tables
 - Serve analytics via read-only HTTP endpoints
 
@@ -616,7 +633,7 @@ See [Dashboard README](https://github.com/groovemap-music/operations-console) fo
 
 - FastAPI backend with async PostgreSQL and httpx (API client)
 - Configurable scheduler interval (default: 24 hours)
-- 7 computation types running sequentially
+- 12 computation types running sequentially; one failure does not stop the rest
 - Valkey caching with cache-aside pattern (TTL matches schedule interval, invalidated after computation)
 - Separate health server on port 8009
 - Results proxied through the API service at `/api/insights/*`
@@ -639,11 +656,11 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 - Self-service password reset with Valkey-backed tokens (`/api/auth/reset-*`)
 - Optional TOTP two-factor authentication (`/api/auth/2fa/*`)
 - JWT token generation and validation (HS256)
-- Discogs OAuth 1.0a OOB flow management (`/api/oauth/*`)
+- Discogs OAuth 1.0a flow management (`/api/oauth/*`; out-of-band unless `DISCOGS_OAUTH_CALLBACK_URL` is set)
 - Discogs OAuth token storage and retrieval
 - Graph query endpoints (`/api/autocomplete`, `/api/explore`, `/api/expand`, `/api/node/{id}`, `/api/trends`)
 - User collection and wantlist queries (`/api/user/collection`, `/api/user/wantlist`, `/api/user/recommendations`, `/api/user/collection/stats`, `/api/user/status`)
-- Collection gap analysis (`/api/collection/gaps/{type}/{id}`, `/api/collection/formats`)
+- Collection gap analysis (`/api/collection/gaps/{type}/{id}`, `/api/collection/media`)
 - Collection and wantlist sync (`/api/sync`, `/api/sync/status`)
 - Graph snapshot save/restore (`/api/snapshot`, `/api/snapshot/{token}`)
 - Recommendation endpoints (`/api/recommend/similar/artist/{artist_id}`, `/api/recommend/explore/{entity_type}/{entity_id}`)
@@ -653,7 +670,7 @@ See [Insights README](https://github.com/groovemap-music/analytics-engine) for d
 - Collection timeline and evolution (`/api/user/collection/timeline`, `/api/user/collection/evolution`)
 - Time-travel endpoints (`/api/explore/year-range`, `/api/explore/genre-emergence`)
 - Path finder (`/api/path`)
-- Reads Discogs app credentials from `app_config` table (set via `discogs-setup` CLI)
+- Reads Discogs app credentials from `app_config` table (set via the `catalog-setup` CLI in the API image)
 
 **Key Features**:
 
@@ -786,7 +803,7 @@ graph LR
 
 - **Durability**: All queues are durable (survive broker restart)
 - **Persistence**: Messages persisted to disk
-- **Prefetch**: Configurable per consumer (default: 100)
+- **Prefetch**: Set by each consumer (200 for the graph consumers; the SQL loaders couple it to their batch size or PostgreSQL pool)
 - **Dead Letter**: Failed messages routed to DLX
 - **TTL**: No message expiration (process all data)
 
@@ -828,6 +845,7 @@ See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enr
 - Genre (musical genres)
 - Style (sub-genres, styles)
 - Person (non-performing release credits, e.g. producer/engineer)
+- Company (pressing plants, cutting rooms, rights holders and other manufacturing credits)
 - User (authenticated Discogs users)
 - Medium (a canonical medium such as `vinyl_12`, unique on `id`, carrying `family` and `label`)
 - MediaFamily (a canonical family such as `vinyl`, unique on `name`)
@@ -844,6 +862,7 @@ See [Consumer Cancellation](https://github.com/groovemap-music/discogs-graph-enr
 - PART_OF (style → genre)
 - CREDITED_ON (person → release, non-performing credit)
 - SAME_AS (person → artist, when a credited person is also a performing artist)
+- CREDITED_TO (release → company, carrying `role` and `source`)
 - COLLECTED (user → release)
 - WANTS (user → release)
 - IN_FAMILY (medium → media family)
@@ -884,6 +903,7 @@ See [Database Schema](https://github.com/groovemap-music/database-schema) for de
 
 - `musicbrainz.artists`: MBID, name, type, gender, dates, area, Discogs cross-reference
 - `musicbrainz.labels`: MBID, name, type, label code, dates, Discogs cross-reference
+- `musicbrainz.release_groups`: MBID, name, type, Discogs master cross-reference
 - `musicbrainz.releases`: MBID, name, barcode, status, Discogs cross-reference, canonical `media` block
 - `musicbrainz.relationships`: Source/target MBIDs, relationship type, direction, attributes
 - `musicbrainz.external_links`: MBID, service name, URL (Wikipedia, Wikidata, AllMusic, etc.)
@@ -939,19 +959,16 @@ for the vocabulary and storage decision, and the
 - Graph snapshots (API — native Valkey TTL, default 28 days, survives service restarts)
 - JWT revocation blacklist (API — JTI claims with TTL matching token expiry)
 - Insights computation results (Insights — TTL matches schedule interval, invalidated after each run)
-- Query result caching (Dashboard)
-- Dashboard metrics
 - **API query result caching** (cache-aside pattern):
 
 | Cache Key Pattern                      | TTL | Endpoints Covered                           |
 | -------------------------------------- | --- | ------------------------------------------- |
-| `trends:{type}:{name}`                 | 24h | `/api/trends?type=genre\|style`             |
+| `trends:{type}:{name}`                 | 24h | `/api/trends?type=genre\|style\|label`      |
 | `label-dna:{label_id}`                 | 24h | `/api/label/{id}/dna`                       |
 | `label-similar:{label_id}:{limit}`     | 24h | `/api/label/{id}/similar`                   |
 | `recommend:similar:artist:{artist_id}` | 24h | `/api/recommend/similar/artist/{artist_id}` |
-| `explore-artist:{name}`                | 24h | `/api/explore?type=artist`                  |
-| `trends-label:{label_id}`              | 24h | `/api/trends?type=label`                    |
-| `search:{md5_digest}`                  | 5m  | `/api/search`                               |
+| `explore:{type}:{name}`                | 24h | `/api/explore?type=artist\|label`           |
+| `search:{md5_digest}`                  | 1h  | `/api/search`                               |
 
 **Configuration**:
 
@@ -1087,7 +1104,7 @@ See [Monitoring](monitoring.md) for details.
 **Stateless Services** (can scale horizontally):
 
 - API (load balanced — JWT validation is stateless)
-- Extractor (one instance per data type)
+- Extractors (one instance per source)
 - Graphinator (multiple consumers per queue)
 - Tableinator (multiple consumers per queue)
 - Brainzgraphinator (multiple consumers per queue)
@@ -1153,4 +1170,4 @@ before any approved start. This repository does not ship Kubernetes manifests.
 
 ______________________________________________________________________
 
-**Last Updated**: 2026-09-12
+**Last Updated**: 2026-10-26

@@ -20,11 +20,14 @@ just check
 
 `just check` is credential-free: it validates formatting, image ownership and
 digest policy, base and production Compose merges, deployment regression tests,
-and secret leaks. `config/validation.env` pins the reviewed released-image
-manifests used for static Compose validation without starting the stack.
+and secret leaks. `config/validation.env` supplies syntax-only digest
+references, which identify no published image, so static Compose validation
+runs without real images or a running stack. The reviewed release digests are
+recorded in `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py`.
 
-`just build` validates the base, production, infrastructure-smoke, and
-media-smoke Compose combinations without starting containers.
+`just build` validates the base, production, infrastructure-smoke,
+media-smoke, released-fixture-smoke, and erasure-smoke Compose combinations
+without starting containers.
 The [quick start](docs/quick-start.md) explains the complete local workflow.
 
 ## Configure an environment

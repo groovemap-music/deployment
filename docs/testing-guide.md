@@ -20,9 +20,9 @@ just check
 - enforces digest-pinned image inputs and repository ownership boundaries;
 - checks the promoted extraction-rules and contract-fixture provenance records;
 - checks dependency license policy;
-- renders the base, production, infrastructure-smoke, and media-smoke Compose
-  configurations, including the released-fixture overlay, using validation-only
-  image digests;
+- renders the base, production, infrastructure-smoke, media-smoke,
+  released-fixture-smoke, and erasure-smoke Compose configurations using
+  validation-only image digests;
 - scans the Git history and worktree for leaked secrets;
 - type-checks the Python validation scripts;
 - runs deployment regression tests with coverage.
@@ -59,10 +59,12 @@ status checks. The recommendation is to require the "Required result" check in
 `main`'s branch protection so a red PR cannot merge. This is a recommendation
 only; nothing has been applied to GitHub.
 
-The RabbitMQ image is pinned once, on the `rabbitmq` service in
-`docker-compose.yml`. `scripts/check-rabbitmq-dlq-policy.py` derives the expected
-image from that service and requires `rabbitmq-dlq-policy-init` to match it, so a
-Dependabot digest bump cannot desync the two.
+The RabbitMQ image digest lives only in `docker-compose.yml`, on the `rabbitmq`
+service and on `rabbitmq-dlq-policy-init`, which reuses it.
+`scripts/check-rabbitmq-dlq-policy.py` keeps no copy of its own: it derives the
+expected image from the `rabbitmq` service and requires
+`rabbitmq-dlq-policy-init` to match it, so a Dependabot digest bump that updates
+only one of the two fails the gate instead of desyncing them.
 
 ## Validation flow
 
@@ -173,8 +175,9 @@ variable still holds an `.env.example` placeholder, a `config/validation.env` di
 anything not pinned by digest — a media assertion against images no environment runs would
 prove nothing. `.env` is untracked and must never be committed.
 
-**What it starts**: the schema initializer, RabbitMQ, PostgreSQL, Neo4j, both SQL loaders,
-both graph enrichers, and the catalog API, under the Compose project
+**What it starts**: the schema initializer, RabbitMQ, PostgreSQL, Neo4j, Valkey, both SQL
+loaders, both graph enrichers, the catalog API, and the telemetry backends those services
+declare as dependencies, under the Compose project
 `groovemap-media-smoke` with `docker-compose.media-smoke.yml`. The extractors never run. A
 smoke stack has no dumps to download, so the run publishes the release events itself. The
 API is there for one request: a minted alias is only worth having if something resolves
@@ -249,8 +252,8 @@ digest, or anything not pinned by digest, and refuses an `.env` that declares no
 assignment at all — an assertion against images no environment runs would prove nothing.
 `.env` is untracked and must never be committed.
 
-**What it starts**: the schema initializer, PostgreSQL, Neo4j, Valkey, and the catalog API,
-under the Compose project `groovemap-erasure-smoke` with `docker-compose.erasure-smoke.yml`.
+**What it starts**: the schema initializer, PostgreSQL, Neo4j, Valkey, the catalog API, and
+the unpublished telemetry backends the API declares as dependencies, under the Compose project `groovemap-erasure-smoke` with `docker-compose.erasure-smoke.yml`.
 Naming the API pulls in its declared dependencies, so no extractor and no broker consumer
 run: this assertion drives the API itself rather than a catalog ingest. PostgreSQL, Neo4j, and
 Valkey stay unpublished; the assertions reach them through `docker compose exec`. Only the

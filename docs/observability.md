@@ -474,6 +474,13 @@ closed.
 | `groovemap.api.nlq.requests` | `groovemap_api_nlq_requests_total` | counter | `outcome` |
 | `groovemap.api.activity_events` | `groovemap_api_activity_events_total` | counter | `event_type` |
 | `groovemap.api.activity_failures` | `groovemap_api_activity_failures_total` | counter | `outcome` |
+| `groovemap.api.identity_ledger.refreshes` | `groovemap_api_identity_ledger_refreshes_total` | counter (`{refresh}`) | `trigger` (`reattach`\|`backfill`\|`poll`), `outcome` (`success`\|`failed`) |
+| `groovemap.derived_refresh.jobs` | `groovemap_derived_refresh_jobs_total` | counter | `loader`, `outcome` (`completed`\|`retry`\|`fenced`) |
+| `groovemap.derived_refresh.duration` | `groovemap_derived_refresh_duration_seconds` | histogram (s) | `loader`, `outcome` |
+| `groovemap.derived_refresh.pending.age` | `groovemap_derived_refresh_pending_age_seconds` | histogram (s) | `loader`, `phase` |
+| `groovemap.derived_refresh.attempts` | `groovemap_derived_refresh_attempts` | histogram | `loader`, `phase` |
+| `groovemap.derived_refresh.superseded` | `groovemap_derived_refresh_superseded` | histogram | `loader`, `phase` |
+| `groovemap.insights.embedding_pipeline.failures` | `groovemap_insights_embedding_pipeline_failures_total` | counter | — |
 | `groovemap.explore.proxy.duration` | `groovemap_explore_proxy_duration_seconds` | histogram (s) | `http.route`, `outcome` |
 | `groovemap.insights.computation.duration` | `groovemap_insights_computation_duration_seconds` | histogram (s) | `computation`, `outcome` |
 | `groovemap.insights.last_success` | `groovemap_insights_last_success_seconds` | gauge (unix s) | `computation` |
@@ -492,6 +499,15 @@ what an operator watching a slow stream needs. `http.route` carries the
 templated `/api/{path:path}`, matching what the FastAPI instrumentation reports
 for the same request, and `outcome` is one of `success`, `timeout`, or
 `upstream_error`.
+
+`catalog-api` counts each identity-ledger view refresh by what started it; a
+`failed` outcome is the metric form of the `identity_ledger_refresh_failed` log
+alert. The `groovemap.derived_refresh.*` instruments come from
+`discogs-sql-loader` (`tableinator`), whose durable derived-refresh worker
+records a job transition on every claim result and, on each scanner pass, the
+outstanding job's pending age, claim attempts, and superseded count; `loader` is
+`discogs`. `analytics-engine`'s one-shot `embeddings` job counts runs that raised
+before completing.
 
 ### Runtime metrics
 
@@ -758,7 +774,7 @@ refuses the raw `tempo` uid exactly as it refuses the raw `prometheus` one.
    be narrowed to one thing.
 4. Write PromQL against the **Prometheus** names in the catalog above, not the
    OTEL dot-names. Prefer `rate()` and `histogram_quantile()` over recording
-   rules; this stack has no recording or alerting rules.
+   rules; this stack has no recording rules.
 5. Run `uv run python scripts/check-dashboards.py`. It is part of
    `just source-check`, so `just check` runs it too.
 
@@ -767,8 +783,9 @@ The checker fails the build when a dashboard does not parse, is missing a `uid`,
 datasource uid instead of using the variable, reaches for `${DS_TEMPO}` from a
 panel that cannot render a trace, has no queries, or references a
 metric that is in neither the catalog above nor its exporter/collector
-allowlist. It lints the provisioned alert rules the same way, against the same
-catalog, once `config/grafana/provisioning/alerting/groovemap.yaml` exists. Adding a metric to a service means adding it to the catalog first —
+allowlist. It lints the provisioned alert rules in
+`config/grafana/provisioning/alerting/groovemap.yaml` the same way, against the
+same catalog. Adding a metric to a service means adding it to the catalog first —
 that is the ordering the gate enforces.
 
 If a panel needs a new exporter or collector metric, add the exact name to
@@ -883,9 +900,9 @@ policies:
 
 The secret belongs in a Docker secret or an environment variable Grafana
 expands, never in the file — `gitleaks` runs over this directory in
-`just source-check`. `scripts/check-dashboards.py` asserts today that no contact
-point or notification policy is provisioned, so adding one is a deliberate edit
-to the gate and its test, not an accident.
+`just source-check`. `tests/deploy/test_dashboards.py` asserts today that no
+contact point or notification policy is provisioned, so adding one is a
+deliberate edit to that test, not an accident.
 
 ### Why an alert rule names `prometheus` and a dashboard does not
 
@@ -932,7 +949,7 @@ the repository root.
 ### 1. Point `.env` at images that carry the telemetry work
 
 `docker-compose.yml` requires a digest-pinned reference for each of the eleven
-internal services, and `scripts/check-images.py` enforces that for every value
+internal images (`embeddings` reuses the `insights` image), and `scripts/check-images.py` enforces that for every value
 committed to the repository. `.env` is not committed, so fill it from
 `.env.example` with the released digests you want to exercise:
 
@@ -956,8 +973,9 @@ just smoke
 `just smoke` is `docker compose up -d --wait` followed by `docker compose ps`.
 It brings up RabbitMQ, PostgreSQL, Neo4j, Valkey, the four exporters
 (`postgres-exporter`, `valkey-exporter`, `cadvisor`, `node-exporter`), the
-collector, VictoriaMetrics, VictoriaTraces, Grafana, and every application
-service.
+collector, VictoriaMetrics, VictoriaTraces, Grafana, the one-shot
+`rabbitmq-dlq-policy-init`, and every application service except the
+`jobs`-profile `embeddings` job.
 
 `--wait` blocks on container health. On the wave-2 images it converges: the
 Python service images carry a `python -c urlopen` healthcheck rather than one
@@ -1041,8 +1059,9 @@ curl -s 'http://localhost:8428/api/v1/label/service_name/values'
 Expect the eleven compose service keys that `docker compose up` actually starts — `api`,
 `extractor-discogs`, `extractor-musicbrainz`, `graphinator`, `brainzgraphinator`,
 `tableinator`, `brainztableinator`, `dashboard`, `explore`, `insights`, `schema-init` — plus
-six values that come from the scrape jobs rather than from a push: `rabbitmq`,
-`postgres-exporter`, `valkey-exporter`, `cadvisor`, `node-exporter`, and `otelcol-contrib`.
+seven values that come from the scrape jobs rather than from a push: `rabbitmq`,
+`rabbitmq-detailed`, `postgres-exporter`, `valkey-exporter`, `cadvisor`, `node-exporter`,
+and `otelcol-contrib`.
 
 Three details are easy to misread. `schema-init` runs once and exits, so it
 appears only because the one-shot bootstrap flushes on shutdown; its absence
@@ -1053,8 +1072,8 @@ appears here at all unless it was separately invoked with `docker compose run`
 never starts it, so its absence from this roll call is expected, not a
 regression. And the collector's own scrape job is labelled `otelcol-contrib`,
 not `otel-collector`, because `service.name` from the collector's own
-telemetry wins over the job name — the five exporter jobs do match their
-compose service keys.
+telemetry wins over the job name. The five exporter jobs match their compose
+service keys; `rabbitmq-detailed` is the second job on the `rabbitmq` service.
 
 A service that is missing here is either running an image without the telemetry
 work, or failing its telemetry bootstrap. The bootstrap never raises, so check
@@ -1236,7 +1255,8 @@ curl -sG 'http://localhost:8428/api/v1/query' \
 ```
 
 Expect one row per scrape job, each `1`: `cadvisor`, `node-exporter`,
-`otelcol-contrib`, `postgres-exporter`, `rabbitmq`, `valkey-exporter`. The
+`otelcol-contrib`, `postgres-exporter`, `rabbitmq`, `rabbitmq-detailed`,
+`valkey-exporter`. The
 collector's own job is labelled `otelcol-contrib` for the reason step 4 gives.
 
 ### 7. Confirm one trace spans a publish and a consume
