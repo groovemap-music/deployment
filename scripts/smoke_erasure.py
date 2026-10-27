@@ -431,6 +431,9 @@ def arranged_probes(stack: smoke_media.Stack, user_id: str, subject_id: str) -> 
     by_user = f"user_id = {user}"
     return [
         _sql_some(stack, "postgres subject has events", "activity.events", by_subject, f"events for subject {subject_id}"),
+        _sql_some(
+            stack, "postgres subject has idempotency keys", "activity.event_idempotency", by_subject, f"event_idempotency for subject {subject_id}"
+        ),
         _sql_some(stack, "postgres subject has impressions", "activity.impressions", by_subject, f"impressions for subject {subject_id}"),
         _sql_rows(stack, "postgres subject link present", "activity.user_subjects", by_user, 1, f"user_subjects for {user_id}"),
         _sql_rows(stack, "postgres collection row present", "user_collections", by_user, 1, f"user_collections for {user_id}"),
@@ -457,6 +460,9 @@ def absence_probes(stack: smoke_media.Stack, user_id: str, subject_id: str) -> l
     by_user = f"user_id = {user}"
     return [
         _sql_rows(stack, "postgres events erased", "activity.events", by_subject, 0, f"events for subject {subject_id}"),
+        _sql_rows(
+            stack, "postgres idempotency keys erased", "activity.event_idempotency", by_subject, 0, f"event_idempotency for subject {subject_id}"
+        ),
         _sql_rows(stack, "postgres impressions erased", "activity.impressions", by_subject, 0, f"impressions for subject {subject_id}"),
         _sql_rows(stack, "postgres subject link erased", "activity.user_subjects", by_user, 0, f"user_subjects for {user_id}"),
         _sql_rows(stack, "postgres erasure recorded", "activity.erasures", by_subject, 1, f"erasures for subject {subject_id}"),
