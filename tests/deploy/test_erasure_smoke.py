@@ -138,6 +138,7 @@ def arranged_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tu
     by_user = f"user_id = '{user_id}'"
     sql = {
         counted("activity.events", by_subject): "4",
+        counted("activity.event_idempotency", by_subject): "4",
         counted("activity.impressions", by_subject): "2",
         counted("activity.user_subjects", by_user): "1",
         counted("user_collections", by_user): "1",
@@ -160,6 +161,7 @@ def erased_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tupl
     by_id = f"id = '{user_id}'"
     sql = {
         counted("activity.events", by_subject): "0",
+        counted("activity.event_idempotency", by_subject): "0",
         counted("activity.impressions", by_subject): "0",
         counted("activity.user_subjects", by_user): "0",
         counted("activity.erasures", by_subject): "1",
@@ -212,6 +214,7 @@ def test_the_absence_probe_list_covers_every_store_the_erasure_touches() -> None
 
     assert names(probes) == [
         "postgres events erased",
+        "postgres idempotency keys erased",
         "postgres impressions erased",
         "postgres subject link erased",
         "postgres erasure recorded",
@@ -234,6 +237,7 @@ def test_every_absence_is_paired_with_a_presence_asserted_before_the_erasure() -
 
     assert arranged == [
         "postgres subject has events",
+        "postgres subject has idempotency keys",
         "postgres subject has impressions",
         "postgres subject link present",
         "postgres collection row present",
@@ -248,6 +252,7 @@ def test_every_absence_is_paired_with_a_presence_asserted_before_the_erasure() -
     # rather than disappearing, and it cannot exist before the erasure runs.
     subjects = {
         "events",
+        "idempotency keys",
         "impressions",
         "subject link",
         "collection",
@@ -289,7 +294,7 @@ def test_the_activity_probes_are_keyed_to_the_subject_and_the_rest_to_the_user()
         probe()
 
     by_table = {query.split(" FROM ")[1].split(" WHERE ")[0]: query for query in stack.sql_queries if " FROM " in query}
-    for table in ("activity.events", "activity.impressions", "activity.erasures"):
+    for table in ("activity.events", "activity.event_idempotency", "activity.impressions", "activity.erasures"):
         assert f"subject_id = '{SUBJECT_ID}'" in by_table[table]
     for table in ("activity.user_subjects", "user_collections", "owned_copies", "observations", "users"):
         assert f"'{USER_ID}'" in by_table[table] and SUBJECT_ID not in by_table[table]
@@ -333,6 +338,17 @@ def test_a_surviving_cache_key_for_the_user_fails_the_run() -> None:
 
     failed = {result.name for result in results if not result.passed}
     assert failed == {"valkey recommendation keys erased", "valkey snapshot count erased"}
+
+
+def test_a_surviving_idempotency_key_fails_even_though_every_event_is_gone() -> None:
+    sql, cypher, valkey = erased_answers()
+    # activity.event_idempotency is a plain table, so deleting the subject's events does not
+    # remove its keys by itself: database-schema's delete triggers do. A key outliving the
+    # erasure still ties the subject's retry token to the event it deduped.
+    survivors = {counted("activity.event_idempotency", f"subject_id = '{SUBJECT_ID}'"): "4"}
+    results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql | survivors, cypher, valkey), USER_ID, SUBJECT_ID)]
+
+    assert [result.name for result in results if not result.passed] == ["postgres idempotency keys erased"]
 
 
 def test_a_missing_erasure_record_fails_even_though_every_row_is_gone() -> None:
@@ -583,7 +599,7 @@ def test_the_whole_run_passes_against_a_stack_that_exported_and_then_erased() ->
     results = whole_run(stack, api)
 
     assert smoke_erasure.exit_code(results) == 0, smoke_erasure.render(results, "erasure")
-    assert len(results) == 30, "every arranged, export, answer, and absence probe is reported"
+    assert len(results) == 32, "every arranged, export, answer, and absence probe is reported"
     assert ("GET", "/api/search?q=groovemap%20smoke") in api.calls
     assert ("GET", f"/api/recommend/explore/artist/{smoke_erasure.ARTIST_ID}?hops=2&limit=10") in api.calls
 
@@ -595,7 +611,7 @@ def test_the_run_stops_before_erasing_when_the_arrangement_never_landed() -> Non
     results = whole_run(stack, api)
 
     assert smoke_erasure.exit_code(results) == 1
-    assert len(results) == 9, "the run reports the arrangement it could not make, and stops"
+    assert len(results) == 10, "the run reports the arrangement it could not make, and stops"
     assert ("POST", "/api/user/erasure") not in api.calls
     assert ("GET", "/api/user/export") not in api.calls
 
@@ -605,7 +621,7 @@ def test_the_run_stops_after_a_refused_erasure_rather_than_reporting_absences() 
     results = whole_run(FakeStack(*arranged_answers()), api)
 
     assert smoke_erasure.exit_code(results) == 1
-    assert len(results) == 18, "arranged and export checks plus the three answer checks, and no absence"
+    assert len(results) == 19, "arranged and export checks plus the three answer checks, and no absence"
     assert not any(result.name.endswith("erased") for result in results)
 
 

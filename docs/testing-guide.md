@@ -262,8 +262,8 @@ API's own health-gated port is published, on loopback.
 **What it seeds**: the run registers a throwaway account against the disposable stack's own
 API (email domain `smoke.invalid`, reserved by RFC 2606 so it can never be delivered to),
 grants both published consent purposes (`product_analytics` and `model_training`), then
-performs a search and a recommendation request so `activity.events` and
-`activity.impressions` rows exist for the account. It asserts each store holds the account's
+performs a search and a recommendation request so `activity.events` (and the
+`activity.event_idempotency` key each event holds) and `activity.impressions` rows exist for the account. It asserts each store holds the account's
 data *before* erasing — PostgreSQL for the activity, subject-link, and collection rows,
 Neo4j for the account's `User` node and `COLLECTED` edge, and Valkey for its recommendation and
 snapshot keys — so an absence probe cannot later pass only because the seed silently never
@@ -275,8 +275,9 @@ happened.
   `{"kind": …, "record": {…}}`, whose `kind` values are drawn from the documented export
   vocabulary and appear in the documented order, with at least one `event` line and one
   `impression` line;
-- after erasure, `activity.events`, `activity.impressions`, and `activity.user_subjects` hold
-  zero rows for the subject, and `activity.erasures` holds a row for it;
+- after erasure, `activity.events`, `activity.event_idempotency`, `activity.impressions`, and
+  `activity.user_subjects` hold zero rows for the subject (the idempotency keys are released by
+  `database-schema`'s delete triggers, not by the caller), and `activity.erasures` holds a row for it;
 - `user_collections`, `owned_copies`, and `observations` hold zero rows for the account;
 - the `users` row is soft-erased: its email carries the `erased+` prefix and `is_active` is
   `false`;

@@ -571,14 +571,34 @@ another operator-approved reason:
    partition table is a schema operation it was never declared to intercept.
    Partition-level removal, not row deletion, is the retention mechanism ADR
    0010 describes.
-5. Record the dropped partition, its date range, its row count if known, and
-   the approval in the maintenance record.
+5. For an `activity.events` partition, immediately run
+   `SELECT activity.purge_idempotency_keys('<dropped partition upper bound>');`,
+   for example `'2026-02-01 00:00:00+00'` after dropping `activity.events_y2026m01`
+   (the bound is the exclusive first instant of the next month). The statement
+   returns how many keys it removed. It is needed because
+   `activity.event_idempotency`, the table that dedupes a retry across partitions,
+   is a plain non-partitioned table: `DROP TABLE` fires no row trigger, so the keys
+   the dropped month's events held stay behind. The function deletes only keys with
+   `occurred_at` before the bound whose event is no longer stored, so it can never
+   release a key that still dedupes. Until it runs, a retry under a dropped
+   event's key is stored afresh, so the dedup window is the retention window.
+   Dropping an `activity.impressions` partition needs no purge: impressions hold
+   no idempotency key.
+6. Record the dropped partition, its date range, its row count if known, the
+   number of keys purged, and the approval in the maintenance record.
 
 This procedure is independent of the per-user erasure path (see
 `just smoke-erasure` below): erasure hard-deletes a single subject's rows under
 a session-local trigger bypass regardless of retention status, while a
 partition drop removes a whole month for every subject once retention allows
 it.
+Erasure also releases the subject's idempotency keys without any step here:
+`database-schema` deletes a key when the event holding it is deleted, and removes
+the subject's keys that name no stored event when the pseudonym link goes
+(`just smoke-erasure` asserts `activity.event_idempotency` holds no rows for the
+erased subject). The purge function requires a `database-schema` release that
+contains `activity.event_idempotency`; check the schema image
+`schema-init` runs before using it.
 
 ## Update an infrastructure image
 
