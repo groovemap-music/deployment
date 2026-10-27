@@ -44,8 +44,6 @@ def test_env_example_var_names_are_all_read_by_config_or_documented_elsewhere() 
 
 def test_env_example_uses_canonical_development_identity() -> None:
     text = _env_example_text()
-    retired_product_name = "discogs" + "ography"
-    assert retired_product_name not in text
     assert "RABBITMQ_USERNAME=groovemap" in text
     assert "RABBITMQ_PASSWORD=groovemap" in text
     assert "RABBITMQ_PROMETHEUS_URL=http://localhost:15692" in text

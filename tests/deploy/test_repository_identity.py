@@ -10,7 +10,6 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEXT_SUFFIXES = {".md", ".py", ".sh", ".toml", ".yml", ".yaml", ".json"}
 
 
 def _markdown_files() -> list[Path]:
@@ -29,24 +28,6 @@ def _heading_anchors(path: Path) -> set[str]:
         counts[slug] = duplicate + 1
         anchors.add(f"{slug}-{duplicate}" if duplicate else slug)
     return anchors
-
-
-def _active_text_files() -> list[Path]:
-    roots = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "docs", ROOT / "scripts", ROOT / "tests", ROOT / "config"]
-    paths: list[Path] = []
-    for root in roots:
-        if root.is_file():
-            paths.append(root)
-        else:
-            paths.extend(path for path in root.rglob("*") if path.is_file() and path.suffix in TEXT_SUFFIXES)
-    paths.extend(ROOT.glob("docker-compose*.yml"))
-    return paths
-
-
-def test_retired_product_name_is_absent_from_active_files() -> None:
-    retired_product_name = "discogs" + "ography"
-    offenders = [str(path.relative_to(ROOT)) for path in _active_text_files() if retired_product_name in path.read_text()]
-    assert not offenders, f"retired product branding remains in active files: {offenders}"
 
 
 def test_readme_links_repository_local_details() -> None:

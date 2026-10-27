@@ -114,8 +114,8 @@ placing a production password directly on a shared command line.
 This is expected. The broker runs with the management metrics collector disabled
 (ADR 0017), so the management UI's publish and acknowledgement rate charts and
 the API's `message_stats` stay empty. Queue depth, consumers, and rates come from
-the `rabbitmq_prometheus` endpoint, which the operations console, the catalog
-API's queue-metrics history, and the Grafana dashboards read:
+the `rabbitmq_prometheus` endpoint, which the operations console and the Grafana
+dashboards read (the console's history tabs through VictoriaMetrics):
 
 ```bash
 docker compose exec rabbitmq rabbitmqctl eval \
@@ -124,11 +124,12 @@ curl -s 'http://127.0.0.1:15692/metrics/detailed?family=queue_coarse_metrics&fam
   | grep -E '^rabbitmq_detailed_queue_(messages_acked_total|exchange_messages_published_total)'
 ```
 
-If a console or API queue view shows no rates while those counters advance, check
+If the console's queue view shows no rates while those counters advance, check
 that `RABBITMQ_PROMETHEUS_URL` on the dashboard service points at
-`http://rabbitmq:15692`. Do not re-enable `disable_management_stats`; it restores
-a deprecated collector (`management_metrics_collection`) the broker logs a
-warning for at every start.
+`http://rabbitmq:15692`. Do not restore the retired
+`-rabbitmq_management disable_management_stats false` override; it re-enables a
+deprecated collector (`management_metrics_collection`) the broker logs a warning
+for at every start.
 
 ## Valkey at maxmemory: writes are rejected
 
@@ -153,7 +154,7 @@ Diagnose with read-only commands, with approved credentials:
 docker compose exec valkey valkey-cli info memory | grep -E 'used_memory_human|maxmemory_human|maxmemory_policy'
 docker compose exec valkey valkey-cli info errorstats
 docker compose exec valkey valkey-cli --bigkeys
-docker compose logs --tail=200 catalog-api | grep -E 'valkey_write_rejected|Cache write failed'
+docker compose logs --tail=200 api | grep -E 'valkey_write_rejected|Cache write failed'
 ```
 
 `errorstat_OOM` confirms rejection by the server. The infrastructure dashboard
@@ -178,7 +179,7 @@ Resolution, which changes state and needs approval before it is run:
 ## Port conflicts
 
 The base stack publishes ports 3000, 5433, 5672, 6379, 7474, 7687, 8003-8007,
-8428, 10428, and 15672. Identify a local listener before changing Compose:
+8428, 10428, and 15672, plus 15692 on loopback only. Identify a local listener before changing Compose:
 
 ```bash
 lsof -nP -iTCP -sTCP:LISTEN

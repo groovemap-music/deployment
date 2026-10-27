@@ -5,7 +5,9 @@ maintenance windows and other database outages.
 
 ## Overview
 
-All services now use resilient database connections that automatically handle:
+The Python services use the shared resilient connection classes from
+[`python-libraries`](https://github.com/groovemap-music/python-libraries) (`common.db_resilience`,
+`common.postgres_resilient`, `common.neo4j_resilient`, `common.rabbitmq_resilient`), which automatically handle:
 
 - Nightly database maintenance windows
 - Temporary network issues
@@ -20,13 +22,14 @@ All services now use resilient database connections that automatically handle:
 Each database connection uses a circuit breaker to prevent cascading failures:
 
 - **Closed State**: Normal operation, all requests pass through
-- **Open State**: After 5 consecutive failures, rejects requests immediately
-- **Half-Open State**: After 30-60 seconds, allows one test request
+- **Open State**: After 3 consecutive failures (the PostgreSQL, Neo4j, and RabbitMQ connection classes; the shared
+  default is 5), rejects requests immediately
+- **Half-Open State**: After 30 seconds (the shared default is 60), allows one test request
 
 ```python
-# Circuit breaker configuration
-failure_threshold: 5  # Number of failures before opening
-recovery_timeout: 30 - 60  # Seconds before trying half-open
+# Circuit breaker configuration used by the PostgreSQL, Neo4j, and RabbitMQ classes
+failure_threshold: 3  # Number of failures before opening
+recovery_timeout: 30  # Seconds before trying half-open
 ```
 
 ### 2. Exponential Backoff
@@ -35,17 +38,18 @@ Failed connections retry with exponential backoff:
 
 ```yaml
 # Backoff configuration
-initial_delay: 0.5-1.0    # Initial retry delay (seconds)
-max_delay: 30-60         # Maximum retry delay
+initial_delay: 0.5-1.0    # Initial retry delay (seconds): 0.5 PostgreSQL, 1.0 Neo4j and RabbitMQ
+max_delay: 30-60         # Maximum retry delay: 30 PostgreSQL and Neo4j, 60 RabbitMQ
 exponential_base: 2.0    # Delay multiplier
-jitter: 25%              # Random jitter to prevent thundering herd
+jitter: 0-25%            # Random jitter to prevent thundering herd
 ```
 
 ### 3. Connection Health Monitoring
 
 #### PostgreSQL
 
-- Connection pool with 2-20 connections
+- `AsyncPostgreSQLPool` (class default 2-20 connections); each service passes its own budget-aware bounds, overridable
+  with `POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE`: 2-12 for both SQL loaders, 2-8 for the API, 1-4 for Insights
 - Health checks every 30 seconds
 - Automatic removal of unhealthy connections
 - Maintains minimum connection pool size
@@ -62,56 +66,61 @@ jitter: 25%              # Random jitter to prevent thundering herd
 - Robust connections with automatic recovery
 - Heartbeat monitoring (600 seconds)
 - Channel-level recovery
-- Publisher confirmations for reliability
+- Publisher confirmations on the extractors' publishing channels
 
 ### 4. Message Durability
 
 During database outages:
 
 1. **Messages remain in RabbitMQ** (persistent storage)
-1. **Failed messages are requeued** with `nack(requeue=True)`
+1. **Batch-mode consumers** (Graphinator, Brainzgraphinator, and Tableinator with `NEO4J_BATCH_MODE` /
+   `POSTGRES_BATCH_MODE` at its default `true`) keep failed batches in process memory and retry them with backoff, so
+   the broker's delivery count is not spent
+1. **Per-message consumers** (Brainztableinator, which has no batch mode, and any consumer with batch mode off) **requeue** with `nack(requeue=True)`. Their main queues are quorum queues with
+   `x-delivery-limit: 20`, so `common.outage_backoff.OutageBackoff` holds each delivery for a growing delay (2 seconds,
+   capped at 60) before the requeue. That buys roughly 20 minutes of outage tolerance per message; a longer outage
+   dead-letters the message to its DLQ, from which it must be recovered by re-extraction
 1. **Idempotency prevents duplicates** using SHA256 hashes
-1. **No data loss** - messages wait until databases recover
 
 ## Service-Specific Implementation
 
-### Python Services
+### Extractors (Rust)
 
-- Uses `ResilientRabbitMQConnection` for publishing
-- Buffers messages during connection issues
-- Retries failed publishes with backoff
-- Flushes pending messages on recovery
+- `extractor-discogs` and `extractor-musicbrainz` are Rust services owned by `discogs-ingestion` and
+  `musicbrainz-ingestion`; they do not use the Python classes above
+- Retry the AMQP connection with exponential backoff (1 second, capped at 30)
+- Publish with publisher confirms and treat an unconfirmed or returned message as a failure
 
 ### Graphinator Service (Neo4j)
 
-- Uses `ResilientNeo4jDriver` with automatic reconnection
+- Uses `AsyncResilientNeo4jDriver` with automatic reconnection and `AsyncResilientRabbitMQ` for consuming
 - Handles `ServiceUnavailable` and `SessionExpired` exceptions
 - Requeues messages on connection failures
-- Removed reactive 2-minute reconnection timer (now proactive)
 
 ### Tableinator Service (PostgreSQL)
 
-- Uses `ResilientPostgreSQLPool` with health monitoring
+- Uses `AsyncPostgreSQLPool` with health monitoring and `AsyncResilientRabbitMQ` for consuming
 - Connection pool with min/max bounds (2-12 by default; see `POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE` in [Configuration Guide](configuration.md))
 - Handles `InterfaceError` and `OperationalError`
 - Automatic connection recycling
 
 ### Dashboard Service
 
-- Uses all three resilient connection types
+- Uses `AsyncResilientNeo4jDriver` and `AsyncResilientPostgreSQL`; it holds no RabbitMQ connection and reads queue
+  metrics from `rabbitmq_prometheus` instead
 - Async implementations for non-blocking operations
 - Graceful degradation when services unavailable
 
 ### Brainzgraphinator Service (Neo4j)
 
-- Uses `ResilientNeo4jDriver` with automatic reconnection
+- Uses `AsyncResilientNeo4jDriver` with automatic reconnection
 - Enriches existing Neo4j nodes with MusicBrainz metadata
 - Handles `ServiceUnavailable` and `SessionExpired` exceptions
 - Requeues messages on connection failures
 
 ### Brainztableinator Service (PostgreSQL)
 
-- Uses `ResilientPostgreSQLPool` with health monitoring
+- Uses `AsyncPostgreSQLPool` with health monitoring
 - Stores MusicBrainz data in `musicbrainz` PostgreSQL schema
 - Connection pool with min/max bounds (2-12 by default; see `POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE` in [Configuration Guide](configuration.md)); RabbitMQ prefetch (channel-global QoS) is coupled to the pool max instead of using batch flushing
 - Handles `InterfaceError` and `OperationalError`
@@ -126,13 +135,13 @@ No changes required to existing environment variables. The resilient connections
 # Neo4j
 NEO4J_HOST=neo4j
 NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=password
+NEO4J_PASSWORD=groovemap
 
 # PostgreSQL
 POSTGRES_HOST=postgres
 POSTGRES_DATABASE=groovemap
-POSTGRES_USERNAME=postgres
-POSTGRES_PASSWORD=postgres
+POSTGRES_USERNAME=groovemap
+POSTGRES_PASSWORD=groovemap
 
 # RabbitMQ
 RABBITMQ_HOST=rabbitmq
@@ -142,19 +151,20 @@ RABBITMQ_PASSWORD=groovemap
 
 ### Tuning Parameters
 
-The following parameters can be adjusted in the code if needed:
+The following parameters are set in `python-libraries` code; only the pool bounds are environment-configurable
+(`POSTGRES_POOL_MIN_SIZE` / `POSTGRES_POOL_MAX_SIZE`):
 
 ```python
 # Circuit Breaker
-failure_threshold = 5  # Failures before circuit opens
+failure_threshold = 3  # Failures before circuit opens
 recovery_timeout = 30  # Seconds before recovery attempt
 
 # Retry Settings
 max_retries = 5  # Maximum connection attempts
-initial_delay = 1.0  # Initial retry delay
-max_delay = 60.0  # Maximum retry delay
+initial_delay = 1.0  # Initial retry delay (0.5 for PostgreSQL)
+max_delay = 60.0  # Maximum retry delay (30.0 for PostgreSQL and Neo4j)
 
-# Connection Pools
+# Connection Pools (AsyncPostgreSQLPool class defaults; services pass their own bounds)
 postgres_min_connections = 2
 postgres_max_connections = 20
 postgres_health_check_interval = 30
@@ -170,7 +180,7 @@ neo4j_connection_acquisition_timeout = 60.0
 When databases undergo nightly maintenance:
 
 1. **Connection Detection**: Services detect connection loss within seconds
-1. **Circuit Breaker Opens**: After 5 failures, prevents cascade
+1. **Circuit Breaker Opens**: After 3 failures, prevents cascade
 1. **Message Queuing**: New messages remain in RabbitMQ
 1. **Exponential Backoff**: Retry attempts with increasing delays
 1. **Recovery**: When database returns, connections automatically restore
@@ -199,13 +209,13 @@ ports are not mapped to localhost.
 Enhanced logging for connection events:
 
 ```
-🔄 Creating new connection (attempt 1/5)
-⚠️ Connection attempt 1 failed: Connection refused. Retrying in 1.2 seconds...
-🔄 Creating new connection (attempt 2/5)
-✅ Connection established successfully
-🚨 Circuit breaker OPEN after 5 failures
-🔄 Circuit breaker entering HALF_OPEN state
-✅ Circuit breaker reset to CLOSED
+🔄 <name>: Creating new connection (attempt 1/5)
+⚠️ <name>: Connection attempt 1 failed: Connection refused. Retrying in 1.2 seconds...
+🔄 <name>: Creating new connection (attempt 2/5)
+✅ <name>: Connection established successfully
+❌ <name>: Circuit breaker OPEN after 3 failures
+🔄 <name>: Circuit breaker entering HALF_OPEN state
+✅ <name>: Circuit breaker reset to CLOSED
 ```
 
 ### Metrics

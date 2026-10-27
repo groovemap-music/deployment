@@ -24,5 +24,5 @@
 - [Platform targeting](platform-targeting.md)
 - [Usage examples](usage-examples.md)
 - [Source-history provenance](extraction.md)
-
 - [Extractor delivery](extractor-delivery.md): two-service compatibility, image provenance, adaptation and rollback.
+- [Explore and Insights delivery](health-service-delivery.md): replacing only those two services with source-owner images, with guarded preparation and rollback.

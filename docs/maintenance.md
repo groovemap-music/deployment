@@ -115,6 +115,16 @@ Reviewed catalog API image (`v0.4.0`):
 | --- | --- | --- |
 | `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` |
 
+Reviewed console, explorer, and analytics images (`v0.1.1`):
+
+| Variable | Image | Manifest digest |
+| --- | --- | --- |
+| `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1` |
+| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
+| `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69` |
+
+`scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
+
 The three changed entries resolve from their released tags for `linux/amd64`
 (the platform published by these release workflows). Their reviewed rollback
 targets are the previous index digests: `DISCOGS_SQL_LOADER_IMAGE`

@@ -81,7 +81,7 @@ services:
   dashboard:
     environment:
       - LOG_LEVEL=DEBUG
-      - VALKEY_HOST=valkey
+      - SESSION_CACHE_SECONDS=10
 ```
 
 ## Core Settings
@@ -94,11 +94,20 @@ The following groups are interpolated by the executable stack:
 | --- | --- |
 | `DATABASE_SCHEMA_IMAGE`, `CATALOG_API_IMAGE`, `DISCOGS_INGESTION_IMAGE`, `MUSICBRAINZ_INGESTION_IMAGE`, `DISCOGS_GRAPH_ENRICHER_IMAGE`, `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE`, `DISCOGS_SQL_LOADER_IMAGE`, `MUSICBRAINZ_SQL_LOADER_IMAGE`, `OPERATIONS_CONSOLE_IMAGE`, `GRAPH_EXPLORER_IMAGE`, `ANALYTICS_ENGINE_IMAGE` | Required immutable source-owned images |
 | `UID`, `GID` | Host identity stamped on internal-image containers |
-| `APP_BASE_URL`, `DB_PROFILING`, `ENCRYPTION_MASTER_KEY`, `INSIGHTS_INTERNAL_SECRET`, `NLQ_ENABLED`, `NLQ_API_KEY`, `NLQ_MODEL`, `RESEND_API_KEY`, `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Optional base-stack application settings |
+| `APP_BASE_URL`, `DB_PROFILING`, `INSIGHTS_INTERNAL_SECRET`, `NLQ_ENABLED`, `NLQ_API_KEY`, `NLQ_MODEL` | Optional base-stack application settings (`APP_BASE_URL` is required by the production overlay) |
+| `GRAFANA_URL`, `TRACES_URL` | Browser-facing Grafana and traces base URLs for the operations console's deep links (default `http://localhost:3000`) |
+| `RABBITMQ_DLQ_MAX_LENGTH`, `RABBITMQ_DLQ_MAX_LENGTH_BYTES`, `RABBITMQ_DLQ_OVERFLOW` | Catalog dead-letter queue size-cap policy (defaults `50000`, `536870912`, `drop-head`); see [the admin guide](admin-guide.md#dlq-size-cap-policy) |
+| `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
+| `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` | Production overlay sizing |
-| `GM_EXTRACTION_RULES_FILE` | Optional host path for the promoted Discogs extraction rules |
-| `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
+| `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
+| `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
+| `SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT`, `SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM`, `SMOKE_RELEASED_FIXTURE_SUBNET` | Isolated released-fixture-smoke settings only |
+
+`ENCRYPTION_MASTER_KEY` and `RESEND_API_KEY` are not interpolated: the base file
+carries them only as commented-out entries, and the production overlay delivers
+them as the `encryption_master_key` and `resend_api_key` file secrets.
 
 `docker compose config --environment` shows interpolation inputs, while
 `just config` and `just config-prod` show the complete effective container
@@ -175,7 +184,7 @@ RabbitMQ connections are configured using individual component variables.
 | `RABBITMQ_USERNAME` | RabbitMQ username  | `groovemap` | No       |
 | `RABBITMQ_PASSWORD` | RabbitMQ password  | `groovemap` | No       |
 
-**Used By**: Extractor, Graphinator, Tableinator, Brainzgraphinator, Brainztableinator, Dashboard
+**Used By**: both extractors, API, Graphinator, Tableinator, Brainzgraphinator, Brainztableinator. The Dashboard holds no RabbitMQ credential; it reads broker metrics from `RABBITMQ_PROMETHEUS_URL` (see [Dashboard Configuration](#dashboard-configuration)).
 
 **Secret convention**: `RABBITMQ_USERNAME_FILE` / `RABBITMQ_PASSWORD_FILE` paths are supported for Docker Compose runtime secrets.
 
@@ -198,10 +207,12 @@ RABBITMQ_PASSWORD=mypassword
 
 **Connection Properties**:
 
-- Automatic reconnection on failure
-- Heartbeat: 60 seconds
-- Connection timeout: 30 seconds
-- Prefetch count: 100 (configurable per service)
+- Automatic reconnection on failure (up to 5 connection attempts with exponential backoff, behind a circuit breaker)
+- Heartbeat: 600 seconds
+- Prefetch count is set per consumer, not by a variable: 200 for Brainzgraphinator; in batch
+  mode, the larger of 200 and twice the batch size for Graphinator and Tableinator (Tableinator
+  without batch mode uses its connection-pool maximum); and the connection-pool maximum
+  (channel-global) for Brainztableinator
 
 ### Data Storage
 
@@ -220,19 +231,21 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 - Requires ~76GB free space for full dataset
 - Contains downloaded XML files and metadata cache
 
-**Directory layout**:
+**Directory layout**: the Discogs extractor keeps every dump file directly under
+`DISCOGS_ROOT`, with no per-type subdirectories:
 
-| Directory | Dataset example | Metadata file |
-| --- | --- | --- |
-| `/discogs-data/artists/` | `discogs_20250115_artists.xml.gz` | `.metadata_artists.json` |
-| `/discogs-data/labels/` | `discogs_20250115_labels.xml.gz` | `.metadata_labels.json` |
-| `/discogs-data/releases/` | `discogs_20250115_releases.xml.gz` | `.metadata_releases.json` |
-| `/discogs-data/masters/` | `discogs_20250115_masters.xml.gz` | `.metadata_masters.json` |
+| Path | Purpose |
+| --- | --- |
+| `/discogs-data/discogs_20250115_artists.xml.gz` (and `_labels`, `_masters`, `_releases`) | Downloaded dump files |
+| `/discogs-data/.discogs_metadata.json` | Checksums and sizes of the downloaded files |
+| `/discogs-data/.extraction_status_<version>.json` | Per-dump processing state marker |
+| `/discogs-data/flagged/<version>/<type>/` | Records flagged by the data-quality rules |
 
 **PERIODIC_CHECK_DAYS**:
 
 - How often to check for new data dumps
-- Set to `0` to disable automatic checks
+- The minimum is `1`; a value of `0` is raised to one day, so periodic checks
+  cannot be disabled
 - The source-level default is 15 days; Compose deliberately overrides it per
   producer as shown above
 
@@ -242,7 +255,8 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 
 | Variable            | Description                                             | Default     | Required |
 | ------------------- | ------------------------------------------------------- | ----------- | -------- |
-| `NEO4J_HOST`        | Neo4j hostname                                          | `localhost` | Yes      |
+| `NEO4J_HOST`        | Neo4j hostname, or a full `scheme://host[:port]` URI    | `localhost` | Yes      |
+| `NEO4J_PORT`        | Bolt port (used when `NEO4J_HOST` is a bare hostname)   | `7687`      | No       |
 | `NEO4J_USERNAME`    | Neo4j username                                          | `neo4j`     | Yes      |
 | `NEO4J_PASSWORD`    | Neo4j password                                          | (none)      | Yes      |
 | `NEO4J_TLS_ENABLED` | Encrypt the Bolt connection to Neo4j (TLS)             | `false`     | No       |
@@ -254,9 +268,10 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 
 - Protocol: Bolt (binary protocol)
 - Default port: 7687
-- Connection pool: 50 connections (max)
+- Connection pool: 50 connections (max), 60-second connection acquisition timeout
 - Retry logic: Exponential backoff (max 5 attempts)
-- Transaction timeout: 60 seconds
+- Transaction timeout: set on the server, `120s` in the base file and `600s` in the
+  production overlay (`NEO4J_db_transaction_timeout`)
 
 **Examples**:
 
@@ -327,7 +342,8 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 | `POSTGRES_POOL_MIN_SIZE` | Override the connection-pool minimum for **all** pooled services | per-service default | No |
 | `POSTGRES_POOL_MAX_SIZE` | Override the connection-pool maximum for **all** pooled services | per-service default | No |
 
-**Used By**: Tableinator, Dashboard, API, Insights, Brainztableinator, Schema-Init
+**Used By**: Tableinator, Dashboard, API, Insights, Brainztableinator, Schema-Init, and the
+`embeddings` job (which logs in with its own `EMBEDDING_PIPELINE_POSTGRES_*` credentials)
 
 > **Note**: `POSTGRES_HOST` may include a port, e.g. `pgbouncer:6432` (useful when
 > connecting through a connection pooler). An embedded port always takes precedence
@@ -349,8 +365,10 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 - Protocol: PostgreSQL wire protocol
 - Default port: 5432 (mapped to 5433 in Docker)
 - Connection pool: budget-aware per-service sizing (see note above)
-- Retry logic: Exponential backoff (max 5 attempts)
-- Query timeout: 30 seconds
+- Retry logic: Exponential backoff (max 5 attempts), behind a circuit breaker with a
+  30-second recovery window
+- Query timeout: none set globally; individual queries set their own `statement_timeout`
+  where needed
 
 **Examples**:
 
@@ -389,22 +407,22 @@ POSTGRES_POOL_MIN_SIZE=10
 POSTGRES_POOL_MAX_SIZE=20
 ```
 
-> Query timeout (30 seconds, see **Connection Details** above) is a fixed value in
-> code, not a configurable env var.
-
 ### Valkey Configuration
 
 | Variable         | Description                            | Default     | Required                               |
 | ---------------- | -------------------------------------- | ----------- | -------------------------------------- |
-| `VALKEY_HOST`     | Valkey hostname                        | `localhost` | Yes (Dashboard, API, Insights) |
+| `VALKEY_HOST`     | Valkey hostname                        | `localhost` | Yes (API, Insights)            |
 | `VALKEY_PORT`     | Valkey port                            | `6379`      | No                                     |
 | `VALKEY_PASSWORD` | Valkey password (`requirepass`)        | _(none)_    | No (required if Valkey enforces auth)  |
 
-**Used By**: Dashboard, API, Insights
+**Used By**: API, Insights. The Dashboard does not read `VALKEY_*`; its platform-health page
+only pings `VALKEY_HEALTH_ADDRESS` (default `valkey:6379`).
 
 **Connection Details**:
 
 - Protocol: RESP, spoken by the `valkey-py` client
+- TLS: not supported; the shared client always builds a plain `valkey://` URL, so keep Valkey
+  on the internal network
 - Default port: 6379 (override with `VALKEY_PORT`)
 - Database: 0 (default)
 - Authentication: when `VALKEY_PASSWORD` is set it is embedded in the connection URL (`valkey://:<password>@host:port/0`); omitted entirely when unset. Supports the `_FILE` secret convention (`VALKEY_PASSWORD_FILE`).
@@ -453,8 +471,9 @@ VALKEY_PASSWORD_FILE="/run/secrets/valkey_password"
 | Variable                       | Description                                                       | Default | Required  |
 | ------------------------------ | ----------------------------------------------------------------- | ------- | --------- |
 | `JWT_SECRET_KEY`               | HMAC-SHA256 signing secret                                        | (none)  | Yes (API) |
-| `JWT_EXPIRE_MINUTES`           | Token lifetime in minutes                                         | `30`    | No        |
-| `DISCOGS_USER_AGENT`           | User-Agent for Discogs API requests                               | (none)  | Yes (API) |
+| `JWT_EXPIRE_MINUTES`           | Token lifetime in minutes (`docker-compose.yml` sets `60`)        | `30`    | No        |
+| `JWT_ALGORITHM`                | Signing algorithm; any value other than `HS256` stops the API starting | `HS256` | No   |
+| `DISCOGS_USER_AGENT`           | User-Agent for Discogs API requests                               | `GrooveMap-catalog-api/1.0 +https://github.com/groovemap-music/catalog-api` | No |
 | `DISCOGS_OAUTH_CALLBACK_URL`   | Public callback URL Discogs redirects to after the user authorizes the app. When unset, the OAuth flow falls back to the out-of-band (OOB) mode where the user copy/pastes a verifier code into the app. When set, the value must exactly match the **Callback URL** field on your Discogs developer app settings page and point at `oauth-discogs-callback.html` on the Explore frontend (e.g. `https://your-host/oauth-discogs-callback.html`). | (none)  | No        |
 | `APP_BASE_URL`                 | Public origin of the user-facing Explore frontend, used to build absolute links in outbound email (currently the password reset link). Must be reachable from a recipient's mail client — a relative or internal-only URL produces an unclickable link. Any trailing slash is stripped. | `http://localhost:8006` | Yes in production |
 
@@ -471,7 +490,7 @@ the recipient's own machine.
 
 - Algorithm: HS256 (HMAC-SHA256)
 - Token format: Standard JWT (`header.body.signature`, base64url-encoded)
-- Payload claims: `sub` (user UUID), `email`, `iat`, `exp`
+- Payload claims: `sub` (user UUID), `email`, `iat`, `exp`, `jti` (the token ID that logout revokes)
 
 **Security Notes**:
 
@@ -491,7 +510,7 @@ JWT_EXPIRE_MINUTES=30     # 30 minutes (default)
 JWT_EXPIRE_MINUTES=60     # 1 hour
 JWT_EXPIRE_MINUTES=1440   # 24 hours
 
-# Discogs User-Agent (required for Discogs API)
+# Discogs User-Agent (optional; overrides the catalog-api default)
 DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — public Discogs OAuth callback URL. When set, end users no longer
@@ -549,6 +568,10 @@ See [Logging Guide](https://github.com/groovemap-music/catalog-api/blob/main/doc
 | `CONSUMER_CANCEL_DELAY` | Seconds before canceling idle consumers | `300` (5 min) | 60-3600   |
 | `QUEUE_CHECK_INTERVAL`  | Seconds between queue checks when idle  | `3600` (1 hr) | 300-86400 |
 | `STUCK_CHECK_INTERVAL`  | Seconds between stuck-state checks      | `30`          | 5-300     |
+| `STARTUP_IDLE_TIMEOUT`  | Seconds after startup with no messages before entering idle mode | `30` | — |
+| `IDLE_LOG_INTERVAL`     | Seconds between idle status log lines   | `300` (5 min) | —         |
+| `STARTUP_DELAY`         | Seconds to wait before starting (Compose: `15` Graphinator, `20` Tableinator and Brainzgraphinator, `25` Brainztableinator) | `5` | — |
+| `HEALTH_PORT`           | Internal health port                    | `8001` graph consumers, `8002` table consumers | — |
 
 **Used By**: Graphinator, Tableinator, Brainzgraphinator, Brainztableinator
 
@@ -668,8 +691,16 @@ See [Performance Guide](performance-guide.md) for detailed optimization strategi
 | `CACHE_WEBHOOK_SECRET`         | Secret for cache invalidation webhooks       | (none — disabled) | No       |
 | `API_HOST`                     | API service hostname for admin proxy         | `api`             | No       |
 | `API_PORT`                     | API service port for admin proxy             | `8004`            | No       |
+| `VICTORIA_METRICS_URL`         | VictoriaMetrics base URL for the history tabs and its health probe | `http://victoria-metrics:8428` | No |
+| `GRAFANA_API_URL`              | In-network Grafana the server asks for firing alerts | falls back to `GRAFANA_URL` | No |
+| `GRAFANA_URL`                  | Browser-facing Grafana base for deep links; Compose default `http://localhost:3000` | (none — no links) | No |
+| `TRACES_URL`                   | Browser-facing base for trace links          | `GRAFANA_URL`     | No       |
+| `GRAFANA_TOKEN_FILE`           | File holding a Grafana Viewer token for alerts; the production overlay mounts `grafana_viewer_token` | (none — alerts off) | No |
+| `SESSION_COOKIE_SECURE`        | Secure attribute on the session cookie; see [below](#console-session-cookie-and-https) | `true` | No |
+| `SESSION_CACHE_SECONDS`        | Seconds a validated session is cached (capped at 30) | `30`      | No       |
+| `VICTORIA_TRACES_URL`, `OTEL_COLLECTOR_HEALTH_URL`, `VALKEY_HEALTH_ADDRESS` | Platform-health probe targets | `http://victoria-traces:10428`, `http://otel-collector:13133`, `valkey:6379` | No |
 
-**Used By**: Dashboard only (for `CACHE_WARMING_ENABLED`, `CACHE_WEBHOOK_SECRET`); `CORS_ORIGINS` is also supported by other services — see the [RabbitMQ Configuration](#rabbitmq-configuration) and [API](#api) sections above. `API_HOST` / `API_PORT` are used by the admin proxy router to forward authenticated admin requests to the API service.
+**Used By**: Dashboard only (for `CACHE_WARMING_ENABLED`, `CACHE_WEBHOOK_SECRET`); `CORS_ORIGINS` is also supported by the API and Explore — see the [API](#api) and [Explore](#explore) sections below. `API_HOST` / `API_PORT` are used by the admin proxy router to forward authenticated admin requests to the API service.
 
 **Notes**:
 
@@ -706,8 +737,15 @@ POSTGRES_HOST="localhost"
 POSTGRES_USERNAME="groovemap"
 POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
-VALKEY_HOST="localhost"
+NEO4J_HOST="localhost"
+NEO4J_USERNAME="neo4j"
+NEO4J_PASSWORD="groovemap"
 JWT_SECRET_KEY="your-secret-key-here"
+
+# Valkey (default: localhost)
+VALKEY_HOST="localhost"
+
+# Optional — overrides the catalog-api default User-Agent
 DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — HKDF master encryption key (derives OAuth + TOTP encryption keys)
@@ -752,15 +790,15 @@ After configuring Resend, follow the
 The final send and password change require explicit operator approval; the
 configuration examples above do not prove live delivery.
 
-**Notes**: After startup, set Discogs app credentials using the `discogs-setup` CLI bundled in the API container:
+**Notes**: After startup, set Discogs app credentials using the `catalog-setup` CLI bundled in the API container:
 
 ```bash
-docker compose exec api discogs-setup \
+docker compose exec api catalog-setup \
   --consumer-key YOUR_CONSUMER_KEY \
   --consumer-secret YOUR_CONSUMER_SECRET
 
 # Verify (values are masked)
-docker compose exec api discogs-setup --show
+docker compose exec api catalog-setup --show
 ```
 
 See the [API README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md) for full setup instructions.
@@ -804,7 +842,18 @@ PERIODIC_CHECK_DAYS=5            # Days between update checks (code default: 15,
 BATCH_SIZE=100                   # Records per AMQP publish batch (default: 100)
 MAX_WORKERS=4                    # Concurrent processing workers (default: number of CPU cores)
 FORCE_REPROCESS=false            # Force reprocess even if already extracted (default: false)
+QUEUE_SIZE=5000                  # Internal pipeline channel capacity (default: 5000)
+PROGRESS_LOG_INTERVAL=1000       # Records between progress log lines (default: 1000)
+STATE_SAVE_INTERVAL=5000         # Records between state-marker saves (default: 5000)
+FAILURE_COOLDOWN_SECS=600        # Pause after a failed run before exiting (default: 600)
+HEALTH_PORT=8000                 # Internal health port (default: 8000)
 LOG_LEVEL=INFO
+
+# Discogs only — promoted data-quality rules mounted by Compose
+DATA_QUALITY_RULES=/config/extraction-rules.yaml
+
+# MusicBrainz only
+MUSICBRAINZ_DUMP_URL=https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/  # default
 ```
 
 Internal health port: 8000 on each extractor. It is not published to the host;
@@ -901,10 +950,15 @@ POSTGRES_HOST="localhost"
 POSTGRES_USERNAME="groovemap"
 POSTGRES_PASSWORD="groovemap"
 POSTGRES_DATABASE="groovemap"
-VALKEY_HOST="localhost"
 
 # Broker metrics (queue depth and publish/ack rates)
 RABBITMQ_PROMETHEUS_URL=http://rabbitmq:15692  # default: http://rabbitmq:15692
+
+# History, alerts and deep links (Compose values)
+VICTORIA_METRICS_URL=http://victoria-metrics:8428
+GRAFANA_API_URL=http://grafana:3000
+GRAFANA_URL=http://localhost:3000   # set to the public Grafana URL outside local dev
+TRACES_URL=http://localhost:3000    # defaults to GRAFANA_URL
 
 # Optional - Session cookie
 SESSION_COOKIE_SECURE=false        # true/1/yes or false/0/no; anything else stops the console starting
@@ -977,17 +1031,39 @@ INSIGHTS_SCHEDULE_HOURS=24                    # Computation interval in hours (d
 # Optional - Milestones
 INSIGHTS_MILESTONE_YEARS="25,30,40,50,75,100" # Anniversary years to highlight (default: 25,30,40,50,75,100)
 
-# Optional - Startup
-STARTUP_DELAY=10                              # Seconds to wait before starting (code default: 0, docker-compose: 10)
-
 # Optional - Logging
 LOG_LEVEL=INFO
 ```
+
+`docker-compose.yml` also sets `STARTUP_DELAY=10` on `insights`, but the
+analytics-engine image does not read it.
 
 Internal health port: 8009. It is not published to the host; use
 `docker compose ps` for status.
 
 **Notes**: The Insights service uses Valkey for caching computed results (cache-aside pattern). The cache TTL matches the `INSIGHTS_SCHEDULE_HOURS` interval and is invalidated after each computation run. If Valkey is unavailable, the service operates without caching.
+
+### Embeddings job
+
+The one-shot `embeddings` service (Compose profile `jobs`) runs the analytics-engine image's
+`analytics-engine-embeddings` entry point for the monthly FastRP recompute. Run it with
+`just embeddings-run`; see [Maintenance](maintenance.md#monthly-embedding-refresh).
+
+```bash
+# Required — no default; they change every month
+SOURCE_DUMP_ID=discogs-2026-09                 # the dump this run embeds
+SOURCE_DUMP_DATE=2026-09-01                    # that dump's release date, YYYY-MM-DD
+
+# The pipeline's own least-privilege login (a member of database-schema's
+# NOLOGIN embedding_pipeline role), never POSTGRES_USERNAME
+EMBEDDING_PIPELINE_POSTGRES_USERNAME=embedding_pipeline  # Compose default
+EMBEDDING_PIPELINE_POSTGRES_PASSWORD=groovemap           # Compose default; a file secret in production
+
+# Optional
+ENABLE_SIMILAR_ARTISTS=false                   # exactly true or false; true also precomputes similar artists
+```
+
+Provision the login once per stack with `just embeddings-provision-login`.
 
 ### Brainzgraphinator
 
@@ -1021,7 +1097,7 @@ LOG_LEVEL=INFO
 Internal health port: 8001 (`HEALTH_PORT`). It is not published to the host; use
 `docker compose ps` for status.
 
-**Notes**: Brainzgraphinator enriches existing Neo4j nodes with MusicBrainz metadata (properties, relationships, cross-references). It skips entities without Discogs matches. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges.
+**Notes**: Brainzgraphinator enriches existing Neo4j nodes with MusicBrainz metadata (properties, relationships, cross-references). It skips entities without Discogs matches. Consumes from the `groovemap-musicbrainz-{artists,labels,release-groups,releases}` exchanges (prefix set by `MUSICBRAINZ_EXCHANGE_PREFIX`).
 
 ### Brainztableinator
 
@@ -1055,16 +1131,18 @@ LOG_LEVEL=INFO
 Internal health port: 8002 (`HEALTH_PORT`). It is not published to the host; use
 `docker compose ps` for status.
 
-**Notes**: Brainztableinator stores all MusicBrainz data in the `musicbrainz` PostgreSQL schema — including entities without Discogs matches — with relationships and external links. Consumes from the `musicbrainz-{artists,labels,release-groups,releases}` exchanges. Unlike Graphinator/Tableinator/Brainzgraphinator, it does **not** batch writes — it commits one PostgreSQL transaction per message and instead sets RabbitMQ prefetch (channel-global QoS) equal to its connection-pool maximum, so in-flight message handlers never exceed pool capacity.
+**Notes**: Brainztableinator stores all MusicBrainz data in the `musicbrainz` PostgreSQL schema — including entities without Discogs matches — with relationships and external links. Consumes from the `groovemap-musicbrainz-{artists,labels,release-groups,releases}` exchanges (prefix set by `MUSICBRAINZ_EXCHANGE_PREFIX`). Unlike Graphinator/Tableinator/Brainzgraphinator, it does **not** batch writes — it commits one PostgreSQL transaction per message and instead sets RabbitMQ prefetch (channel-global QoS) equal to its connection-pool maximum, so in-flight message handlers never exceed pool capacity.
 
 ### MCP Server
 
 ```bash
-# Required
-API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API
+API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API (default: http://localhost:8004)
+
+# Optional — delegated Catalog API app token; without it the delegated tools decline
+GROOVEMAP_CATALOG_APP_TOKEN="<app-token>"
 ```
 
-**Notes**: The MCP server has no direct database dependencies — all data is fetched via the API service over HTTP. It supports `stdio` (default, for local use with Claude Desktop/Cursor/Zed) and `streamable-http` (for hosted deployments) transports.
+**Notes**: The MCP server is not part of this Compose stack. It has no direct database dependencies — all data is fetched via the API service over HTTP. It supports `stdio` (default when run directly, for local use with Claude Desktop/Cursor/Zed) and `streamable-http` (the image's default command, for hosted deployments) transports.
 
 ## Environment Templates
 
@@ -1072,8 +1150,10 @@ API_BASE_URL="http://api:8004"   # Base URL for the GrooveMap API
 
 The repository ships `.env.example`; it does not ship `.env.development`.
 Start from the former so all eleven required image variables remain present.
-The fragment below illustrates optional runtime overrides only and is not a
-complete Compose input.
+The fragment below illustrates the variables a source-owned process reads when
+it runs directly outside Compose. It is not a complete Compose input, and inside
+the stack these values change only through a reviewed Compose override (see
+[Configuration Methods](#configuration-methods)).
 
 ```bash
 # RabbitMQ (built from components)
@@ -1102,7 +1182,7 @@ DISCOGS_USER_AGENT="GrooveMap/1.0-dev +https://groovemap.music"
 
 # Data
 DISCOGS_ROOT=/tmp/discogs-data-dev
-PERIODIC_CHECK_DAYS=0
+PERIODIC_CHECK_DAYS=1    # minimum; checks cannot be disabled
 
 # Logging
 LOG_LEVEL=DEBUG
@@ -1130,51 +1210,48 @@ This creates `secrets/` with these files (all `chmod 600`, directory `chmod 700`
 | `nlq_api_key.txt` | Optional NLQ provider API key; empty unless enabled |
 | `encryption_master_key.txt` | URL-safe base64 of 32 random bytes |
 | `jwt_secret_key.txt` | `openssl rand -hex 32` |
-| `neo4j_password.txt` | `openssl rand -base64 24` |
-| `postgres_password.txt` | `openssl rand -base64 24` |
+| `neo4j_password.txt` | 36 random `[A-Za-z0-9]` characters |
+| `postgres_password.txt` | 36 random `[A-Za-z0-9]` characters |
 | `postgres_username.txt` | `groovemap` |
-| `rabbitmq_password.txt` | `openssl rand -base64 24` |
+| `rabbitmq_password.txt` | 36 random `[A-Za-z0-9]` characters |
 | `rabbitmq_username.txt` | `groovemap` |
-| `valkey_password.txt` | `openssl rand -base64 24` |
+| `valkey_password.txt` | 36 random `[A-Za-z0-9]` characters |
 | `valkey_exporter_passwords.json` | Derived from `valkey_password.txt` by `scripts/create-secrets.sh` on every run (JSON map of Redis URI to password, for `valkey-exporter`) |
 | `insights_internal_secret.txt` | `openssl rand -hex 32`; shared by API and insights |
-| `grafana_admin_password.txt` | `openssl rand -base64 24`; Grafana admin login |
+| `grafana_admin_password.txt` | 36 random `[A-Za-z0-9]` characters; Grafana admin login |
+| `grafana_viewer_token.txt` | Optional Grafana Viewer token for the console's alerts (`GRAFANA_VIEWER_TOKEN`); empty unless supplied |
+| `embedding_pipeline_username.txt` | `embedding_pipeline` |
+| `embedding_pipeline_password.txt` | 36 random `[A-Za-z0-9]` characters; grant the role with `just embeddings-provision-login` |
+
+Generated passwords avoid `/` and `+`, which Neo4j rejected and which would need
+percent-encoding in connection URLs.
 
 See `secrets.example/` for reference placeholders and generation commands.
 
-**Step 2 — Set non-secret production environment** in the target environment.
-The values are non-secret, but this repository still forbids committing `.env`
-or rendered environment configuration:
+**Step 2 — Set the non-secret production interpolation inputs** in the target
+environment's untracked `.env`, next to the image digests. The values are
+non-secret, but this repository still forbids committing `.env` or rendered
+environment configuration:
 
 ```bash
-# RabbitMQ (hostname only — credentials come from Docker secrets)
-RABBITMQ_HOST=rabbitmq.prod.internal
+# Required by the production overlay: the public Explore origin used in email links
+APP_BASE_URL=https://groovemap.example.com
 
-# Neo4j
-NEO4J_HOST=neo4j.prod.internal
+# Browser-facing Grafana for the console's deep links (TRACES_URL follows it)
+GRAFANA_URL=https://grafana.example.com
 
-# PostgreSQL
-POSTGRES_HOST=postgres.prod.internal
-POSTGRES_DATABASE=groovemap
+# Optional email sender (defaults shown)
+RESEND_SENDER_EMAIL=noreply@groovemap.music
+RESEND_SENDER_NAME=GrooveMap
 
-# Valkey
-VALKEY_HOST=valkey
-
-# JWT (optional non-secret settings)
-JWT_EXPIRE_MINUTES=1440
-DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
-
-# Data
-DISCOGS_ROOT=/mnt/data/discogs
-PERIODIC_CHECK_DAYS=15
-
-# Logging
-LOG_LEVEL=INFO
-
-# Consumer Management
-CONSUMER_CANCEL_DELAY=300
-QUEUE_CHECK_INTERVAL=3600
+# Optional Neo4j sizing (defaults shown)
+NEO4J_HEAP_SIZE=8g
+NEO4J_PAGECACHE_SIZE=16g
+NEO4J_MEMORY_LIMIT=48G
 ```
+
+Hosts, data paths, log levels, and consumer timings are literal Compose values,
+not interpolation inputs; change them only with a reviewed Compose override.
 
 **Step 3 — after reviewing the render and obtaining operator approval, start
 with the production overlay**:
@@ -1219,10 +1296,10 @@ NEO4J_TLS_ENABLED=true
 
 # PostgreSQL hostname
 POSTGRES_HOST=postgres.example.com
-
-# Valkey with TLS
-VALKEY_HOST=valkeys://:password@valkey.example.com:6380/0
 ```
+
+The shared Valkey client has no TLS option, so keep Valkey on the internal
+network rather than across an untrusted one.
 
 ### Access Control
 
@@ -1251,7 +1328,9 @@ curl --fail http://localhost:8005/health  # API health port
 curl --fail http://localhost:8007/health  # Explore health port
 ```
 
-Only those three HTTP probes are published. Compose runs the remaining health
+Only those three application health probes are published (Grafana's
+`/api/health` on port 3000 and VictoriaMetrics' `/health` on port 8428 are also
+reachable in the base stack). Compose runs the remaining health
 checks inside containers; some are HTTP, while databases and other
 infrastructure use their native commands. Inspect the exact commands with
 `docker compose config` rather than assuming every check returns the same JSON.
@@ -1283,8 +1362,9 @@ infrastructure use their native commands. Inspect the exact commands with
 
 - Check `.env` file is in correct location
 - Verify no syntax errors in `.env`
-- Restart services after changes
-- For Docker: rebuild images if needed
+- Recreate the affected containers after an approved change (a restart keeps
+  the old environment); this repository never builds images
+- Remember that `.env` only feeds `${NAME}` interpolation, not literal Compose values
 
 See [Troubleshooting Guide](troubleshooting.md) for more solutions.
 
@@ -1299,4 +1379,4 @@ See [Troubleshooting Guide](troubleshooting.md) for more solutions.
 
 ______________________________________________________________________
 
-**Last Updated**: 2026-09-12
+**Last Updated**: 2026-10-26
