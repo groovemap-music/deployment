@@ -633,7 +633,6 @@ services:
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
       VALKEY_HOST: valkey
-      STARTUP_DELAY: "5"
       DISCOGS_DATA_ROOT: /discogs-data
       MUSICBRAINZ_DATA_ROOT: /musicbrainz-data
       DB_PROFILING: "${DB_PROFILING:-true}"
@@ -681,11 +680,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    # init: true runs tini as PID 1 so SIGTERM is forwarded to the start.sh
-    # shell (and its STARTUP_DELAY sleep) instead of being discarded — a
-    # non-interactive shell installs no signal handler, so without an init a
-    # stop/restart landing inside the startup delay window is silently ignored
-    # until Docker's SIGKILL grace period expires.
+    # init: true runs tini as PID 1 so signals are forwarded to the service
+    # process and orphaned children are reaped. Startup ordering comes from the
+    # depends_on health conditions above, not from a startup delay.
     init: true
     restart: unless-stopped
     logging: *default-logging
@@ -1119,7 +1116,6 @@ services:
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
       VALKEY_HOST: valkey
-      STARTUP_DELAY: "10"
       # Shared secret for authenticating to the API's /api/internal/insights/* router.
       # MUST match the api service's value.
       INSIGHTS_INTERNAL_SECRET: "${INSIGHTS_INTERNAL_SECRET:-dev-internal-insights-secret-change-in-production}"
