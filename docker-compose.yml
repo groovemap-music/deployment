@@ -447,7 +447,7 @@ services:
   # /insert/opentelemetry/v1/traces; Grafana reads them back through the Tempo
   # API this server exposes under /select/tempo.
   victoria-traces:
-    image: victoriametrics/victoria-traces:v0.12.0@sha256:80919fcc85cc6dd87f598d20ccf42d0ab1120de8f25d4dcf08c5ea2515a496ba
+    image: victoriametrics/victoria-traces:v0.12.1@sha256:609abddf298c9642496045296f30a3968b5a4b79b678373e2e7ef29c844f5578
     container_name: groovemap-victoria-traces
     hostname: victoria-traces
     command:
