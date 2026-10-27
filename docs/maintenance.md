@@ -99,11 +99,11 @@ Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 
 Matching consumer and schema images (Discogs SQL loader and graph enricher
-`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.3.0`):
+`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.5.0`, which creates `activity.event_idempotency` and `activity.purge_idempotency_keys`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c` |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda` |
 | `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
@@ -149,8 +149,8 @@ smoke. The changed image index digests were:
 | `discogs-graph-enricher:v0.3.0` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` | `v0.2.0` — `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
 | `catalog-api:v0.4.0` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` | `v0.2.0` — `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb` |
 
-`database-schema:v0.3.0` remained at
-`sha256:6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c`.
+`database-schema:v0.5.0` is pinned at
+`sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda`.
 Each tag resolved to its recorded index digest; each index contained a
 `linux/amd64` image manifest. The rollback tags were also re-resolved against
 GHCR, not just copied from an older document.
@@ -596,9 +596,8 @@ Erasure also releases the subject's idempotency keys without any step here:
 `database-schema` deletes a key when the event holding it is deleted, and removes
 the subject's keys that name no stored event when the pseudonym link goes
 (`just smoke-erasure` asserts `activity.event_idempotency` holds no rows for the
-erased subject). The purge function requires a `database-schema` release that
-contains `activity.event_idempotency`; check the schema image
-`schema-init` runs before using it.
+erased subject). The key table and the purge function arrive with `database-schema` `v0.5.0`
+(the pinned release; earlier releases lack them).
 
 ## Update an infrastructure image
 

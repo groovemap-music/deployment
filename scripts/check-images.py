@@ -66,7 +66,7 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "6fba747ff353d6f4639b566a33ba73ab79515daaee756980704c88e2c6f32b1c",  # database-schema v0.3.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda",  # database-schema v0.5.0  gitleaks:allow
     "CATALOG_API_IMAGE": "4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43",  # catalog-api v0.4.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c",  # discogs-ingestion v0.3.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37",  # musicbrainz-ingestion v0.2.1  gitleaks:allow
