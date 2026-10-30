@@ -1,6 +1,6 @@
 ---
 # Production overrides for docker-compose.yml
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # Restarts: every long-running service sets `restart: always` here, and nothing
 # in this file may set deploy.restart_policy. Docker Compose lets deploy.restart_policy
 # override `restart:`, and the engine only accepts a retry cap (max_attempts) with

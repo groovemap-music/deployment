@@ -2,7 +2,8 @@
 set -euo pipefail
 
 compose=(
-  docker-compose
+  docker
+  compose
   --project-name groovemap-deployment-smoke
   --env-file config/validation.env
   -f docker-compose.yml
