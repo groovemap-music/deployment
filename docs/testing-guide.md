@@ -300,8 +300,8 @@ workstation's architecture is not the one the internal images are published for;
 only to the schema initializer and the API, so PostgreSQL, Neo4j, and Valkey stay native.
 
 `just check` and CI never run `just smoke-erasure`: it starts containers and registers,
-exports and erases a throwaway account in its own disposable stack, so it requires the same operator approval as `just smoke-media` and the other
-live checks below.
+exports and erases a throwaway account in its own disposable stack, so it requires the
+same operator approval as `just smoke-media` and the other live checks below.
 
 ## Coverage
 
