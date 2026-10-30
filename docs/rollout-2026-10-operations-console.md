@@ -110,8 +110,8 @@ compatibility of this program's changes only; the human must confirm that the re
 
 | Repository | Other work since the last tag (molecule ids, newest first) |
 | --- | --- |
-| `database-schema` (since `v0.4.1`) | `igu0` publication hygiene; `09mv` `public.identity_link_events`; `8gsl` filelock cooldown removed; `8kc2`, `ixhu`, `kazl`, `b0mk` Strata insights tables and a `musicbrainz.releases (release_group_mbid)` index; `jmd9`, `yn5v`, `uxd1` dependency security; `x45l`, `f4k9`, `afan` MusicBrainz schema research; `hqjp`, `2xe0` compact similar-artist lists; `5wsk` SQL/PGQ removal; `jb9b` tested runtime revision; `ug3v` per-track credit graph relations; `19g5` artist kNN through the embedding refresh; `7e690d3` and Dependabot updates |
-| `catalog-api` (since `v0.5.0`) | `j0sd` publication hygiene; `s74h` filelock cooldown removed; `n8vb`, `31ag`, `m4mn`, `r8c7`, `l1x9`, `3s01`, `bcre` Strata routes; `9xas`, `p04r`, `dqah` dependency security; `7hu4` keep a recorded `date_added`; `2zsq` similar artists from precomputed lists (behind a switch); `gtcr`, `qk92`, `foix` Valkey hardening; Dependabot updates; `za77` and `cn2v` (Identity Ledger backfill and read-only admin routes). `v0.5.0` itself was never published (see [Known issues](#7-known-issues-that-are-not-blockers)), so its content (the Valkey client migration among it) also reaches production for the first time |
+| `database-schema` (shipped in `v0.5.0`; listed since `v0.4.1`) | `igu0` publication hygiene; `09mv` `public.identity_link_events`; `8gsl` filelock cooldown removed; `8kc2`, `ixhu`, `kazl`, `b0mk` Strata insights tables and a `musicbrainz.releases (release_group_mbid)` index; `jmd9`, `yn5v`, `uxd1` dependency security; `x45l`, `f4k9`, `afan` MusicBrainz schema research; `hqjp`, `2xe0` compact similar-artist lists; `5wsk` SQL/PGQ removal; `jb9b` tested runtime revision; `ug3v` per-track credit graph relations; `19g5` artist kNN through the embedding refresh; `7e690d3` and Dependabot updates |
+| `catalog-api` (since `v0.5.0`) | `j0sd` publication hygiene; `s74h` filelock cooldown removed; `n8vb`, `31ag`, `m4mn`, `r8c7`, `l1x9`, `3s01`, `bcre` Strata routes; `9xas`, `p04r`, `dqah` dependency security; `7hu4` keep a recorded `date_added`; `2zsq` similar artists from precomputed lists (behind a switch); `gtcr`, `qk92`, `foix` Valkey hardening; Dependabot updates; `za77` and `cn2v` (Identity Ledger backfill and read-only admin routes). `v0.5.0` itself was tagged but never published (see [Known issues](#7-known-issues-that-are-not-blockers)), so its content (the Valkey client migration among it) also reaches production for the first time |
 | `operations-console` (since `v0.1.1`) | `ux1n` publication hygiene; `ipcv`, `mb0p`, `7kua` and the Degrees brand promotion (`85845d4`); `5cq` filelock cooldown removed; `nd3` Node.js toolchain security bump; and the 36 merges that were already on `origin/main` before this program's, among them `gvm` (OpenTelemetry metrics export; its `7fd8e30` removed the Prometheus `/metrics` endpoint), `wmi` (tracing), `4ww` (Redis payload fallback removed) and `0nc` (Valkey relabel) |
 | `musicbrainz-sql-loader` (since `v0.4.0`) | `44v` publication hygiene; `nxc` Strata M6 Discogs-link changes recorded at load (needs `database-schema` `825bd5c`); `1sb`, `kdl`, `ou7`, `uy2` dependency work; Dependabot updates |
 | `musicbrainz-graph-enricher` (since `v0.3.1`) | `mvg` publication hygiene; `nhz`, `8ix`, `uwc`, `d7f` dependency work; `569` tag-mapping spike documentation; Dependabot updates |
@@ -121,9 +121,11 @@ compatibility of this program's changes only; the human must confirm that the re
 | `deployment` | `4q21` publication hygiene; `701a` filelock cooldown removed; earlier CI and lockfile merges. None changes a Compose file, `config/` or `scripts/` |
 
 The production environment may run releases older than the last tag (the reviewed set in
-`scripts/check-images.py` records `database-schema` `v0.3.0`, `catalog-api` `v0.4.0` and the
+`scripts/check-images.py` records `database-schema` `v0.5.0`, `catalog-api` `v0.4.0` and the
 MusicBrainz consumers `v0.2.0`). Everything between what runs and the new release reaches
-production.
+production. `database-schema` `v0.5.0` (tagged 2026-10-27, with the table drop and the new
+columns, indexes and tables listed above) is already published and pinned there, so its release
+steps below are done; confirm that before cutting it again.
 
 ### 1.4 Telling the sessions' work apart
 
@@ -242,11 +244,12 @@ indexes and tables; a backup is the only full recovery path.
 If the human wants to hold some of it back: stop; holding back merged work needs a revert or a
 release branch in that repository, which this guide does not cover.
 
-**P10. Decide the `database-schema` version.** `just bump-preview` in `database-schema`
-computes `1.0.0`: `f462dd9` is marked breaking (`feat(postgres)!`) and the Commitizen
-configuration does not set `major_version_zero`. Ask the human: `1.0.0` (the default), or
-`0.5.0` (bump with `--increment MINOR`, see [3.1](#31-database-schema)). The consumers pin
-`database-schema` by git revision, so either choice is safe for them.
+**P10. Decide the `database-schema` version. Done: `0.5.0` was chosen and released.**
+`just bump-preview` in `database-schema` computed `1.0.0` because `f462dd9` is marked breaking
+(`feat(postgres)!`) and the Commitizen configuration does not set `major_version_zero`; the
+human chose `0.5.0` (bump with `--increment MINOR`, see [3.1](#31-database-schema)). The
+consumers pin `database-schema` by git revision, so either choice was safe for them. Skip this
+step; if `v0.5.0` is not published in your registry, ask the human again.
 
 **P11. Find out how the production console is reached, and stop if it is plain HTTP.** The
 console's session cookie is Secure by default, and the production overlay does not opt out.
@@ -335,9 +338,9 @@ Run every command from `$WORKSPACE/<repository>`.
 4. Preview: `just bump-preview`. Expected: lines `bump: version <old> → <new>` and
    `tag to create: v<new>`, with `<new>` as listed for the repository below. If `<new>` differs,
    stop and ask.
-5. Bump: `just bump` (for `database-schema` with `0.5.0` chosen in P10, run
+5. Bump: `just bump` (`database-schema` was bumped to `0.5.0` with
    `uv run cz bump --version-files-only --changelog --yes --check-consistency --increment MINOR`
-   instead). Expected: `git status --short` shows `CHANGELOG.md`, `pyproject.toml`, `uv.lock`
+   instead; its release is done, so skip it). Expected: `git status --short` shows `CHANGELOG.md`, `pyproject.toml`, `uv.lock`
    and the package's version file modified (the console also `package.json` and
    `package-lock.json`), nothing else.
 6. Add the release notes: open `CHANGELOG.md`, and directly under the new `## v<new> (<date>)`
@@ -379,7 +382,10 @@ Run every command from `$WORKSPACE/<repository>`.
 
 ### 3.1 `database-schema`
 
-Minimum `d0c8c90` and `825bd5c`; next version `1.0.0`, or `0.5.0` if chosen in P10. Its
+Minimum `d0c8c90` and `825bd5c`. **Done:** the version chosen in P10 was `0.5.0`; it was
+released as `v0.5.0` on 2026-10-27 and its digest is already pinned in
+`scripts/check-images.py`, so skip 3.0 for this repository. What remains is to promote that
+digest in the live `.env` with the other images (4.7) and apply it (4.10). Its
 procedure lives in `README.md` ("Versioning and release safety"); the repository has no
 `docs/release-compliance.md`. Breaking changes for the notes (the drop is marked `!`, but the
 generated entry lists it only under `Feat`):

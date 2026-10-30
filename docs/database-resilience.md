@@ -1,7 +1,7 @@
 # Database Resilience Documentation
 
-This document describes the database resilience features implemented in the GrooveMap platform to handle nightly
-maintenance windows and other database outages.
+This document is for operators who need to know how GrooveMap services behave when PostgreSQL, Neo4j, or RabbitMQ
+becomes unavailable, for example during nightly maintenance windows, and how to test that behavior.
 
 ## Overview
 

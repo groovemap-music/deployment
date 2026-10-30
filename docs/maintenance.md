@@ -42,9 +42,10 @@ The native-identity and first-party-events program
 ([ADR 0009](https://github.com/groovemap-music/design/blob/main/docs/adr/0009-native-identity-and-provider-aliases.md),
 [ADR 0010](https://github.com/groovemap-music/design/blob/main/docs/adr/0010-first-party-events-consent-and-deletion.md))
 changed both `catalog-api` and `database-schema`. Both releases are now cut:
-`database-schema` `v0.3.0` and `catalog-api` `v0.2.0` carry the identity and
-activity work, and their manifest digests are recorded as reviewed in
-`scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` and in
+`database-schema` `v0.3.0` and `catalog-api` `v0.2.0` first carried the identity and
+activity work. `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py` now records
+`database-schema` `v0.5.0` and `catalog-api` `v0.4.0`, and those manifest digests are
+recorded as reviewed there and in
 [Recorded release digests](#recorded-release-digests) below.
 
 Recording a digest as reviewed is not an instruction to deploy it. Applying

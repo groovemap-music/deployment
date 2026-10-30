@@ -1,6 +1,6 @@
 # Docker Security Configuration
 
-This document describes the security measures implemented in the groovemap Docker deployment.
+This document is for operators and reviewers of the GrooveMap Compose stack. It describes the container hardening, secret handling, and production overlay behavior that `docker-compose.yml` and `docker-compose.prod.yml` implement.
 
 ## Security Features
 
@@ -301,11 +301,23 @@ If you encounter permission errors:
    docker compose exec service id
    ```
 
-1. Fix volume permissions:
+1. Fix volume permissions. This stack uses Docker named volumes, not a
+   `./volumes/` directory. The ones the application services write to are
+   `discogs_data`, `musicbrainz_data`, and the `*_logs` volumes (for example
+   `api_logs`, `graphinator_logs`). Compose prefixes each name with the
+   project name, which defaults to the checkout directory name (so
+   `deployment_discogs_data`). Find the full name, check who owns it, and
+   `chown` it to the service UID:GID with a one-off helper container:
 
    ```bash
-   sudo chown -R $(id -u):$(id -g) ./volumes/
+   docker volume ls --filter name=discogs_data
+   docker run --rm -v <full-volume-name>:/data alpine ls -ln /data
+   docker run --rm -v <full-volume-name>:/data alpine \
+     chown -R "$(id -u):$(id -g)" /data
    ```
+
+   Use the `UID` and `GID` the stack runs with (default `1000:1000`; see
+   `user:` in `docker-compose.yml`) if they differ from your own login.
 
 ### Read-Only Filesystem Errors
 

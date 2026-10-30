@@ -1,5 +1,8 @@
 # Troubleshooting guide
 
+This guide is for operators diagnosing a GrooveMap Compose environment that
+will not render, start, or stay healthy. Work through it from the top.
+
 Start with read-only evidence. Restarts, teardown, cache or queue clearing,
 migrations, and image changes require approval for the exact environment.
 

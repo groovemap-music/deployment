@@ -1035,8 +1035,8 @@ INSIGHTS_MILESTONE_YEARS="25,30,40,50,75,100" # Anniversary years to highlight (
 LOG_LEVEL=INFO
 ```
 
-`docker-compose.yml` also sets `STARTUP_DELAY=10` on `insights`, but the
-analytics-engine image does not read it.
+`insights` has no startup delay. Compose orders it with `depends_on` health
+conditions.
 
 Internal health port: 8009. It is not published to the host; use
 `docker compose ps` for status.
