@@ -1,6 +1,6 @@
 # Docker Security Configuration
 
-This document describes the security measures implemented in the groovemap Docker deployment.
+This document is for operators and reviewers of the GrooveMap Compose stack. It describes the container hardening, secret handling, and production overlay behavior that `docker-compose.yml` and `docker-compose.prod.yml` implement.
 
 ## Security Features
 
@@ -301,10 +301,13 @@ If you encounter permission errors:
    docker compose exec service id
    ```
 
-1. Fix volume permissions:
+1. Check the ownership of the affected named volume. This stack uses Docker
+   named volumes (for example `discogs_data`), not a `./volumes/` directory.
+   Changing ownership alters environment state, so get approval first:
 
    ```bash
-   sudo chown -R $(id -u):$(id -g) ./volumes/
+   docker volume ls --filter name=discogs_data
+   docker run --rm -v <full-volume-name>:/data alpine ls -ln /data
    ```
 
 ### Read-Only Filesystem Errors

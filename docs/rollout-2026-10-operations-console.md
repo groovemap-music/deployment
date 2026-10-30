@@ -121,9 +121,11 @@ compatibility of this program's changes only; the human must confirm that the re
 | `deployment` | `4q21` publication hygiene; `701a` filelock cooldown removed; earlier CI and lockfile merges. None changes a Compose file, `config/` or `scripts/` |
 
 The production environment may run releases older than the last tag (the reviewed set in
-`scripts/check-images.py` records `database-schema` `v0.3.0`, `catalog-api` `v0.4.0` and the
+`scripts/check-images.py` records `database-schema` `v0.5.0`, `catalog-api` `v0.4.0` and the
 MusicBrainz consumers `v0.2.0`). Everything between what runs and the new release reaches
-production.
+production. `database-schema` `v0.5.0` (tagged 2026-10-27, with the table drop and the new
+columns, indexes and tables listed above) is already published and pinned there, so its release
+steps below are done; confirm that before cutting it again.
 
 ### 1.4 Telling the sessions' work apart
 
@@ -379,7 +381,9 @@ Run every command from `$WORKSPACE/<repository>`.
 
 ### 3.1 `database-schema`
 
-Minimum `d0c8c90` and `825bd5c`; next version `1.0.0`, or `0.5.0` if chosen in P10. Its
+Minimum `d0c8c90` and `825bd5c`; next version `1.0.0`, or `0.5.0` if chosen in P10.
+**Done:** `0.5.0` was chosen and published as `v0.5.0` on 2026-10-27, and its digest is pinned
+in `scripts/check-images.py`, so only the verification in step 15 remains. Its
 procedure lives in `README.md` ("Versioning and release safety"); the repository has no
 `docs/release-compliance.md`. Breaking changes for the notes (the drop is marked `!`, but the
 generated entry lists it only under `Feat`):

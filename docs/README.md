@@ -1,5 +1,11 @@
 # Deployment documentation
 
+These guides are for operators and contributors of the GrooveMap whole-stack
+deployment: the Compose topology, production hardening, secrets, image
+promotion, and stack-level validation. Service behavior is documented in each
+service's own source repository. New here? Read the quick start first, then the
+architecture overview.
+
 ## Start here
 
 - [Quick start](quick-start.md)
