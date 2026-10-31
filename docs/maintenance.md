@@ -200,17 +200,14 @@ heals.
 [Per-source extractor cutover](#per-source-extractor-cutover) is explicit that the two ingest
 concurrently with no cross-container ordering, lock, or mutual exclusion — bringing up the full
 Compose stack in one `docker compose up` starts `extractor-musicbrainz` alongside
-`extractor-discogs`. The MusicBrainz ingestion path is therefore not deployed at all for the
-first load: bring up the stack without `extractor-musicbrainz` and its two consumers,
-`brainzgraphinator` (MusicBrainz graph enrichment) and `brainztableinator` (MusicBrainz to
-PostgreSQL). None of the three is a dependency of any other Compose service (each only depends
-on shared infrastructure — RabbitMQ, PostgreSQL, Neo4j, `schema-init`), so leaving them out of
-the service list is enough; nothing else in the stack fails to start because they are absent.
+`extractor-discogs`. The MusicBrainz ingestion path (`extractor-musicbrainz` and its two
+consumers, `brainzgraphinator` for graph enrichment and `brainztableinator` for PostgreSQL)
+therefore sits behind the `musicbrainz` Compose profile, so a plain `up` leaves it out. None
+of the three is a dependency of any other Compose service, so nothing else fails to start
+without them. Leave `COMPOSE_PROFILES` unset in `.env` for the first load.
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait \
-  $(docker compose -f docker-compose.yml -f docker-compose.prod.yml config --services \
-    | grep -vE '^(extractor-musicbrainz|brainzgraphinator|brainztableinator)$')
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait
 ```
 
 For a local (non-production) stack, drop the two `-f` flags; [Quick
@@ -228,9 +225,10 @@ zero unacknowledged messages with their consumers still attached, not merely idl
 nothing is running. Only then deploy the MusicBrainz ingestion path:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait \
-  extractor-musicbrainz brainzgraphinator brainztableinator
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile musicbrainz up -d --wait
 ```
+
+To keep the path enabled on later `up` runs, set `COMPOSE_PROFILES=musicbrainz` in `.env`.
 
 **Later cycles.** `extractor-discogs` and `extractor-musicbrainz` each then run on their own
 periodic schedule (`PERIODIC_CHECK_DAYS`: 5 days and 3 days) with the same no-ordering

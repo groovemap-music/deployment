@@ -20,6 +20,10 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ends at `GET /api/lookup/barcode/...`, which nothing else in this stack would start.
 services=(tableinator brainztableinator graphinator brainzgraphinator api)
 
+# The brainz consumers sit behind the musicbrainz profile; every compose call below, and
+# the smoke_media.py ones that inherit this environment, must see them.
+export COMPOSE_PROFILES=musicbrainz
+
 compose=(
   docker compose
   --project-name "$project"

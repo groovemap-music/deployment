@@ -67,6 +67,7 @@ done
 
 GM_COMPOSE=(
   docker compose
+  --profile musicbrainz
   --project-name "${GM_RELEASED_STACK_PROJECT}"
   --env-file "${GM_RELEASED_STACK_ENV_FILE}"
   -f docker-compose.yml

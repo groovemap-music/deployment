@@ -738,11 +738,16 @@ services:
   # Rust-based extractor service for MusicBrainz data. Source-owned image from the
   # musicbrainz-ingestion repository (ADR 0005); its entrypoint takes no source flag.
   # It ingests concurrently with Discogs: no cross-container health poll or ordering.
+  # The "musicbrainz" profile keeps it, brainzgraphinator and brainztableinator out of a
+  # bare `docker compose up`: on first load the Discogs import must finish first
+  # (docs/maintenance.md). Enable with COMPOSE_PROFILES=musicbrainz or --profile musicbrainz.
   extractor-musicbrainz:
     image: "${MUSICBRAINZ_INGESTION_IMAGE:?Set MUSICBRAINZ_INGESTION_IMAGE to a digest-pinned musicbrainz-ingestion image}"
     container_name: groovemap-extractor-musicbrainz
     hostname: extractor-musicbrainz
     user: "${UID:-1000}:${GID:-1000}"
+    profiles:
+      - musicbrainz
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: extractor-musicbrainz
@@ -831,6 +836,8 @@ services:
     container_name: groovemap-brainzgraphinator
     hostname: brainzgraphinator
     user: "${UID:-1000}:${GID:-1000}"
+    profiles:
+      - musicbrainz
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: brainzgraphinator
@@ -936,6 +943,8 @@ services:
     container_name: groovemap-brainztableinator
     hostname: brainztableinator
     user: "${UID:-1000}:${GID:-1000}"
+    profiles:
+      - musicbrainz
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: brainztableinator
