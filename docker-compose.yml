@@ -487,7 +487,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.163.2@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849
     container_name: groovemap-otel-collector
     hostname: otel-collector
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    command: ["--config=file:/etc/otelcol-contrib/config.yaml"]
     # 4317 (gRPC), 4318 (HTTP), 8888 (self-metrics) and 13133 (health) stay on
     # the internal network — no host publication.
     volumes:
@@ -502,12 +502,12 @@ services:
         aliases:
           - otel
     # The image is distroless (no shell, no HTTP client), so the probe cannot
-    # call the health_check extension on :13133. Re-parsing the mounted config
+    # call the health_check extension on :13133. Re-parsing the configuration
     # with the collector's own binary still proves the container is alive and
     # its configuration is loadable; :13133 is the operator-facing liveness
     # endpoint, reachable from any other container on the network.
     healthcheck:
-      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=file:/etc/otelcol-contrib/config.yaml"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -515,6 +515,15 @@ services:
     restart: unless-stopped
     logging: *default-logging
     security_opt:
+    #
+    # The probe's --config is byte-for-byte the command's --config, so it can
+    # only ever validate the configuration the collector is running. Never point
+    # it at a file the command does not load: validating a baked-in default would
+    # report healthy while the live configuration is broken. An adapted
+    # configuration (an overlay) replaces the bind-mounted SOURCE of that one
+    # path, or switches BOTH to the same `env:VAR` source; it never edits one
+    # side. (Compose 5.6.1 rejects `configs.content` for this read-only
+    # container, so a generated file is mounted rather than inlined.)
       - no-new-privileges:true
     cap_drop:
       - ALL
