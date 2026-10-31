@@ -306,9 +306,16 @@ fi
 if ((${#store_checks[@]})); then
   say "Checking the external stores"
   note "Each check only reads (scripts/store-check-*.sh); nothing starts until every one passes."
+  check_output="$(mktemp)"
+  trap 'rm -f "$RENDERED" "$check_output"' EXIT
   for service in "${store_checks[@]}"; do
-    if ! "${compose[@]}" run --rm --no-deps -T "$service"; then
+    # The output is kept to tell a host that does not resolve (the check container is not on the
+    # store's network) from a refusal by the server itself.
+    if ! "${compose[@]}" run --rm --no-deps -T "$service" 2>&1 | tee "$check_output"; then
       echo "deploy: $service refused the external store (see above); nothing was started or changed" >&2
+      if ((render_ok)); then
+        helper store-check-failure "${service#store-check-}" "$check_output" "$RENDERED" || true
+      fi
       exit 3
     fi
   done

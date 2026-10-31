@@ -39,6 +39,25 @@ STORES = ("postgres", "valkey")
 MODE_VARIABLES = {"postgres": "GROOVEMAP_POSTGRES", "valkey": "GROOVEMAP_VALKEY"}
 OVERLAYS = {"postgres": "docker-compose.external-postgres.yml", "valkey": "docker-compose.external-valkey.yml"}
 STORE_CHECK_SERVICES = {"postgres": "store-check-postgres", "valkey": "store-check-valkey"}
+# Every service that connects to each external store, in the overlay that rewires it. This is the one
+# place the list lives: the homelab skill's override example and references are tested against it,
+# and the overlays are tested to render exactly this set. A service on a different Docker network
+# from the store cannot resolve its host, so an operator who attaches the store to an existing
+# network must attach all of them. store-check-<store> is the deploy-time check, and
+# store-check-postgres is also where the gate's and the latch probe's psql run (`psql_argv`).
+STORE_CLIENTS = {
+    "postgres": (
+        "api",
+        "brainztableinator",
+        "dashboard",
+        "embeddings",
+        "insights",
+        "schema-init",
+        "store-check-postgres",
+        "tableinator",
+    ),
+    "valkey": ("api", "dashboard", "insights", "store-check-valkey"),
+}
 # The profile an overlay moves a local store (and its exporter) into; nothing ever enables it.
 LOCAL_STORES_PROFILE = "local-stores"
 LOCAL_STORE_SERVICES = {"postgres": ("postgres", "postgres-exporter"), "valkey": ("valkey", "valkey-exporter")}

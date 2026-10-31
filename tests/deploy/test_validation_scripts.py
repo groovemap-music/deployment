@@ -148,11 +148,21 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
     ] + [
         call
         for example in sorted((ROOT / "skills" / "groovemap-homelab" / "assets").glob("override-*.yml"))
-        for call in (
-            f"{validation} -f docker-compose.yml -f docker-compose.prod.yml -f {example.relative_to(ROOT)} config --quiet",
-            "compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --format json",
-            f"compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml -f {example.relative_to(ROOT)} config --format json",
-        )
+        for call in _example_calls(example, validation)
+    ]
+
+
+def _example_calls(example: Path, validation: str) -> list[str]:
+    """Plain examples render on the production stack; override-external-* ones on top of both store overlays."""
+    path = example.relative_to(ROOT)
+    prod = "compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml"
+    if example.name.startswith("override-external-"):
+        stack = f"{prod} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml"
+        return [f"{stack} -f {path} config --quiet", f"{stack} config --format json", f"{stack} -f {path} config --format json"]
+    return [
+        f"{validation} -f docker-compose.yml -f docker-compose.prod.yml -f {path} config --quiet",
+        f"{prod} config --format json",
+        f"{prod} -f {path} config --format json",
     ]
 
 

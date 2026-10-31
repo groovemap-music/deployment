@@ -139,9 +139,12 @@ OVERRIDE_DATA_TIER_ISOLATED = (
     ("labels", "reverse-proxy labels (Traefik TCP routers included) could publish the data tier; route only explore, dashboard and grafana"),
     ("extra_hosts", "hosts entries could redirect the data tier's peers"),
 )
-# How a service finds PostgreSQL and Valkey (the optional prefix covers EMBEDDING_PIPELINE_POSTGRES_*).
+# How a service finds PostgreSQL and Valkey (the optional prefix covers EMBEDDING_PIPELINE_POSTGRES_*), including libpq's
+# own PG* variables that the store check, the gate and the latch probe use, and the console's Valkey health address.
 # POSTGRES_HOST_PORT and VALKEY_HOST_PORT publish a port on the host and are not matched.
-STORE_CONNECTION = re.compile(r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABASE|USERNAME)|VALKEY_(?:HOST|PORT))(?:_FILE)?$")
+STORE_CONNECTION = re.compile(
+    r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABASE|USERNAME)|VALKEY_(?:HOST|PORT|HEALTH_ADDRESS)|PG(?:HOST|HOSTADDR|PORT|SERVICE))(?:_FILE)?$"
+)
 STORE_SECRET = re.compile(r"^(?:postgres|valkey)_")
 EXTERNAL_STORES_EPIC = "gm-deployment-e1uh"
 EXTERNAL_STORES_HINT = (
@@ -1235,6 +1238,50 @@ def describe_store(store: str, env_values: Mapping[str, str], environ: Mapping[s
     return f"{host}:{port} database {effective('EXTERNAL_VALKEY_DB', env_values, environ, '0')}, keys under {effective('EXTERNAL_VALKEY_KEY_PREFIX', env_values, environ)}"
 
 
+# What a store-check one-shot prints when its server host does not resolve or cannot be reached:
+# libpq's and valkey-cli's / openssl's wording. Authentication, TLS and version failures are not
+# here: attaching a network would not fix them.
+UNREACHABLE_STORE = re.compile(
+    r"could not translate host name|name or service not known|temporary failure in name resolution|nodename nor servname"
+    r"|bad address|could not resolve|getaddrinfo|no such host|server misbehaving"
+    r"|connection refused|connection timed out|timeout expired|no route to host|network is unreachable|could not connect|can't connect",
+    re.IGNORECASE,
+)
+
+
+def service_networks(rendered: Mapping[str, Any], service: str) -> list[str]:
+    """The Docker networks a rendered service is attached to, by the name Docker knows them by."""
+    attached = (rendered.get("services", {}).get(service) or {}).get("networks") or {}
+    names = attached if isinstance(attached, list) else list(attached)
+    top = rendered.get("networks") or {}
+    return sorted((top.get(name) or {}).get("name") or name for name in names)
+
+
+def store_host(store: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> str:
+    return effective(f"EXTERNAL_{store.upper()}_HOST", env_values, environ)
+
+
+def store_check_failure(
+    store: str, output: str, rendered: Mapping[str, Any], env_values: Mapping[str, str], environ: Mapping[str, str]
+) -> str | None:
+    """Explain a store-check failure caused by the check container not reaching the store's network.
+
+    None when the output is not a resolve or connect failure (the check's own message stands).
+    """
+    if not UNREACHABLE_STORE.search(output):
+        return None
+    service = stores.STORE_CHECK_SERVICES[store]
+    host = store_host(store, env_values, environ)
+    networks = ", ".join(service_networks(rendered, service)) or "none"
+    clients = ", ".join(stores.STORE_CLIENTS[store])
+    return (
+        f"{STORE_NAMES[store]} host {host} did not resolve or accept a connection from {service}, which is on the network(s): {networks}.\n"
+        f"  If {host} is a container on another Docker network, attach {service} to that network in {OVERRIDE_FILE}: the check and "
+        f"the gate's database probes run in it, and every other {STORE_NAMES[store]} client needs the same attachment ({clients}).\n"
+        f"  Example: skills/groovemap-homelab/assets/override-external-store-network.yml. Otherwise check the host, port and firewall."
+    )
+
+
 def store_findings(
     mode: str,
     *,
@@ -1707,6 +1754,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     store_check.add_argument("--mode", choices=("prod", "dev"), default="prod")
     store_check.add_argument("--project-name")
+    failure = commands.add_parser(
+        "store-check-failure", help="explain a failed store-check one-shot that could not resolve or reach its server; exit 0 if it did, 1 if not"
+    )
+    failure.add_argument("store", choices=stores.STORES)
+    failure.add_argument("output", type=Path, help="what the store-check one-shot printed")
+    failure.add_argument("rendered", type=Path, help="`docker compose --profile '*' config --format json`")
     commands.add_parser(
         "store-files", help="print each external store's overlay (added after the production overlay) and its store-check service, one per line"
     )
@@ -1819,6 +1872,20 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
             print(configured.stack_container)
         for store in configured.external if args.command == "store-files" else ():
             print(f"{stores.OVERLAYS[store]} {stores.STORE_CHECK_SERVICES[store]}")
+        return 0
+    if args.command == "store-check-failure":
+        try:
+            output = args.output.read_text(errors="replace")
+        except OSError:
+            return 1
+        try:
+            rendered = json.loads(args.rendered.read_text())
+        except (OSError, json.JSONDecodeError):
+            rendered = {}
+        explanation = store_check_failure(args.store, output, rendered, env_values, environ)
+        if explanation is None:
+            return 1
+        print(f"deploy: {explanation}", file=sys.stderr)
         return 0
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))

@@ -68,8 +68,13 @@ check_profile docker-compose.yml docker-compose.prod.yml
 
 # The homelab skill's example overrides must merge onto the production stack and pass the
 # override check `just deploy` runs (scripts/deploy_helpers.py override-check).
+# Examples named override-external-*.yml attach the external-store services, so they render on
+# top of both external-store overlays (with the syntax-only settings above).
 check_override_example() {
   local stack=(docker compose --profile '*' --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml)
+  if [[ "$(basename "$1")" == override-external-* ]]; then
+    stack=(env "${external_stores[@]}" "${stack[@]}" -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml)
+  fi
   local before after output status=0
   before="$(mktemp)"
   after="$(mktemp)"
@@ -85,6 +90,10 @@ check_override_example() {
 }
 
 for example in skills/groovemap-homelab/assets/override-*.yml; do
-  check_compose docker-compose.yml docker-compose.prod.yml "$example"
+  if [[ "$(basename "$example")" == override-external-* ]]; then
+    check_external docker-compose.external-postgres.yml docker-compose.external-valkey.yml "$example"
+  else
+    check_compose docker-compose.yml docker-compose.prod.yml "$example"
+  fi
   check_override_example "$example"
 done

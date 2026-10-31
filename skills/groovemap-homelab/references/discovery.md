@@ -127,6 +127,12 @@ GrooveMap creates a bridge network `<project>_groovemap` on `172.20.0.0/16`. If 
 network, a VPN route or the LAN overlaps it, plan a different subnet
 ([override.md](override.md#subnet)). Note the reverse proxy's network name for the override.
 
+For an existing PostgreSQL or Valkey that runs as a container, note which network it is on
+(`docker inspect <name> --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'`).
+Every service that connects to it must join that network, including the one-shot store checks:
+PostgreSQL `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`; Valkey `api`, `dashboard`, `insights` and `store-check-valkey`
+([override.md](override.md#attaching-to-an-existing-stores-network)).
+
 ## Occupied ports
 
 ```bash
