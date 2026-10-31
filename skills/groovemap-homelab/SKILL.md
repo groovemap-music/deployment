@@ -205,8 +205,15 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
 3. **First admin:** the console signs in admins created with `catalog-admin-setup`, which asks
    for a password on a terminal. Ask the user to run it in their own terminal on the host:
    `docker exec -it groovemap-api catalog-admin-setup --email you@example.com`. Sign-in
-   requires HTTPS: on plain `http://` (other than `localhost`) the browser drops the secure
-   session cookie and sign-in silently returns to the login form.
+   requires HTTPS unless opted out: on plain `http://` (other than `localhost`) the browser drops
+   the secure session cookie and sign-in silently returns to the login form. `just deploy`
+   prints a "Console sign-in" notice when `APP_BASE_URL` is plain http on a LAN host. Read it
+   to the user: the recommended fix is a TLS reverse proxy
+   ([reverse-proxy.md](references/reverse-proxy.md)); on a trusted LAN only, they can opt in
+   with `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env` and recreate `dashboard`
+   (`docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml up -d --no-deps dashboard`).
+   Never set it for them without asking: the session cookie then crosses the network
+   unencrypted.
 4. **Expectations:** the Discogs import takes hours to about two days (releases alone take
    about 40 hours on the reference hardware). To check progress, which is read-only:
 

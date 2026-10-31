@@ -347,6 +347,25 @@ fi
 
 # --- 5. endpoints and the first admin --------------------------------------------------
 
+# The console's session cookie is Secure, so over plain http on a LAN host sign-in silently
+# fails. Say so before the console URL is printed; on an interactive "yes", recreate only
+# `dashboard` with the same project and files as the rest of the run.
+console_sign_in() {
+  [[ "$mode" == prod ]] || return 0
+  local quoted status=0
+  printf -v quoted '%q ' "${compose[@]}" up -d --wait --no-deps dashboard
+  helper console-http --mode "$mode" --recreate-command "${quoted% }" || status=$?
+  if ((status == 10)); then
+    say "Recreating the console with the Secure cookie off"
+    "${compose[@]}" up -d --wait --no-deps dashboard
+  elif ((status != 0)); then
+    echo "deploy: the console sign-in check failed (exit $status)" >&2
+    exit 1
+  fi
+}
+
+console_sign_in
+
 say "Your GrooveMap"
 helper endpoints --mode "$mode"
 
