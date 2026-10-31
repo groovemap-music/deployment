@@ -37,6 +37,9 @@ EXTERNAL = "external"
 MODES = (LOCAL, EXTERNAL)
 STORES = ("postgres", "valkey")
 MODE_VARIABLES = {"postgres": "GROOVEMAP_POSTGRES", "valkey": "GROOVEMAP_VALKEY"}
+# Operator decisions recorded in .env. The monitoring mode belongs to the shared-monitoring overlay,
+# so it is read generically: reported when set, never validated here.
+MONITORING_VARIABLE = "GROOVEMAP_MONITORING"
 OVERLAYS = {"postgres": "docker-compose.external-postgres.yml", "valkey": "docker-compose.external-valkey.yml"}
 STORE_CHECK_SERVICES = {"postgres": "store-check-postgres", "valkey": "store-check-valkey"}
 # Every service that connects to each external store, in the overlay that rewires it. This is the one
@@ -187,6 +190,25 @@ def read_stores(env_values: Mapping[str, str], environ: Mapping[str, str]) -> St
             raise StoreConfigError(f"{variable}={value!r} is not a store mode; use local (the stack's own {store}) or external")
         modes[store] = value
     return Stores(**modes)
+
+
+def recorded_decisions(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[tuple[str, str, str]]:
+    """(decision, value, where it was recorded) for each reuse decision: PostgreSQL, Valkey, and monitoring when set.
+
+    `where` is ".env", "the shell", or "default" when nothing records it (a store then runs as its
+    own container). Anything recorded, including `local`, is an answer the operator already gave.
+    """
+    rows = []
+    names = {"postgres": "PostgreSQL", "valkey": "Valkey"}
+    variables = [(names[store], MODE_VARIABLES[store], LOCAL) for store in STORES] + [("Monitoring", MONITORING_VARIABLE, "")]
+    for name, variable, default in variables:
+        if environ.get(variable, "").strip():
+            rows.append((name, environ[variable].strip(), "the shell"))
+        elif env_values.get(variable, "").strip():
+            rows.append((name, env_values[variable].strip(), ".env"))
+        elif default:
+            rows.append((name, default, "default"))
+    return rows
 
 
 def is_local_host(host: str) -> bool:

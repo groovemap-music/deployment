@@ -136,6 +136,7 @@ def test_public_recipe_surface_remains_stable() -> None:
         "smoke-released-fixture",
         "smoke-released",
         "source-check",
+        "status",
         "test",
         "typecheck",
     }

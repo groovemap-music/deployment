@@ -197,6 +197,8 @@ while read -r file service; do
   store_checks+=("$service")
 done < <(helper store-files)
 stack_container="$(helper stack-container)"
+# The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
+stack_running() { [[ -n "$(docker ps -q --filter "name=^${stack_container}\$")" ]]; }
 
 if [[ "$mode" == prod ]]; then
   note "Creating any missing secrets in secrets/ (existing ones are never replaced):"
@@ -316,10 +318,13 @@ if ((${#store_checks[@]})); then
   note "Each check only reads (scripts/store-check-*.sh); nothing starts until every one passes."
   check_output="$(mktemp)"
   trap 'rm -f "$RENDERED" "$check_output"' EXIT
+  # A stack that already runs holds some of the server's connections; the check counts them as headroom.
+  running_flag=()
+  stack_running && running_flag=(-e STORE_CHECK_STACK_RUNNING=1)
   for service in "${store_checks[@]}"; do
     # The output is kept to tell a host that does not resolve (the check container is not on the
     # store's network) from a refusal by the server itself.
-    if ! "${compose[@]}" run --rm --no-deps -T "$service" 2>&1 | tee "$check_output"; then
+    if ! "${compose[@]}" run --rm --no-deps -T ${running_flag[@]+"${running_flag[@]}"} "$service" 2>&1 | tee "$check_output"; then
       echo "deploy: $service refused the external store (see above); nothing was started or changed" >&2
       if ((render_ok)); then
         helper store-check-failure "${service#store-check-}" "$check_output" "$RENDERED" || true
@@ -330,9 +335,6 @@ if ((${#store_checks[@]})); then
 fi
 
 # --- 3. where are we? ------------------------------------------------------------------
-
-# The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
-stack_running() { [[ -n "$(docker ps -q --filter "name=^${stack_container}\$")" ]]; }
 
 # Evidence that MusicBrainz already ran here is MusicBrainz-exclusive only: its containers, a volume
 # no other service mounts, or a loader_extraction_latch row for it. Phase 1 itself creates

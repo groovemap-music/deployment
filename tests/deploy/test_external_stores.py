@@ -712,7 +712,9 @@ def external(tmp_path: Path) -> Iterator[ExternalDeploy]:
 
 
 def _checks(deploy: Deploy) -> list[str]:
-    return [call for call in deploy.calls if " run --rm --no-deps -T store-check-" in call and " sh -c " not in call]
+    """The store-check runs, without the flag that tells the postgres check the stack already runs."""
+    calls = [call.replace(" -e STORE_CHECK_STACK_RUNNING=1", "") for call in deploy.calls]
+    return [call for call in calls if " run --rm --no-deps -T store-check-" in call and " sh -c " not in call]
 
 
 def test_external_happy_path_runs_both_phases_with_the_overlays_everywhere(external: ExternalDeploy) -> None:
@@ -870,6 +872,7 @@ case "$sql" in
   *pg_stat_ssl*) echo "${FAKE_TLS-TLSv1.3}" ;;
   *max_connections*) echo "${FAKE_USABLE:-97}" ;;
   *rolconnlimit*) echo "${FAKE_LIMITS:--1 -1}" ;;
+  *pg_stat_activity*) echo "${FAKE_IN_USE:-3 2 2 2}" ;;
   "SELECT pg_backend_pid();") echo "${FAKE_FIRST_PID-101}" ;;
   "SELECT pg_backend_pid()") echo "${FAKE_SECOND_PID:-102}" ;;
   *) echo "unexpected query: $sql" >&2; exit 3 ;;
@@ -1046,6 +1049,26 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
     assert "groovemap_app" not in result.stdout + result.stderr  # the role is never printed
 
 
+def test_the_postgres_check_reports_every_connection_number(tmp_path: Path) -> None:
+    result, _ = _run_check(tmp_path, "store-check-postgres.sh", {"FAKE_LIMITS": "100 -1", "FAKE_IN_USE": "30 12 14 9"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "connection headroom 67 of the 60 the services need (server 67 free (max_connections minus the reserved ones 97, 30 in use); "
+        "role limit 100 with 12 in use leaves 88; database unlimited (14 in use))"
+    ) in result.stdout
+
+
+def test_the_postgres_check_counts_groovemaps_own_connections_as_headroom_only_when_it_runs(tmp_path: Path) -> None:
+    fake = {"FAKE_IN_USE": "50 30 30 30"}  # 47 free on the server, 77 once GrooveMap's own 30 are given back
+    refused, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert refused.returncode == 1
+    assert "only 47 connections of headroom" in refused.stderr
+    running, _ = _run_check(tmp_path, "store-check-postgres.sh", fake | {"STORE_CHECK_STACK_RUNNING": "1"})
+    assert running.returncode == 0, running.stdout + running.stderr
+    assert "connection headroom 77 of the 60" in running.stdout
+    assert "30 of them GrooveMap's own" in running.stdout
+
+
 @pytest.mark.parametrize(
     ("fake", "reason"),
     [
@@ -1056,6 +1079,9 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
         ({"FAKE_USABLE": "40"}, "the server has 40 usable connections"),
         ({"FAKE_LIMITS": "20 -1"}, "a connection limit of 20 applies"),
         ({"FAKE_LIMITS": "-1 10"}, "a connection limit of 10 applies"),
+        ({"FAKE_IN_USE": "50 2 2 2"}, "only 47 connections of headroom"),
+        ({"FAKE_LIMITS": "70 -1", "FAKE_IN_USE": "3 20 3 3"}, "only 50 connections of headroom"),
+        ({"FAKE_LIMITS": "-1 80", "FAKE_IN_USE": "3 3 30 3"}, "only 50 connections of headroom"),
         ({"FAKE_FIRST_PID": "4242", "FAKE_SECOND_PID": "4242"}, "two concurrent sessions shared one server backend (pid 4242)"),
         ({"FAKE_FIRST_PID": ""}, "could not hold two sessions open at once"),
     ],
@@ -1067,6 +1093,9 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
         "small-server",
         "role-limit",
         "database-limit",
+        "server-connections-in-use",
+        "role-connections-in-use",
+        "database-connections-in-use",
         "pgbouncer-transaction-mode",
         "no-second-session",
     ],

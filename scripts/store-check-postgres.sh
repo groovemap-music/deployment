@@ -19,6 +19,12 @@
 #   - the role may create schemas in the database and objects in public;
 #   - at least 60 usable connections (database-schema's connection budget), and no role or
 #     database connection limit below that;
+#   - connection headroom: the server's max_connections minus superuser_reserved_connections,
+#     reserved_connections and the connections in use now, and each role or database limit minus the
+#     connections in use under it, must leave the 60 the services need. Every number is printed.
+#     When GrooveMap already runs against this server (STORE_CHECK_STACK_RUNNING=1, set by
+#     `just deploy`), its own connections to this database count as headroom, since a re-run
+#     replaces them;
 #   - session pooling: two concurrent sessions must not share a server backend. A PgBouncer in
 #     transaction or statement mode hands the second session the backend the first one just
 #     released; catalog-api's session-level advisory lock breaks silently there. A direct
@@ -29,6 +35,8 @@ set -u
 
 MIN_SERVER_VERSION_NUM=180000
 MIN_CONNECTIONS=60
+# `just deploy` sets this to 1 when the stack is already running, so its connections are not counted against it.
+stack_running="${STORE_CHECK_STACK_RUNNING:-0}"
 SESSION_HOLD_SECONDS=3
 
 fail() {
@@ -168,6 +176,50 @@ for limit in "$role_limit" "$database_limit"; do
   fi
 done
 ok "$usable usable connections; role limit $role_limit, database limit $database_limit (-1 is none)"
+
+# Connections in use now, other than this check's own session: the whole server, this role, this
+# database, and this role in this database (GrooveMap's own, when it is the role's only user). A
+# session that PostgreSQL hides from a role without pg_read_all_stats still counts in the server total.
+in_use="$(q "SELECT count(*) FILTER (WHERE backend_type = 'client backend') || ' ' || count(*) FILTER (WHERE backend_type = 'client backend' AND usename = current_user) || ' ' || count(*) FILTER (WHERE backend_type = 'client backend' AND datname = current_database()) || ' ' || count(*) FILTER (WHERE backend_type = 'client backend' AND usename = current_user AND datname = current_database()) FROM pg_stat_activity WHERE pid <> pg_backend_pid()")" ||
+  fail "cannot count the connections in use at $where: $(last_error)"
+# shellcheck disable=SC2086 # four space-separated integers
+set -- $in_use
+[ "$#" -eq 4 ] || fail "unreadable connection counts from $where: $in_use"
+server_used="$1"
+role_used="$2"
+database_used="$3"
+own_used="$4"
+for count in "$server_used" "$role_used" "$database_used" "$own_used"; do
+  case "$count" in
+    '' | *[!0-9]*) fail "unreadable connection counts from $where: $in_use" ;;
+  esac
+done
+credit=0
+[ "$stack_running" = "1" ] && credit="$own_used"
+headroom=$((usable - server_used + credit))
+detail="server $headroom free (max_connections minus the reserved ones $usable, $server_used in use"
+[ "$credit" -gt 0 ] && detail="$detail, $credit of them GrooveMap's own"
+detail="$detail)"
+for kind in role database; do
+  if [ "$kind" = role ]; then
+    limit="$role_limit"
+    used="$role_used"
+  else
+    limit="$database_limit"
+    used="$database_used"
+  fi
+  if [ "$limit" -ge 0 ]; then
+    free=$((limit - used + credit))
+    detail="$detail; $kind limit $limit with $used in use leaves $free"
+    [ "$free" -lt "$headroom" ] && headroom="$free"
+  else
+    detail="$detail; $kind unlimited ($used in use)"
+  fi
+done
+if [ "$headroom" -lt "$MIN_CONNECTIONS" ]; then
+  fail "only $headroom connections of headroom at $where ($detail); GrooveMap's services need $MIN_CONNECTIONS. Free connections on the server, raise the limit (ALTER ROLE ... CONNECTION LIMIT / ALTER DATABASE ... CONNECTION LIMIT / max_connections), or run GrooveMap's own PostgreSQL"
+fi
+ok "connection headroom $headroom of the $MIN_CONNECTIONS the services need ($detail)"
 
 # --- session pooling -------------------------------------------------------------------
 

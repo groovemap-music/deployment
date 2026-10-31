@@ -130,6 +130,16 @@ which classifies each as shared infrastructure or dedicated to another applicati
 
 ### 2a. Ask: reuse or dedicated (only when PostgreSQL and Valkey already exist)
 
+**First read `.env` (and the shell) for decisions already recorded:** `GROOVEMAP_POSTGRES`,
+`GROOVEMAP_VALKEY`, and `GROOVEMAP_MONITORING` when set. `just deploy` prints them as
+`Decision ...` lines and `just status` lists them under "Decisions recorded". A value that is
+there, including `local`, is an answer the user already gave: **never ask it again.** Say what
+`.env` records ("`.env` has PostgreSQL reused from the existing server and Valkey dedicated"),
+confirm in one sentence that this still holds, and go on to the matching branch below; ask only
+about a store whose variable is not recorded. If the user wants to change a recorded decision
+they will say so; changing a store on a deployment that is already running is a migration, so
+stop and explain it rather than editing the variable.
+
 When discovery finds an existing PostgreSQL **and** an existing Valkey (or Redis), ask the
 user exactly this, before proposing any deployment:
 
@@ -299,7 +309,11 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    ```
 
    Drop `-f docker-compose.override.yml` if there is no override. The operations console and
-   Grafana show queue progress too.
+   Grafana show queue progress too. `just status` (read-only; also `python3 scripts/status.py`)
+   summarizes everything at once: per service installed, healthy, importing or waiting-on-gate,
+   the gate, the recorded decisions, and each running image against the reviewed release table
+   (flagging any that is not the reviewed digest). Exit 0 means it determined the state, 2 that
+   it could not.
 
 5. **Backups and recovery (read-only):** follow
    [references/backup-recovery.md](references/backup-recovery.md). With a shared PostgreSQL,
