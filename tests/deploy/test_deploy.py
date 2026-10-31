@@ -549,6 +549,210 @@ def test_override_check_command_honours_the_allowlist(tmp_path: Path, monkeypatc
     assert helpers.main(["override-check", str(before), str(after)]) == 0
 
 
+def _stack_with_volumes() -> dict[str, Any]:
+    stack = _render(
+        postgres={"volumes": [{"type": "volume", "source": "postgres_data", "target": "/var/lib/postgresql/data"}]},
+        explore={"volumes": [{"type": "volume", "source": "explore_cache", "target": "/cache"}]},
+    )
+    stack["volumes"] = {"postgres_data": {}, "explore_cache": {}, "unused_data": {}}
+    return stack
+
+
+def _stack_after(service: str, change: dict[str, Any], volumes: dict[str, Any] | None = None) -> dict[str, Any]:
+    after: dict[str, Any] = json.loads(json.dumps(_stack_with_volumes()))
+    after["services"].setdefault(service, {"image": PINNED}).update(change)
+    after["volumes"].update(volumes or {})
+    return after
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("privileged", True),
+        ("cap_add", ["SYS_ADMIN"]),
+        ("devices", ["/dev/sda:/dev/sda"]),
+        ("security_opt", ["seccomp:unconfined"]),
+        ("pid", "host"),
+        ("ipc", "service:postgres"),
+        ("uts", "host"),
+        ("cgroup", "host"),
+        ("volumes_from", ["postgres"]),
+        ("device_cgroup_rules", ["c 1:3 mr"]),
+        ("sysctls", {"net.ipv4.ip_forward": "1"}),
+        ("runtime", "runc-privileged"),
+        ("isolation", "process"),
+        ("group_add", ["docker"]),
+    ],
+)
+def test_existing_service_may_not_gain_host_access(key: str, value: Any) -> None:
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("explore", {key: value}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert f"adds {key} to explore" in findings[0].message
+    assert "no opt-in" in findings[0].hint
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        {"type": "bind", "source": "/var/run/docker.sock", "target": "/var/run/docker.sock"},
+        {"type": "bind", "source": "/run/podman/podman.sock", "target": "/p.sock"},
+        {"type": "bind", "source": "/run/user/1000/podman/podman.sock", "target": "/p.sock"},
+        {"type": "bind", "source": "/var/lib/docker/", "target": "/d"},
+        {"type": "bind", "source": "/var/lib", "target": "/d"},
+        {"type": "bind", "source": "/proc/1/root", "target": "/h"},
+        {"type": "bind", "source": "/etc/../etc/shadow", "target": "/h"},
+        {"type": "bind", "source": "/", "target": "/host"},
+        {"type": "bind", "source": "/root", "target": "/r"},
+        {"type": "bind", "source": "/boot", "target": "/b"},
+        {"type": "bind", "source": "/dev", "target": "/dev"},
+        {"type": "bind", "source": "/sys", "target": "/sys"},
+    ],
+)
+def test_sensitive_host_paths_stop_on_existing_and_new_services(mount: dict[str, Any]) -> None:
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("explore", {"volumes": [mount]}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "sensitive host path" in findings[0].message
+    assert "explore" in findings[0].message
+    added = helpers.check_override(_stack_with_volumes(), _stack_after("backup", {"image": PINNED, "volumes": [mount]}))
+    assert [finding.level for finding in added] == ["stop"]
+    assert "backup service" in added[0].message
+    assert "OVERRIDE_ALLOW_SERVICES" in added[0].hint
+
+
+def test_short_volume_syntax_is_judged_like_the_long_form() -> None:
+    findings = helpers.check_override(
+        _stack_with_volumes(), _stack_after("backup", {"image": PINNED, "volumes": ["/var/run/docker.sock:/s:ro", "postgres_data:/pg"]})
+    )
+    assert len(findings) == 2
+    assert all(finding.level == "stop" for finding in findings)
+
+
+def test_another_services_data_volume_stops_but_the_services_own_may_move() -> None:
+    stolen = {"volumes": [{"type": "volume", "source": "postgres_data", "target": "/pg"}]}
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("explore", stolen))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "stack volume postgres_data (used by postgres) into explore" in findings[0].message
+    unused = {"volumes": [{"type": "volume", "source": "unused_data", "target": "/u"}]}
+    assert helpers.check_override(_stack_with_volumes(), _stack_after("explore", unused))[0].level == "stop"
+    bind = {"volumes": [{"type": "bind", "source": "/mnt/tank/pg", "target": "/var/lib/postgresql/data"}]}
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), _stack_after("postgres", bind))] == ["ok"]
+
+
+def test_relocating_a_services_own_volume_with_driver_opts_is_allowed_unless_the_path_is_sensitive() -> None:
+    def relocate(device: str) -> dict[str, Any]:
+        return _stack_after("postgres", {}, {"postgres_data": {"driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": device}}})
+
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), relocate("/mnt/tank/groovemap/postgres"))] == ["ok"]
+    findings = helpers.check_override(_stack_with_volumes(), relocate("/var/run/docker.sock"))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "backs the volume postgres_data of postgres" in findings[0].message
+
+
+def test_a_new_service_may_not_reach_a_stack_volume_through_a_relocated_definition() -> None:
+    relocated = {"postgres_data": {"driver_opts": {"type": "none", "o": "bind", "device": "/mnt/tank/pg"}}}
+    mount = {"volumes": [{"type": "volume", "source": "postgres_data", "target": "/pg"}]}
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("backup", {"image": PINNED, **mount}, relocated))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "stack volume postgres_data" in findings[0].message
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("privileged", True),
+        ("cap_add", ["NET_ADMIN"]),
+        ("devices", ["/dev/fuse"]),
+        ("security_opt", ["apparmor:unconfined"]),
+        ("pid", "host"),
+        ("volumes_from", ["postgres"]),
+        ("cpu_shares", 512),
+        ("deploy", {"replicas": 2}),
+    ],
+)
+def test_a_new_service_may_set_only_allowlisted_keys(key: str, value: Any) -> None:
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("backup", {"image": PINNED, key: value}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "backup service" in findings[0].message
+    assert key in findings[0].message
+    assert "OVERRIDE_ALLOW_SERVICES" in findings[0].hint
+
+
+def test_a_new_service_may_use_the_allowlisted_keys_and_new_or_safe_volumes() -> None:
+    backup = {
+        "image": PINNED,
+        "command": ["sh", "-c", "backup"],
+        "environment": {"A": "b"},
+        "restart": "unless-stopped",
+        "user": "1000",
+        "read_only": True,
+        "deploy": {"resources": {"limits": {"memory": "256M"}}},
+        "volumes": [
+            {"type": "volume", "source": "backup_scratch", "target": "/scratch"},
+            {"type": "bind", "source": "/mnt/tank/backups", "target": "/backups"},
+            {"type": "tmpfs", "target": "/scratch-ram"},
+        ],
+        "privileged": False,
+        "ports": [],
+    }
+    after = _stack_after("backup", backup, {"backup_scratch": {}})
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after)] == ["ok"]
+
+
+def test_opt_in_lets_a_backup_sidecar_mount_stack_data_but_not_skip_the_digest() -> None:
+    sidecar = {
+        "image": PINNED,
+        "privileged": False,
+        "cap_add": ["DAC_READ_SEARCH"],
+        "volumes": [
+            {"type": "volume", "source": "postgres_data", "target": "/pg", "read_only": True},
+            {"type": "bind", "source": "/var/run/docker.sock", "target": "/var/run/docker.sock"},
+        ],
+    }
+    before = _stack_with_volumes()
+    assert [finding.level for finding in helpers.check_override(before, _stack_after("backup", sidecar))] != ["ok"]
+    assert [finding.level for finding in helpers.check_override(before, _stack_after("backup", sidecar), frozenset({"backup"}))] == ["ok"]
+    unpinned = _stack_after("backup", {**sidecar, "image": "backup:latest", "build": {"context": "."}})
+    findings = helpers.check_override(before, unpinned, frozenset({"backup"}))
+    assert [finding.level for finding in findings] == ["stop", "stop"]
+
+
+def _networked(**network: Any) -> dict[str, Any]:
+    stack = _render()
+    stack["services"]["postgres"]["networks"] = {"groovemap": None}
+    stack["networks"] = {"groovemap": {"name": "lab_groovemap", "driver": "bridge", **network}}
+    return stack
+
+
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [
+        ({"external": True}, "external"),
+        ({"name": "proxy_network"}, "name"),
+        ({"driver": "host"}, "driver"),
+        ({"attachable": True}, "attachable"),
+        ({"internal": False}, "internal"),
+        ({"driver_opts": {"com.docker.network.bridge.name": "br0"}}, "driver_opts"),
+    ],
+)
+def test_override_may_not_redefine_a_network_the_data_tier_uses(change: dict[str, Any], field: str) -> None:
+    findings = helpers.check_override(_networked(internal=True), _networked(**{"internal": True, **change}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert field in findings[0].message
+    assert "groovemap network used by the data tier" in findings[0].message
+
+
+def test_override_may_change_the_stack_networks_subnet() -> None:
+    after = _networked(ipam={"config": [{"subnet": "172.28.0.0/16"}]})
+    assert [finding.level for finding in helpers.check_override(_networked(), after)] == ["ok"]
+
+
+@pytest.mark.parametrize("mode", ["host", "service:postgres", "container:other", "none"])
+def test_network_mode_of_a_web_tier_service_may_not_change(mode: str) -> None:
+    findings = helpers.check_override(_render(), _render(explore={"network_mode": mode}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "changes network_mode on explore" in findings[0].message
+
+
 def test_override_must_not_drop_a_service() -> None:
     after = _render()
     del after["services"]["explore"]
