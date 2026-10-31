@@ -33,6 +33,15 @@ x-otel-depends-on: &otel-depends-on
   otel-collector:
     condition: service_started
 
+# Every service that publishes or consumes the catalog queues starts only after the
+# DLQ size-cap policy is applied. The initializer is a one-shot that exits 0, so this
+# completed-successfully dependent is also what lets `up --wait` finish: Compose treats a
+# one-shot that nothing waits on, and which exited, as a failure. A failing initializer
+# stops its dependents from starting and fails `up`.
+x-rabbitmq-dlq-policy-depends-on: &rabbitmq-dlq-policy-depends-on
+  rabbitmq-dlq-policy-init:
+    condition: service_completed_successfully
+
 networks:
   groovemap:
     driver: bridge
@@ -730,7 +739,7 @@ services:
       - extractor_discogs_logs:/logs
       - ./config/extraction-rules.yaml:/config/extraction-rules.yaml:ro
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
@@ -774,7 +783,7 @@ services:
       - musicbrainz_data:/musicbrainz-data
       - extractor_musicbrainz_logs:/logs
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
@@ -815,7 +824,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "15"
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -869,7 +878,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -922,7 +931,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "20"
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
@@ -977,7 +986,7 @@ services:
       RABBITMQ_USERNAME: groovemap
       STARTUP_DELAY: "25"
     depends_on:
-      <<: *otel-depends-on
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
       schema-init:
         condition: service_completed_successfully
       rabbitmq:
