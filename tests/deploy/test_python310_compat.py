@@ -36,8 +36,14 @@ def load(name, path):
 
 scripts = Path(sys.argv[1]) / "scripts"
 status = load("discogs_import_status", scripts / "discogs_import_status.py")
-load("deploy_helpers", scripts / "deploy_helpers.py")
+helpers = load("deploy_helpers", scripts / "deploy_helpers.py")
 env_init = load("env_init", scripts / "env-init.py")
+stores = helpers.stores
+assert stores is status.stores, "one store-access layer"
+assert stores.read_stores({"GROOVEMAP_POSTGRES": "external"}, {}).overlays == ["docker-compose.external-postgres.yml"]
+assert stores.version_tuple("v0.5.0") == (0, 5, 0) and stores.version_tuple("unreleased") is None
+policy = helpers.load_image_policy()
+assert stores.floor_problems("postgres", policy.EXTERNAL_STORE_FLOORS, policy.RELEASED_IMAGE_VERSIONS, policy.RELEASED_IMAGE_DIGESTS, policy.IMAGE_OWNERS, {}, {})
 assert "yaml" not in sys.modules, "yaml must stay a lazy import in check-images.py"
 for stamp in ("2026-10-01T01:25:43.89805+00:00", "2026-10-01T00:00:00Z", "2026-10-01T01:25:43.5+00:00"):
     assert status._timestamp(stamp).tzinfo is not None, stamp
@@ -72,7 +78,7 @@ def test_deploy_time_code_paths_run_on_python_3_10_with_only_the_stdlib() -> Non
 
 
 def test_env_init_writes_env_on_python_3_10(tmp_path: Path) -> None:
-    for relative in ("scripts/env-init.py", "scripts/check-images.py", "scripts/deploy_helpers.py", ".env.example"):
+    for relative in ("scripts/env-init.py", "scripts/check-images.py", "scripts/deploy_helpers.py", "scripts/stores.py", ".env.example"):
         (tmp_path / relative).parent.mkdir(exist_ok=True)
         shutil.copy(ROOT / relative, tmp_path / relative)
     for _ in range(2):

@@ -31,6 +31,10 @@ Every store is queried through `docker compose exec` into the running stack, so 
 needs no database clients and no secrets: credentials are read inside each container, from
 the Docker secret files the production overlay mounts or from the base file's environment.
 RabbitMQ is queried with `rabbitmqctl`, which authenticates with the node's Erlang cookie.
+PostgreSQL goes through the store-access layer (scripts/stores.py): with GROOVEMAP_POSTGRES=external
+in .env (or the shell) `--prod` adds docker-compose.external-postgres.yml, exactly as `just
+deploy` does, and psql runs in a throwaway store-check-postgres container against the external
+server the loaders write to. An external store that cannot be reached is "cannot determine".
 
 This script only reads. Exit codes: 0 complete, 3 in progress, 2 cannot determine (stack or
 service down, relation or queue missing, unreadable output). Anything uncertain is 2, never
@@ -40,7 +44,9 @@ service down, relation or queue missing, unreadable output). Anything uncertain 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,10 +59,26 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_stores() -> Any:
+    """scripts/stores.py by path: this script runs without the repository on sys.path."""
+    name = "groovemap_stores"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("stores.py"))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+stores = _load_stores()
 
 # `just config-prod` composes the production stack from exactly these files.
 PROD_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.prod.yml")
@@ -79,15 +101,9 @@ ORDERED_VERSION = re.compile(r"\A[0-9]{8}\Z")
 PROBE_TIMEOUT_SECONDS = 60.0
 DEFAULT_INTERVAL_SECONDS = 30.0
 
-# Run inside the postgres container. The production overlay unsets POSTGRES_USER and mounts
-# the username as a secret file; the base file sets it directly. psql connects over the local
-# socket, which the official image trusts, so no password is involved. The query is `$1`.
-PSQL_SHELL = (
-    'u="${POSTGRES_USER:-}"; '
-    'if [ -z "$u" ] && [ -n "${POSTGRES_USER_FILE:-}" ]; then u="$(cat "$POSTGRES_USER_FILE")"; fi; '
-    'if [ -z "$u" ]; then echo "no PostgreSQL user: neither POSTGRES_USER nor POSTGRES_USER_FILE is set" >&2; exit 2; fi; '
-    'exec psql -X -U "$u" -d "${POSTGRES_DB:-groovemap}" -v ON_ERROR_STOP=1 -tAq -c "$1"'
-)
+# The store-access layer's psql shell (scripts/stores.py): run in the postgres container, or in
+# the store-check-postgres one-shot for an external PostgreSQL. The query is `$1`.
+PSQL_SHELL: str = stores.PSQL_SHELL
 
 # Run inside the neo4j container. `neo4j-entrypoint.sh` seeds the server from the secret file
 # when the production overlay mounts it; otherwise the base file's NEO4J_AUTH holds it.
@@ -502,12 +518,17 @@ class Compose:
         project_name: str | None = None,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         timeout: float = PROBE_TIMEOUT_SECONDS,
+        configured: Any = None,
+        store_error: str | None = None,
     ) -> None:
         self.files = list(files)
         self.env_file = env_file
         self.project_name = project_name
         self.runner = runner
         self.timeout = timeout
+        # Where PostgreSQL lives (stores.Stores), or why that cannot be told; the latter makes every PostgreSQL probe unknown.
+        self.stores = configured or stores.Stores()
+        self.store_error = store_error
 
     def argv(self) -> list[str]:
         argv = ["docker", "compose"]
@@ -521,7 +542,9 @@ class Compose:
 
     def exec(self, service: str, command: Sequence[str]) -> str:
         """Run a read-only command in a running service container and return its stdout."""
-        argv = [*self.argv(), "exec", "-T", service, *command]
+        return self._run([*self.argv(), "exec", "-T", service, *command], service)
+
+    def _run(self, argv: Sequence[str], service: str) -> str:
         try:
             completed = self.runner(argv, capture_output=True, text=True, timeout=self.timeout, check=False, cwd=ROOT)
         except FileNotFoundError as error:
@@ -535,7 +558,11 @@ class Compose:
         return completed.stdout
 
     def psql(self, sql: str) -> str:
-        return self.exec("postgres", ["sh", "-c", PSQL_SHELL, "sh", sql])
+        """One read-only query against the stack's PostgreSQL, wherever it lives (`stores.psql_argv`)."""
+        if self.store_error is not None:
+            raise ProbeError(self.store_error)
+        service = stores.STORE_CHECK_SERVICES["postgres"] if self.stores.postgres == stores.EXTERNAL else "postgres"
+        return self._run(stores.psql_argv(self.argv(), sql, self.stores), service)
 
     def cypher(self, query: str) -> str:
         return self.exec("neo4j", ["sh", "-c", CYPHER_SHELL, "sh", query])
@@ -637,9 +664,21 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return args
 
 
-def compose_files(args: argparse.Namespace) -> list[str]:
-    """`--prod` names the files relative to the repository root, where the probes run."""
-    files = list(PROD_COMPOSE_FILES) if args.prod else []
+def store_settings(args: argparse.Namespace, environ: Mapping[str, str]) -> tuple[Any, str | None]:
+    """(stores.Stores, None), or (local stores, why PostgreSQL cannot be addressed) from the env file and the shell."""
+    env_values = stores.read_env(Path(args.env_file) if args.env_file else ROOT / ".env")
+    try:
+        configured = stores.read_stores(env_values, environ)
+    except stores.StoreConfigError as error:
+        return stores.Stores(), str(error)
+    if configured.postgres == stores.EXTERNAL and not args.prod:
+        return configured, "PostgreSQL is external (GROOVEMAP_POSTGRES=external); address the production stack with --prod"
+    return configured, None
+
+
+def compose_files(args: argparse.Namespace, configured: Any = None) -> list[str]:
+    """`--prod` names the files relative to the repository root, where the probes run, and adds the external-store overlays."""
+    files = [*PROD_COMPOSE_FILES, *(configured or stores.Stores()).overlays] if args.prod else []
     return files + [str(Path(path).resolve()) for path in args.files]
 
 
@@ -665,9 +704,16 @@ def watch(
         sleep(interval)
 
 
-def main(argv: Sequence[str] | None = None, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    environ: Mapping[str, str] | None = None,
+) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    compose = Compose(compose_files(args), args.env_file, args.project_name, runner=runner)
+    configured, store_error = store_settings(args, os.environ if environ is None else environ)
+    compose = Compose(
+        compose_files(args, configured), args.env_file, args.project_name, runner=runner, configured=configured, store_error=store_error
+    )
     try:
         report = watch(lambda: observe(compose), args.interval, args.timeout, sys.stderr) if args.wait else evaluate(observe(compose))
     except KeyboardInterrupt:
