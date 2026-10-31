@@ -1,5 +1,5 @@
-"""The logic behind `just deploy` (scripts/deploy.sh): preflight, .env sizing, the profile switch,
-and the endpoint summary.
+"""The logic behind `just deploy` (scripts/deploy.sh): preflight, .env sizing, the override check,
+the profile switch, and the endpoint summary.
 
 The shell script owns the sequence; everything here that needs a decision lives in Python so it
 can be tested without a Docker host. Every Docker call goes through an injectable runner, and
@@ -93,6 +93,20 @@ PORTS = (
 )
 BIND_ADDRESSES = {"web": ("WEB_BIND_ADDRESS", ""), "data": ("DATA_BIND_ADDRESS", ""), "internal": ("INTERNAL_BIND_ADDRESS", "127.0.0.1")}
 WILDCARDS = ("", "0.0.0.0", "::", "[::]")  # noqa: S104 - matching Compose's wildcard binds, not binding one
+
+OVERRIDE_FILE = "docker-compose.override.yml"
+# The services published on DATA_BIND_ADDRESS or INTERNAL_BIND_ADDRESS (the "data" and "internal"
+# groups in PORTS, plus nothing else); only .env moves their ports.
+DATA_TIER = ("postgres", "neo4j", "rabbitmq", "valkey", "victoria-metrics", "victoria-traces")
+# What an override must leave alone on every service of the stack, and why.
+OVERRIDE_FIXED = (
+    ("image", "images come only from the reviewed digests in .env (`just env-init`), never a tag or `latest`"),
+    ("build", "the stack runs the released images; it never builds them"),
+    ("platform", "GrooveMap's images are linux/amd64 only"),
+    ("container_name", "just deploy finds the stack by its groovemap-* container names"),
+    ("profiles", "only just deploy turns on the musicbrainz profile, once the Discogs import gate reports complete"),
+)
+OVERRIDE_DATA_TIER_FIXED = ("ports", "network_mode")
 
 
 # --- .env reading and writing ----------------------------------------------------------
@@ -409,6 +423,41 @@ def port_in_use(address: str, port: int) -> bool:
     return False
 
 
+def check_override(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Finding]:
+    """Compare the rendered stack without and with docker-compose.override.yml.
+
+    The override is for host-specific settings: reverse-proxy labels and networks, data on
+    another disk, restart policies, the network's subnet. Anything that would bypass the
+    reviewed digests, the import gate or the data-tier bind addresses is a stop. Comparing
+    Compose's own renders (`config --format json`) judges what the merge does, `!override` and
+    `!reset` included, rather than how the file spells it.
+    """
+    findings = []
+    rendered = after.get("services") or {}
+    for name, service in (before.get("services") or {}).items():
+        if name not in rendered:
+            findings.append(Finding("stop", f"{OVERRIDE_FILE} removes the {name} service", "Leave the stack's services in place."))
+            continue
+        changed = rendered[name]
+        for key, why in OVERRIDE_FIXED:
+            if service.get(key) != changed.get(key):
+                findings.append(Finding("stop", f"{OVERRIDE_FILE} changes {key} on {name}", f"Remove it: {why}."))
+        if name in DATA_TIER:
+            for key in OVERRIDE_DATA_TIER_FIXED:
+                if service.get(key) != changed.get(key):
+                    findings.append(
+                        Finding(
+                            "stop",
+                            f"{OVERRIDE_FILE} changes {key} on {name}",
+                            "Data-tier ports move only with DATA_BIND_ADDRESS, INTERNAL_BIND_ADDRESS and the *_HOST_PORT variables in .env, "
+                            "so they stay off the LAN.",
+                        )
+                    )
+    if not findings:
+        findings.append(Finding("ok", f"{OVERRIDE_FILE} changes only host-specific settings"))
+    return findings
+
+
 PUBLISHED = re.compile(r":(\d+)->")
 
 
@@ -643,6 +692,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     name.add_argument("--project-name")
     urls = commands.add_parser("endpoints", help="print the configured browser-facing endpoints")
     urls.add_argument("--mode", choices=("prod", "dev"), default="prod")
+    override = commands.add_parser(
+        "override-check", help=f"compare `docker compose config --format json` without and with {OVERRIDE_FILE}; exit 0 to go ahead, 3 to stop"
+    )
+    override.add_argument("before", type=Path, help="the render without the override")
+    override.add_argument("after", type=Path, help="the render with the override")
     return parser.parse_args(argv)
 
 
@@ -675,6 +729,18 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         return 0
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))
+        return 0
+    if args.command == "override-check":
+        try:
+            findings = check_override(json.loads(args.before.read_text()), json.loads(args.after.read_text()))
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"error: could not read the rendered stack: {error}", file=sys.stderr)
+            return 1
+        for finding in findings:
+            show(finding)
+        if any(finding.level == "stop" for finding in findings):
+            print(f"\nStopping before the stack starts: fix {OVERRIDE_FILE} and re-run.")
+            return 3
         return 0
     print(render_endpoints(endpoints(args.mode, env_values, environ, short_hostname())))
     return 0

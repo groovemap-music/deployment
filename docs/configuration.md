@@ -74,7 +74,9 @@ See [Production Secrets](#production-secrets) below and [Docker Security](docker
 
 ### 4. Docker Compose Override
 
-Override non-secret settings in `docker-compose.yml` or `docker-compose.override.yml`:
+Put host-specific, non-secret settings in an untracked
+`docker-compose.override.yml` (`.gitignore` already lists it) rather than
+editing the tracked Compose files:
 
 ```yaml
 services:
@@ -83,6 +85,27 @@ services:
       - LOG_LEVEL=DEBUG
       - SESSION_CACHE_SECONDS=10
 ```
+
+Compose reads `docker-compose.override.yml` by itself only when no `-f` is
+given, so a plain `docker compose up` merges it into the base stack, but the
+production stack has to name it last:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml config
+```
+
+`just deploy` does this for you: when the file exists, it adds it to every
+Compose call and to the import gate. First it renders the stack with and
+without the override (`config --format json`, every profile included) and stops
+with exit code 3 if the override changes what only `.env` or deploy may
+change on a stack service: `image`, `build`, `platform`, `container_name` or
+`profiles`, or the `ports` or `network_mode` of PostgreSQL, Neo4j, RabbitMQ,
+Valkey, VictoriaMetrics or VictoriaTraces. Reverse-proxy labels and networks,
+volume locations, restart policies, the `groovemap` network's subnet and extra
+services of your own are fine. Move published ports with the
+[host port and bind address variables](#host-ports-and-bind-addresses) in
+`.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
+to address the same stack by hand.
 
 ## Core Settings
 
