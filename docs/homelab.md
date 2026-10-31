@@ -546,7 +546,7 @@ the local services start again, deploy removes its `COMPOSE_FILE`, and
 A host that installed GrooveMap at deployment `6af13ec` (or `160fe7d`) with mixed stores (an
 external PostgreSQL with TLS, a dedicated Valkey) and shared monitoring carried local
 workarounds for eight failures. Every fix is now in the repository, with a regression test and a
-Linux smoke for each ([failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test)).
+Linux smoke for each, including the Discogs gate that never completed ([failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test)).
 Nothing below is destructive: no volume is removed, no store is touched, and secrets are never
 regenerated.
 
@@ -569,6 +569,10 @@ Ansible role once the new checkout passes the verification below:
 - **Exporter and secret ownership workarounds.** Every service that reads a 0600 secret runs as the
   owner of `secrets/`, so a `chown`/`chmod` of the derived Valkey exporter password or a `user:`
   override on an exporter is no longer needed.
+- **A hand-written Discogs latch or a gate you stopped waiting on.** With discogs-sql-loader v0.3.0
+  the gate never completed because the loader wrote no latch; v0.4.0 (`sha256:be150770...`) writes
+  it, so `just discogs-import-status` reaches exit 0 and deploy starts MusicBrainz. Run
+  `just env-init` to pick up the reviewed digest. Do not write the latch row yourself.
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
   depend on `rabbitmq-dlq-policy-init` completing successfully.
 
