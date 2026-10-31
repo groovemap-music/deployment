@@ -24,7 +24,6 @@ services:
     platform: linux/amd64
     volumes: !override
       - discogs_data:/discogs-data
-      - extractor_discogs_logs:/logs
       - ${GM_EXTRACTION_RULES_FILE:-./config/extraction-rules.yaml}:/config/extraction-rules.yaml:ro
   extractor-musicbrainz:
     platform: linux/amd64

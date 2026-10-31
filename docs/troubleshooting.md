@@ -202,6 +202,20 @@ Resolution, which changes state and needs approval before it is run:
    under 85%, `ValkeyWritesRejected` resolved, and the cache hit ratio
    recovering.
 
+## Where are the service logs? `/logs` is empty after a restart
+
+`/logs` inside the application containers is an ephemeral, size-capped tmpfs owned by the
+runtime UID; it is emptied whenever the container is recreated. Read logs from stdout instead:
+
+```bash
+docker compose logs --tail 200 <service>
+```
+
+A `Permission denied: /logs/<service>.log` crash loop means the stack is still using the old
+named `*_logs` volumes, which carry UID 1000 ownership. Pull the current compose files and
+redeploy; the old volumes can then be removed if you no longer want them (see
+[homelab.md](homelab.md#logs-is-now-a-tmpfs-any-host-uid-works)).
+
 ## Port conflicts
 
 The base stack publishes ports 3000, 5433, 5672, 6379, 7474, 7687, 8003-8007,

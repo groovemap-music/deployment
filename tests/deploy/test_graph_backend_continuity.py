@@ -53,7 +53,7 @@ def test_neo4j_persistence_health_and_resource_settings_remain_wired() -> None:
     prod_neo4j = _compose("docker-compose.prod.yml")["services"]["neo4j"]
 
     assert "neo4j_data:/data" in base_neo4j["volumes"]
-    assert "neo4j_logs:/logs" in base_neo4j["volumes"]
+    assert not any(str(volume).endswith(":/logs") for volume in base_neo4j["volumes"])  # /logs is tmpfs, see test_logs_tmpfs.py
     assert "cypher-shell" in " ".join(prod_neo4j["healthcheck"]["test"])
     assert "neo4j_password" in prod_neo4j["secrets"]
     assert prod_neo4j["deploy"]["resources"]["limits"]["memory"] == "${NEO4J_MEMORY_LIMIT:-48G}"

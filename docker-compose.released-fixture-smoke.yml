@@ -38,7 +38,6 @@ services:
       LOCAL_MANIFEST: /usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
     volumes: !override
       - discogs_data:/discogs-data
-      - extractor_discogs_logs:/logs
     depends_on: !override
       rabbitmq:
         condition: service_healthy

@@ -322,6 +322,19 @@ and confirm its `environment` field is `production`. A local Compose validation
 proves the configuration supplied to containers; it does not prove that a live
 host has applied it or that every third-party image emits the same log fields.
 
+### Container log files (`/logs`)
+
+Each service that writes `/logs` gets a per-service tmpfs there, owned by `${UID}:${GID}`
+(Neo4j: `7474:7474`), mode `0750`, `noexec,nosuid`, capped at **64 MiB** of RAM. Content is lost
+when the container is recreated; the durable copy is the container's stdout through Docker's
+json-file driver (`docker compose logs <service>`).
+
+The shared Python logger rotates `/logs/<service>.log` by `LOG_FILE_MAX_BYTES` (compose sets
+`20971520`, 20 MiB) with `LOG_FILE_BACKUP_COUNT` backups (compose sets `2`). The worst case is
+(1 + 2) x 20 MiB = 60 MiB, which fits the 64 MiB cap; raise the cap and the rotation settings
+together (a test checks that the budget fits). The Rust extractors log JSON to stdout only,
+so their `/logs` tmpfs stays empty.
+
 ### RabbitMQ Configuration
 
 RabbitMQ connections are configured using individual component variables.

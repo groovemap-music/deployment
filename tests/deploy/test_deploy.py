@@ -1521,7 +1521,9 @@ def _phase_one_volumes(config: dict[str, Any]) -> set[str]:
 def test_musicbrainz_evidence_volumes_are_only_what_no_other_service_mounts(real_render: Path) -> None:
     config = json.loads(real_render.read_text())
     evidence = helpers.musicbrainz_exclusive_volumes(config)
-    assert evidence == {"extractor_musicbrainz_logs", "brainzgraphinator_logs", "brainztableinator_logs"}
+    # No compose volume is MusicBrainz-only any more (/logs is tmpfs); the legacy log volumes of upgraded hosts remain evidence.
+    assert evidence == helpers.LEGACY_MUSICBRAINZ_LOG_VOLUMES
+    assert not evidence & set(config["volumes"])
     assert not evidence & _mounted_volumes(config, lambda service: "musicbrainz" not in (service.get("profiles") or []))
     # The API mounts musicbrainz_data read-only, so phase 1 creates it.
     assert "musicbrainz_data" in _phase_one_volumes(config)
@@ -1535,7 +1537,7 @@ def test_a_render_that_cannot_tell_is_no_evidence() -> None:
 
 def test_a_service_in_several_profiles_does_not_make_its_volumes_musicbrainz_only() -> None:
     config = {"services": {"a": {"profiles": ["musicbrainz", "other"], "volumes": [{"type": "volume", "source": "v", "target": "/v"}]}}}
-    assert helpers.musicbrainz_exclusive_volumes(config) == set()
+    assert helpers.musicbrainz_exclusive_volumes(config) == helpers.LEGACY_MUSICBRAINZ_LOG_VOLUMES
 
 
 def test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence() -> None:

@@ -303,8 +303,8 @@ If you encounter permission errors:
 
 1. Fix volume permissions. This stack uses Docker named volumes, not a
    `./volumes/` directory. The ones the application services write to are
-   `discogs_data`, `musicbrainz_data`, and the `*_logs` volumes (for example
-   `api_logs`, `graphinator_logs`). Compose prefixes each name with the
+   `discogs_data` and `musicbrainz_data`. (`/logs` is a UID-owned tmpfs, not a
+   volume, so it needs no fix.) Compose prefixes each name with the
    project name, which defaults to the checkout directory name (so
    `deployment_discogs_data`). Find the full name, check who owns it, and
    `chown` it to the service UID:GID with a one-off helper container:

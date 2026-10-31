@@ -285,11 +285,7 @@ def test_the_disk_check_skips_an_external_stores_volume(external_render: dict[st
 def test_musicbrainz_evidence_is_the_same_in_external_mode(local_render: dict[str, Any], external_render: dict[str, Any]) -> None:
     """gm-deployment-p9mu: only MusicBrainz-exclusive volumes count; the local-stores profile and the store checks change nothing."""
     evidence = helpers.musicbrainz_exclusive_volumes(external_render)
-    assert (
-        evidence
-        == helpers.musicbrainz_exclusive_volumes(local_render)
-        == {"extractor_musicbrainz_logs", "brainzgraphinator_logs", "brainztableinator_logs"}
-    )
+    assert evidence == helpers.musicbrainz_exclusive_volumes(local_render) == helpers.LEGACY_MUSICBRAINZ_LOG_VOLUMES
 
 
 def test_preflight_skips_the_host_ports_of_external_stores() -> None:
