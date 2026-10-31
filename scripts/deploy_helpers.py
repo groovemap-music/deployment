@@ -111,6 +111,18 @@ OVERRIDE_FIXED = (
     ("profiles", "only just deploy turns on the musicbrainz profile, once the Discogs import gate reports complete"),
 )
 OVERRIDE_DATA_TIER_FIXED = ("ports", "network_mode")
+# Host-specific keys that would still expose the data tier: a reverse-proxy network, Traefik TCP
+# router labels, or a hosts entry that redirects a peer. Data-tier services get none of them.
+OVERRIDE_DATA_TIER_ISOLATED = (
+    ("networks", "a data-tier service stays on the groovemap network only; never attach it to a reverse-proxy network"),
+    ("labels", "reverse-proxy labels (Traefik TCP routers included) could publish the data tier; route only explore, dashboard and grafana"),
+    ("extra_hosts", "hosts entries could redirect the data tier's peers"),
+)
+# Services the override adds need a sha256 digest, and may publish ports or join groovemap only
+# when named in this variable (in .env or the shell), comma-separated.
+OVERRIDE_ALLOW_VARIABLE = "OVERRIDE_ALLOW_SERVICES"
+DIGEST_PINNED = re.compile(r"@sha256:[0-9a-f]{64}$")
+STACK_NETWORK = "groovemap"
 
 
 @dataclass(frozen=True)
@@ -465,7 +477,50 @@ def port_in_use(address: str, port: int) -> bool:
     return False
 
 
-def check_override(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Finding]:
+def parse_allowed_services(value: str) -> frozenset[str]:
+    """The service names listed in OVERRIDE_ALLOW_SERVICES (comma- or space-separated)."""
+    return frozenset(item for item in re.split(r"[,\s]+", value) if item)
+
+
+def _joins_stack_network(service: Mapping[str, Any], networks: Mapping[str, Any]) -> bool:
+    """True when the service is on the groovemap network, by key, by name or through a shared network_mode."""
+    stack_names = {STACK_NETWORK, str((networks.get(STACK_NETWORK) or {}).get("name") or STACK_NETWORK)}
+    for key in service.get("networks") or {}:
+        if key in stack_names or str((networks.get(key) or {}).get("name") or key) in stack_names:
+            return True
+    # network_mode service:/container:/host shares another namespace; none and bridge stay apart.
+    return service.get("network_mode") not in (None, "", "none", "bridge")
+
+
+def _check_new_service(name: str, service: Mapping[str, Any], networks: Mapping[str, Any], allowed: frozenset[str]) -> list[Finding]:
+    optin = f"To allow it, add {name} to {OVERRIDE_ALLOW_VARIABLE} in .env (comma-separated service names), then re-run"
+    findings = []
+    image = str(service.get("image") or "")
+    if not DIGEST_PINNED.search(image):
+        findings.append(
+            Finding(
+                "stop",
+                f"{OVERRIDE_FILE} adds the {name} service with an image that is not pinned by digest ({image or 'no image'})",
+                "Pin it as repo@sha256:<64 hex digits>; a tag can change under the stack. This rule has no opt-in.",
+            )
+        )
+    if service.get("build"):
+        findings.append(Finding("stop", f"{OVERRIDE_FILE} adds the {name} service with a build section", "Use a prebuilt image pinned by digest."))
+    if name not in allowed:
+        if service.get("ports"):
+            findings.append(Finding("stop", f"{OVERRIDE_FILE} adds the {name} service and publishes ports", f"{optin}."))
+        if _joins_stack_network(service, networks):
+            findings.append(
+                Finding(
+                    "stop",
+                    f"{OVERRIDE_FILE} adds the {name} service on the {STACK_NETWORK} network",
+                    f"{optin}. Without it, leave it on the default network (omit networks).",
+                )
+            )
+    return findings
+
+
+def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed: frozenset[str] = frozenset()) -> list[Finding]:
     """Compare the rendered stack without and with docker-compose.override.yml.
 
     The override is for host-specific settings: reverse-proxy labels and networks, data on
@@ -473,6 +528,10 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[
     reviewed digests, the import gate or the data-tier bind addresses is a stop. Comparing
     Compose's own renders (`config --format json`) judges what the merge does, `!override` and
     `!reset` included, rather than how the file spells it.
+
+    Services the override adds must be pinned by digest. One that publishes ports or joins the
+    groovemap network (a forwarder into the data tier, say) must also be named in `allowed`.
+    A new service on the project's default network alone cannot reach the stack, so it passes.
     """
     findings = []
     rendered = after.get("services") or {}
@@ -495,6 +554,12 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[
                             "so they stay off the LAN.",
                         )
                     )
+            for key, why in OVERRIDE_DATA_TIER_ISOLATED:
+                if service.get(key) != changed.get(key):
+                    findings.append(Finding("stop", f"{OVERRIDE_FILE} changes {key} on {name}", f"Remove it: {why}."))
+    for name, service in rendered.items():
+        if name not in (before.get("services") or {}):
+            findings += _check_new_service(name, service, after.get("networks") or {}, allowed)
     if not findings:
         findings.append(Finding("ok", f"{OVERRIDE_FILE} changes only host-specific settings"))
     return findings
@@ -1012,7 +1077,11 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         )
     if args.command == "override-check":
         try:
-            findings = check_override(json.loads(args.before.read_text()), json.loads(args.after.read_text()))
+            findings = check_override(
+                json.loads(args.before.read_text()),
+                json.loads(args.after.read_text()),
+                parse_allowed_services(effective(OVERRIDE_ALLOW_VARIABLE, env_values, environ)),
+            )
         except (OSError, json.JSONDecodeError) as error:
             print(f"error: could not read the rendered stack: {error}", file=sys.stderr)
             return 1
