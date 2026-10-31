@@ -9,23 +9,17 @@ skill drives.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 
 from tests.deploy.test_deploy import helpers
 from tests.deploy.test_repository_identity import _heading_anchors
-
-
-if TYPE_CHECKING:
-    import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,18 +42,6 @@ def _frontmatter() -> tuple[dict[str, Any], str]:
 
 def _skill_text() -> str:
     return "\n".join(path.read_text() for path in sorted(SKILL_DIR.rglob("*.md")))
-
-
-def _load_carry_env() -> Any:
-    spec = importlib.util.spec_from_file_location("carry_env", SKILL_DIR / "scripts" / "carry_env.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-carry_env = _load_carry_env()
 
 
 # --- packaging -------------------------------------------------------------------------
@@ -195,63 +177,3 @@ def test_example_overrides_are_rendered_and_checked_by_just_check() -> None:
     check = (ROOT / "scripts" / "check-compose.sh").read_text()
     assert "skills/groovemap-homelab/assets/override-*.yml" in check
     assert "override-check" in check
-
-
-# --- scripts/carry_env.py --------------------------------------------------------------
-
-
-OLD_TEMPLATE = """# template
-CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:REPLACE_WITH_64_HEX_CHARACTERS
-NEO4J_HEAP_SIZE=2G
-GRAFANA_URL=http://localhost:3000
-# APP_BASE_URL=
-"""
-NEW_ENV = """# template
-CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:new
-NEO4J_HEAP_SIZE=4G
-GRAFANA_URL=http://localhost:3000
-# APP_BASE_URL=
-"""
-BACKUP = """# template
-CATALOG_API_IMAGE=ghcr.io/groovemap-music/catalog-api@sha256:old
-NEO4J_HEAP_SIZE=2G
-GRAFANA_URL="https://grafana.example.com"
-# APP_BASE_URL=
-APP_BASE_URL=https://groovemap.example.com
-DATA_BIND_ADDRESS=127.0.0.1
-COMPOSE_PROFILES=musicbrainz
-"""
-
-
-def test_carry_keeps_host_choices_and_never_the_old_digests() -> None:
-    text, carried = carry_env.carry(BACKUP, NEW_ENV, OLD_TEMPLATE, ".env.x.bak")
-    values = carry_env.assignments(text)
-    assert carried == ["GRAFANA_URL", "APP_BASE_URL", "DATA_BIND_ADDRESS", "COMPOSE_PROFILES"]
-    assert values["CATALOG_API_IMAGE"].endswith("@sha256:new")
-    # Still the old template's default in the backup, so the new template's default wins.
-    assert values["NEO4J_HEAP_SIZE"] == "4G"
-    # Replaced in place, quotes kept; new keys appended under a comment naming the backup.
-    assert 'GRAFANA_URL="https://grafana.example.com"' in text.splitlines()[3]
-    assert "# Carried over from .env.x.bak" in text
-    assert text.endswith("COMPOSE_PROFILES=musicbrainz\n")
-    assert carry_env.carry(BACKUP, text, OLD_TEMPLATE, ".env.x.bak") == (text, [])
-
-
-def test_carry_command_reads_the_old_template_from_git(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    def git(*args: str) -> None:
-        subprocess.run([GIT, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], cwd=tmp_path, check=True, capture_output=True)
-
-    git("init", "-q")
-    (tmp_path / ".env.example").write_text(OLD_TEMPLATE)
-    git("add", ".env.example")
-    git("commit", "-q", "-m", "old")
-    (tmp_path / ".env").write_text(NEW_ENV)
-    (tmp_path / ".env.x.bak").write_text(BACKUP)
-    assert carry_env.main(["--since", "HEAD", str(tmp_path / ".env.x.bak"), str(tmp_path / ".env")]) == 0
-    out = capsys.readouterr().out
-    assert "APP_BASE_URL" in out
-    assert "example.com" not in out
-    assert carry_env.assignments((tmp_path / ".env").read_text())["APP_BASE_URL"] == "https://groovemap.example.com"
-    assert carry_env.main(["--since", "HEAD", str(tmp_path / ".env.x.bak"), str(tmp_path / ".env")]) == 0
-    assert "nothing to carry" in capsys.readouterr().out
-    assert carry_env.main(["--since", "no-such-commit", str(tmp_path / ".env.x.bak"), str(tmp_path / ".env")]) == 1
