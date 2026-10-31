@@ -56,6 +56,12 @@ config-prod:
 secrets-bootstrap:
     bash scripts/create-secrets.sh
 
+# Writes .env from .env.example, filling every image digest from the reviewed release set in
+# scripts/check-images.py. Refuses to replace an existing .env unless --force is given, which
+# keeps the old file as a timestamped backup.
+env-init *args:
+    uv run python scripts/env-init.py {{args}}
+
 # One-time (per stack), idempotent: grants the embedding pipeline's login
 # membership in database-schema's embedding_pipeline role. Run once that role
 # exists (PostgreSQL 19 + pgvector — see docs/maintenance.md#monthly-embedding-refresh),

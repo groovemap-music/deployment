@@ -118,6 +118,7 @@ def test_public_recipe_surface_remains_stable() -> None:
         "down",
         "embeddings-provision-login",
         "embeddings-run",
+        "env-init",
         "install-check",
         "license-check",
         "performance",
