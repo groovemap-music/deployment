@@ -10,8 +10,8 @@ description: >-
   first load to the repository's just recipes.
 license: MIT
 compatibility: >-
-  Needs a shell on the Docker host, git, Docker Engine with Compose v2, and just plus uv (the
-  checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
+  Needs a shell on the Docker host, git, Docker Engine with Compose v2, and python3 3.10 or
+  newer. just and uv are optional (the checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
 metadata:
   repository: https://github.com/groovemap-music/deployment
 ---
@@ -81,8 +81,12 @@ should live, preferably next to the user's other stacks, then:
 ```bash
 git clone https://github.com/groovemap-music/deployment.git groovemap
 cd groovemap
-mise install        # or check that just and uv are installed already
+mise install        # optional: just and uv. Without them, python3 >= 3.10 is enough
 ```
+
+Every `just deploy ...` below also runs as `bash scripts/deploy.sh ...` (the same script), and
+`just discogs-import-status ...` as `python3 scripts/discogs_import_status.py ...`. Use those
+forms when `just` is not installed.
 
 Compose names volumes after the project, which defaults to the checkout's directory name. On a
 fresh install, set `COMPOSE_PROJECT_NAME=groovemap` in `.env` (step 3) so volume names don't

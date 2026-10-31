@@ -7,11 +7,13 @@ does not provide a source-development environment for those services.
 
 - Git
 - Docker Engine with Docker Compose v2
-- [mise](https://mise.jdx.dev/) for the repository toolchain
+- python3 3.10 or newer (the distro's is enough; Debian 12 and Ubuntu 22.04 ship it)
+- Optional, for maintainers: [mise](https://mise.jdx.dev/) for the repository toolchain
+  (`just` and `uv`)
 - enough memory and storage for the selected stack and imported datasets
 - approved manifest digests for every required GrooveMap image
 
-## The short way: `just deploy`
+## The short way: `bash scripts/deploy.sh`
 
 The [homelab guide](homelab.md) covers sizing, ports, reverse proxies, upgrades and known
 limitations in full. This section is the short version.
@@ -22,9 +24,10 @@ loaded, Discogs first and MusicBrainz after it:
 ```bash
 git clone https://github.com/groovemap-music/deployment.git
 cd deployment
-mise install
-just deploy
+bash scripts/deploy.sh
 ```
+
+With `just` installed (`mise install`), `just deploy` runs the same script.
 
 It checks the host, writes `.env` (`just env-init`) and `secrets/`
 (`just secrets-bootstrap`), sizes Neo4j for the machine
@@ -35,7 +38,7 @@ finished it sets `COMPOSE_PROFILES=musicbrainz` in `.env`, starts MusicBrainz,
 prints the endpoints, and offers to create the first admin account.
 
 Ctrl-C, a closed terminal or a reboot loses nothing: the import keeps running
-in Docker, and re-running `just deploy` resumes the wait. Once MusicBrainz is
+in Docker, and re-running `bash scripts/deploy.sh` resumes the wait. Once MusicBrainz is
 enabled, a run only brings the stack up to date. A deployment that already runs
 MusicBrainz keeps it.
 
@@ -140,7 +143,7 @@ before deploying. See [Configuration](configuration.md) and
 
 ## 4. Start only with operator approval
 
-For a first start, use `just deploy` ([above](#the-short-way-just-deploy)): it runs the
+For a first start, use `just deploy` ([above](#the-short-way-bash-scriptsdeploysh)): it runs the
 Discogs import to completion before it starts MusicBrainz, which a plain `up` would not. After
 reviewing the exact image digests, configuration, backup state, and target environment, the
 approved operator may run it. `just down` likewise changes the live environment and requires

@@ -11,7 +11,7 @@ import argparse
 import importlib.util
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -54,7 +54,7 @@ def write_env(target: Path, text: str, *, force: bool) -> Path | None:
     if target.exists():
         if not force:
             raise FileExistsError(f"{target.name} already exists; pass --force to replace it (the old file is kept as a timestamped backup)")
-        backup = target.with_name(f"{target.name}.{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}.bak")
+        backup = target.with_name(f"{target.name}.{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}.bak")
         target.rename(backup)
     target.write_text(text)
     return backup

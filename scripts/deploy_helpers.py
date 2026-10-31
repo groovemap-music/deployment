@@ -476,7 +476,7 @@ class Docker:
     def run(self, *args: str) -> subprocess.CompletedProcess[str] | None:
         try:
             return self.runner(["docker", *args], capture_output=True, text=True, check=False, timeout=60)
-        except FileNotFoundError, subprocess.TimeoutExpired:
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
 
     def info(self) -> tuple[dict[str, Any] | None, str]:
