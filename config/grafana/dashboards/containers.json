@@ -54,7 +54,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "count(container_last_seen{container_label_com_docker_compose_service=~\"$service\"})",
+          "expr": "count(container_last_seen{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"})",
           "legendFormat": "containers",
           "range": true,
           "refId": "A"
@@ -110,7 +110,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+          "expr": "1 - avg(rate(node_cpu_seconds_total{service_namespace=\"groovemap\", mode=\"idle\"}[$__rate_interval]))",
           "legendFormat": "busy",
           "range": true,
           "refId": "A"
@@ -166,7 +166,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+          "expr": "1 - node_memory_MemAvailable_bytes{service_namespace=\"groovemap\"} / node_memory_MemTotal_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "used",
           "range": true,
           "refId": "A"
@@ -222,7 +222,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_load1 / on() group_left() count(count by (cpu) (node_cpu_seconds_total))",
+          "expr": "node_load1{service_namespace=\"groovemap\"} / on() group_left() count(count by (cpu) (node_cpu_seconds_total{service_namespace=\"groovemap\"}))",
           "legendFormat": "load1/core",
           "range": true,
           "refId": "A"
@@ -309,7 +309,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}}",
           "range": true,
           "refId": "A"
@@ -396,7 +396,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service=~\"$service\"})",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"})",
           "legendFormat": "{{container_label_com_docker_compose_service}} working set",
           "range": true,
           "refId": "A"
@@ -407,7 +407,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{container_label_com_docker_compose_service=~\"$service\"} > 0)",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_spec_memory_limit_bytes{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"} > 0)",
           "legendFormat": "{{container_label_com_docker_compose_service}} limit",
           "range": true,
           "refId": "B"
@@ -494,7 +494,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} rx",
           "range": true,
           "refId": "A"
@@ -505,7 +505,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} tx",
           "range": true,
           "refId": "B"
@@ -592,7 +592,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} read",
           "range": true,
           "refId": "A"
@@ -603,7 +603,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} write",
           "range": true,
           "refId": "B"
@@ -690,7 +690,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (changes(container_start_time_seconds{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (changes(container_start_time_seconds{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} restarts",
           "range": true,
           "refId": "A"
@@ -701,7 +701,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (increase(container_oom_events_total{container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (increase(container_oom_events_total{service_namespace=\"groovemap\", container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{container_label_com_docker_compose_service}} OOM kills",
           "range": true,
           "refId": "B"
@@ -788,7 +788,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[$__rate_interval])) / on() group_left() count(count by (cpu) (node_cpu_seconds_total))",
+          "expr": "sum by (mode) (rate(node_cpu_seconds_total{service_namespace=\"groovemap\", mode!=\"idle\"}[$__rate_interval])) / on() group_left() count(count by (cpu) (node_cpu_seconds_total{service_namespace=\"groovemap\"}))",
           "legendFormat": "{{mode}}",
           "range": true,
           "refId": "A"
@@ -875,7 +875,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_memory_MemTotal_bytes",
+          "expr": "node_memory_MemTotal_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "total",
           "range": true,
           "refId": "A"
@@ -886,7 +886,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_memory_MemAvailable_bytes",
+          "expr": "node_memory_MemAvailable_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "available",
           "range": true,
           "refId": "B"
@@ -897,7 +897,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "expr": "node_memory_MemTotal_bytes{service_namespace=\"groovemap\"} - node_memory_MemAvailable_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "used",
           "range": true,
           "refId": "C"
@@ -984,7 +984,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_load1",
+          "expr": "node_load1{service_namespace=\"groovemap\"}",
           "legendFormat": "1m",
           "range": true,
           "refId": "A"
@@ -995,7 +995,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_load5",
+          "expr": "node_load5{service_namespace=\"groovemap\"}",
           "legendFormat": "5m",
           "range": true,
           "refId": "B"
@@ -1006,7 +1006,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "node_load15",
+          "expr": "node_load15{service_namespace=\"groovemap\"}",
           "legendFormat": "15m",
           "range": true,
           "refId": "C"
@@ -1093,7 +1093,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (device) (rate(node_disk_read_bytes_total[$__rate_interval]))",
+          "expr": "sum by (device) (rate(node_disk_read_bytes_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "{{device}} read",
           "range": true,
           "refId": "A"
@@ -1104,7 +1104,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (device) (rate(node_disk_written_bytes_total[$__rate_interval]))",
+          "expr": "sum by (device) (rate(node_disk_written_bytes_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "{{device}} written",
           "range": true,
           "refId": "B"
@@ -1191,7 +1191,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"}",
+          "expr": "1 - node_filesystem_avail_bytes{service_namespace=\"groovemap\", fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{service_namespace=\"groovemap\", fstype!~\"tmpfs|overlay|squashfs\"}",
           "legendFormat": "{{mountpoint}}",
           "range": true,
           "refId": "A"
@@ -1236,7 +1236,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(container_last_seen, container_label_com_docker_compose_service)",
+        "definition": "label_values(container_last_seen{service_namespace=\"groovemap\"}, container_label_com_docker_compose_service)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
@@ -1245,7 +1245,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(container_last_seen, container_label_com_docker_compose_service)",
+          "query": "label_values(container_last_seen{service_namespace=\"groovemap\"}, container_label_com_docker_compose_service)",
           "refId": "serviceVariable"
         },
         "refresh": 2,
