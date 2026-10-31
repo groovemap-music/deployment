@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 
 from tests.deploy import test_deploy, test_discogs_import_status
 from tests.deploy.test_deploy import PROD, Deploy, helpers
@@ -1563,3 +1564,141 @@ def test_postgres_defaults_to_verify_full_everywhere_never_verify_ca(tmp_path: P
     assert defaults == {"verify-full"}
     assert 'sslmode="${PGSSLMODE:-verify-full}"' in (ROOT / "scripts" / "store-check-postgres.sh").read_text()
     assert stores.DEFAULT_SSLMODE == "verify-full"
+
+
+# --- every service that talks to an external store ---------------------------------------
+
+ASSET = ROOT / "skills" / "groovemap-homelab" / "assets" / "override-external-store-network.yml"
+SKILL_REFERENCES = ROOT / "skills" / "groovemap-homelab" / "references"
+STORE_ENV_KEYS = {
+    "postgres": ("POSTGRES_HOST", "PGHOST"),
+    "valkey": ("VALKEY_HOST", "VALKEY_HEALTH_ADDRESS"),
+}
+
+
+def _rendered_clients(render: dict[str, Any], store: str) -> set[str]:
+    """Services the overlays point at the external server: those with its host in their environment."""
+    marker = EXTERNAL_ENV[f"EXTERNAL_{store.upper()}_HOST"]
+    found = set()
+    for name, service in render["services"].items():
+        if "local-stores" in service.get("profiles", []):
+            continue
+        environment = service.get("environment", {})
+        if any(marker in str(environment.get(key, "")) for key in STORE_ENV_KEYS[store]):
+            found.add(name)
+    return found
+
+
+@pytest.mark.parametrize("store", stores.STORES)
+def test_the_client_list_is_exactly_the_services_the_overlays_point_at_the_store(external_render: dict[str, Any], store: str) -> None:
+    assert _rendered_clients(external_render, store) == set(stores.STORE_CLIENTS[store])
+    assert stores.STORE_CHECK_SERVICES[store] in stores.STORE_CLIENTS[store]
+    assert _store_dependents(external_render, store) <= set(stores.STORE_CLIENTS[store])
+
+
+def test_the_gate_and_latch_helper_path_runs_in_a_listed_client() -> None:
+    argv = stores.psql_argv(["docker", "compose"], "SELECT 1", stores.Stores("external", "local"))
+    assert stores.STORE_CHECK_SERVICES["postgres"] in argv
+    assert stores.STORE_CHECK_SERVICES["postgres"] in stores.STORE_CLIENTS["postgres"]
+
+
+def test_the_network_example_attaches_exactly_the_clients_of_each_store() -> None:
+    example = yaml.safe_load(ASSET.read_text())
+    attached = {store: {name for name, service in example["services"].items() if store in service["networks"]} for store in stores.STORES}
+    assert attached == {store: set(stores.STORE_CLIENTS[store]) for store in stores.STORES}
+    assert {name: network["external"] for name, network in example["networks"].items()} == {"postgres": True, "valkey": True}
+
+
+@pytest.mark.parametrize("document", ["override.md", "shared-services.md", "discovery.md"])
+def test_every_skill_reference_lists_every_store_client(document: str) -> None:
+    text = (SKILL_REFERENCES / document).read_text()
+    for store in stores.STORES:
+        missing = [name for name in stores.STORE_CLIENTS[store] if f"`{name}`" not in text]
+        assert not missing, f"{document} omits {store} clients {missing}"
+    assert "override-external-store-network.yml" in text or document == "discovery.md"
+
+
+def _asset_override_render() -> tuple[dict[str, Any], dict[str, Any]]:
+    both = (POSTGRES_OVERLAY, VALKEY_OVERLAY)
+    before = json.loads(_render(*both, env=EXTERNAL_ENV))
+    after = json.loads(_render(*both, str(ASSET), env=EXTERNAL_ENV))
+    return before, after
+
+
+def test_the_override_check_accepts_the_network_example_and_every_client_joins_both_networks() -> None:
+    before, after = _asset_override_render()
+    assert [finding.level for finding in helpers.check_override(before, after)] == ["ok"]
+    for store, network in (("postgres", "postgres_network"), ("valkey", "valkey_network")):
+        for name in stores.STORE_CLIENTS[store]:
+            assert network in helpers.service_networks(after, name), (store, name)
+            assert "groovemap" in set(after["services"][name]["networks"]), name  # merged, not replaced
+
+
+def test_the_data_tier_stays_pinned_and_rewiring_still_stops_beside_the_example() -> None:
+    before, after = _asset_override_render()
+    pinned = json.loads(json.dumps(after))
+    pinned["services"]["neo4j"]["networks"] = {**pinned["services"]["neo4j"]["networks"], "postgres": None}
+    assert any(finding.level == "stop" and "neo4j" in finding.message for finding in helpers.check_override(before, pinned))
+    rewired = json.loads(json.dumps(after))
+    rewired["services"]["store-check-postgres"]["environment"]["PGHOST"] = "elsewhere"
+    assert any(finding.level == "stop" for finding in helpers.check_override(before, rewired))
+
+
+# --- a check container that cannot reach the store's network -----------------------------
+
+UNRESOLVED = 'psql: error: could not translate host name "db.lan" to address: Name or service not known\n'
+
+
+def test_the_failure_message_names_the_store_host_service_and_networks(external_render: dict[str, Any]) -> None:
+    message = helpers.store_check_failure("postgres", UNRESOLVED, external_render, EXTERNAL_ENV, {})
+    assert message is not None
+    for expected in (
+        "PostgreSQL",
+        "db.lan",
+        "store-check-postgres",
+        "groovemap",
+        "attach store-check-postgres",
+        "override-external-store-network.yml",
+    ):
+        assert expected in message
+    for client in stores.STORE_CLIENTS["postgres"]:
+        assert client in message
+    valkey = helpers.store_check_failure(
+        "valkey", "Could not connect to Valkey at cache.lan:6379: Connection refused", external_render, EXTERNAL_ENV, {}
+    )
+    assert valkey is not None
+    assert "cache.lan" in valkey and "store-check-valkey" in valkey
+
+
+def test_only_a_resolve_or_connect_failure_gets_the_network_hint(external_render: dict[str, Any]) -> None:
+    for output in ("FATAL: password authentication failed for user", "refusing: PostgreSQL 16 is older than 18", "TLS certificate verify failed"):
+        assert helpers.store_check_failure("postgres", output, external_render, EXTERNAL_ENV, {}) is None
+
+
+def test_a_check_container_missing_the_stores_network_fails_closed_and_says_how_to_fix_it(external: ExternalDeploy, tmp_path: Path) -> None:
+    render = tmp_path / "render.json"
+    render.write_text(_render(POSTGRES_OVERLAY, VALKEY_OVERLAY, env=EXTERNAL_ENV))
+    result = external.run(FAKE_GATE="0", FAKE_GATE_WAIT="0", FAKE_STORE_CHECK="1", FAKE_STORE_CHECK_OUTPUT=UNRESOLVED, FAKE_RENDER_FILE=str(render))
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "store-check-postgres refused the external store" in result.stderr
+    assert "PostgreSQL host" in result.stderr and "did not resolve or accept a connection" in result.stderr
+    assert "store-check-postgres, which is on the network(s): " in result.stderr and "groovemap" in result.stderr
+    assert "attach store-check-postgres to that network" in result.stderr
+    assert external.ups == []
+    assert not any(call.startswith("gate") for call in external.calls)
+    assert "COMPOSE_PROFILES" not in external.env_values
+
+
+def test_a_refusal_by_the_server_itself_gets_no_network_hint(external: ExternalDeploy, tmp_path: Path) -> None:
+    render = tmp_path / "render.json"
+    render.write_text(_render(POSTGRES_OVERLAY, VALKEY_OVERLAY, env=EXTERNAL_ENV))
+    result = external.run(
+        FAKE_GATE="0",
+        FAKE_GATE_WAIT="0",
+        FAKE_STORE_CHECK="1",
+        FAKE_STORE_CHECK_OUTPUT="FATAL: password authentication failed\n",
+        FAKE_RENDER_FILE=str(render),
+    )
+    assert result.returncode == 3
+    assert "refused the external store" in result.stderr
+    assert "did not resolve" not in result.stderr

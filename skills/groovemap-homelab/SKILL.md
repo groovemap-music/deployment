@@ -227,6 +227,8 @@ Inside the checkout:
    The check denies unknown keys on added services, host-access keys on existing ones, and
    mounts of the Docker socket, sensitive host paths or another service's data volume. A
    backup sidecar (it reads `postgres_data`) needs `OVERRIDE_ALLOW_SERVICES` in `.env`.
+   For an external store on its own Docker network, attach every client of it, the store-check
+   one-shots included (`assets/override-external-store-network.yml`).
 4. `just secrets-bootstrap` writes the missing `secrets/` files and never replaces existing
    ones.
 5. Validate the merge without starting anything:

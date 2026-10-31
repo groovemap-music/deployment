@@ -1144,7 +1144,7 @@ case "$*" in
   *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
   *"-f docker-compose.override.yml --profile * config --format json") printf '%s' "${FAKE_RENDER_OVERRIDE:-$empty}" ;;
   *"exec -T postgres sh -c"* | *"run --rm --no-deps -T store-check-postgres sh -c"*) printf '%s' "${FAKE_LATCH:-}"; [[ -n "${FAKE_LATCH:-}" ]] || exit 1 ;;
-  *"run --rm --no-deps -T store-check-"*) exit "${FAKE_STORE_CHECK:-0}" ;;
+  *"run --rm --no-deps -T store-check-"*) printf '%s' "${FAKE_STORE_CHECK_OUTPUT:-}"; exit "${FAKE_STORE_CHECK:-0}" ;;
   *"--profile * config --format json") if [[ -n "${FAKE_RENDER_FILE:-}" ]]; then cat "$FAKE_RENDER_FILE"; else printf '%s' "${FAKE_RENDER:-$empty}"; fi ;;
 esac
 exit 0

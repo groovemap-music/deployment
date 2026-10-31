@@ -121,6 +121,12 @@ Only for a store whose floor is met, and only with the user's approval at each s
    both; the operator also writes `secrets/postgres_ca.crt` and `secrets/valkey_ca.crt`. Set a
    cleartext opt-out only when the user asks for it after hearing the risk. The server must be reachable from containers: a LAN address,
    or `host.docker.internal` for one on the Docker host.
+   If the server is a container on its own Docker network (`EXTERNAL_*_HOST` is a container name),
+   the override must attach **every** client of that store to the network. PostgreSQL:
+   `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`. Valkey: `api`, `dashboard`, `insights` and `store-check-valkey`. Start from
+   [`assets/override-external-store-network.yml`](../assets/override-external-store-network.yml)
+   ([override.md](override.md#attaching-to-an-existing-stores-network)). A host that is a LAN
+   address or `host.docker.internal` needs none.
 4. **`just deploy --no-wait`.** It checks the settings, the floors and the secrets, adds the
    overlays, and runs `store-check-postgres` and `store-check-valkey` before anything starts.
    A `[stop]` line or a `FAILED:` line names the fix; read it to the user.
