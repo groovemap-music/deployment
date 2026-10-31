@@ -582,14 +582,99 @@ def _mount_id(mount: Mapping[str, Any]) -> tuple[str, str, str]:
     return (str(mount.get("type") or "volume"), str(mount.get("source") or ""), str(mount.get("target") or ""))
 
 
-def _volume_owners(before: Mapping[str, Any]) -> dict[str, set[str]]:
-    """Each named volume of the base stack and the services that mount it (an unmounted one has none)."""
-    owners: dict[str, set[str]] = {name: set() for name in before.get("volumes") or {}}
+def _device_path(definition: Mapping[str, Any]) -> str:
+    """The normalized host directory a bind-backed named volume (`driver_opts.device`) lives in, or ''."""
+    device = str((definition.get("driver_opts") or {}).get("device") or "")
+    return posixpath.normpath(device) if device.startswith("/") else ""
+
+
+def _engine_names(key: str, definitions: Mapping[str, Any], project: str) -> set[tuple[str, str]]:
+    """What the engine calls a volume: its name (`<project>_<key>` unless named or external) and its device path."""
+    definition = definitions.get(key) or {}
+    if definition.get("external"):
+        name = str(definition.get("name") or key)
+    else:
+        name = str(definition.get("name") or (f"{project}_{key}" if project else key))
+    names = {("volume", name)}
+    if _device_path(definition):
+        names.add(("path", _device_path(definition)))
+    return names
+
+
+def _overlaps(first: str, second: str) -> bool:
+    return first == second or first.startswith(second + "/") or second.startswith(first + "/")
+
+
+@dataclass
+class Ownership:
+    """Who owns which engine volume names and host paths, from the base render and the override's relocations."""
+
+    names: dict[tuple[str, str], set[str]]
+    paths: dict[tuple[str, str], set[str]]  # (host path, tag of the volume or mount that lives there) -> owners
+
+
+def _ownership(before: Mapping[str, Any], after: Mapping[str, Any]) -> Ownership:
+    project = str(before.get("name") or after.get("name") or "")
+    base_definitions, definitions = before.get("volumes") or {}, after.get("volumes") or {}
+    owned = Ownership({}, {})
+    for key in base_definitions:
+        for ident in _engine_names(key, base_definitions, project):
+            if ident[0] == "volume":
+                owned.names.setdefault(ident, set())
     for name, service in (before.get("services") or {}).items():
+        targets = set()
         for mount in _mounts(service):
             if mount.get("type", "volume") == "volume" and mount.get("source"):
-                owners.setdefault(str(mount["source"]), set()).add(name)
-    return owners
+                key = str(mount["source"])
+                targets.add(str(mount.get("target") or ""))
+                for ident in _engine_names(key, base_definitions, project):
+                    if ident[0] == "volume":
+                        owned.names.setdefault(ident, set()).add(name)
+                for defs in (base_definitions, definitions):
+                    path = _device_path(defs.get(key) or {})
+                    if path:
+                        owned.paths.setdefault((path, f"volume:{key}"), set()).add(name)
+        for mount in _mounts((after.get("services") or {}).get(name) or {}):
+            if mount.get("type") == "bind" and str(mount.get("target") or "") in targets and mount.get("source"):
+                owned.paths.setdefault((posixpath.normpath(str(mount["source"])), f"bind:{name}:{mount.get('target')}"), set()).add(name)
+    return owned
+
+
+def _check_path_collisions(owned: Ownership) -> list[Finding]:
+    """Two different volumes (of different services) may not live in overlapping host directories."""
+    findings = []
+    entries = sorted(owned.paths.items())
+    for index, ((first, first_tag), first_owners) in enumerate(entries):
+        for (second, second_tag), second_owners in entries[index + 1 :]:
+            if first_tag != second_tag and not first_owners & second_owners and _overlaps(first, second):
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} puts the data of {', '.join(sorted(first_owners))} ({first}) "
+                        f"and {', '.join(sorted(second_owners))} ({second}) in overlapping host paths",
+                        "Give each service its own directory. This rule has no opt-in.",
+                    )
+                )
+    return findings
+
+
+def _check_volume_definitions(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Finding]:
+    """Stop name, external or driver changes on the stack's own top-level volumes; driver_opts may move them."""
+    findings = []
+    definitions = after.get("volumes") or {}
+    for key, old in (before.get("volumes") or {}).items():
+        new = definitions.get(key) or {}
+        for field, normal in (("name", lambda v: v), ("external", bool), ("driver", lambda v: v or "local")):
+            if normal(old.get(field) if old else None) != normal(new.get(field)):
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} changes {field} of the volume {key}",
+                        "Remove it: re-pointing a stack volume at another engine volume could swap or expose its data. "
+                        "Only driver_opts (the data's location) may change. This rule has no opt-in.",
+                    )
+                )
+    return findings
 
 
 def _check_mounts(
@@ -598,45 +683,71 @@ def _check_mounts(
     previous: Mapping[str, Any],
     before: Mapping[str, Any],
     after: Mapping[str, Any],
-    owners: Mapping[str, set[str]],
+    owned: Ownership,
     new: bool,
 ) -> list[Finding]:
     """Stop mounts that reach the host or another service's data; a service's own volume may move."""
     findings = []
     known = {_mount_id(mount) for mount in _mounts(previous)}
     definitions, base_definitions = after.get("volumes") or {}, before.get("volumes") or {}
+    project = str(before.get("name") or after.get("name") or "")
     who = f"{name} service" if new else name
+    sensitive = "host paths such as the Docker socket, /etc, /proc or /"
+
+    def path_owner(path: str) -> tuple[str, set[str]] | None:
+        for (other, _tag), owners in sorted(owned.paths.items()):
+            if _overlaps(path, other) and name not in owners:
+                return other, owners
+        return None
+
     for mount in _mounts(service):
         kind, source, _ = _mount_id(mount)
         fresh = _mount_id(mount) not in known
         if kind == "bind":
             if fresh and sensitive_host_path(source):
                 findings.append(
+                    Finding("stop", f"{OVERRIDE_FILE} mounts the sensitive host path {source} into {who}", _volume_hint(new, name, sensitive))
+                )
+            elif fresh and (clash := path_owner(posixpath.normpath(source))):
+                findings.append(
                     Finding(
                         "stop",
-                        f"{OVERRIDE_FILE} mounts the sensitive host path {source} into {who}",
-                        _volume_hint(new, name, "host paths such as the Docker socket, /etc, /proc or /"),
+                        f"{OVERRIDE_FILE} mounts the host path {source}, where the data of {', '.join(sorted(clash[1]))} lives ({clash[0]}), into {who}",
+                        _volume_hint(new, name, "another service's data directory"),
                     )
                 )
         elif kind == "volume":
-            if source in owners and fresh and name not in owners[source]:
-                holders = ", ".join(sorted(owners[source])) or "no service"
-                findings.append(
-                    Finding(
-                        "stop",
-                        f"{OVERRIDE_FILE} mounts the stack volume {source} (used by {holders}) into {who}",
-                        _volume_hint(new, name, "another service's data volume"),
+            definition = definitions.get(source) or {}
+            if fresh or definition != (base_definitions.get(source) or {}):
+                for ident in sorted(_engine_names(source, definitions, project)):
+                    if ident[0] == "volume" and ident in owned.names and name not in owned.names[ident]:
+                        holders = ", ".join(sorted(owned.names[ident])) or "no service"
+                        alias = f" as {source}" if ident[1] not in (source, f"{project}_{source}") else ""
+                        findings.append(
+                            Finding(
+                                "stop",
+                                f"{OVERRIDE_FILE} mounts the stack volume {ident[1]}{alias} (used by {holders}) into {who}",
+                                _volume_hint(new, name, "another service's data volume"),
+                            )
+                        )
+                device = _device_path(definition)
+                if device and sensitive_host_path(device):
+                    findings.append(
+                        Finding(
+                            "stop",
+                            f"{OVERRIDE_FILE} backs the volume {source} of {who} with the sensitive host path {device}",
+                            _volume_hint(new, name, sensitive),
+                        )
                     )
-                )
-            device = str(((definitions.get(source) or {}).get("driver_opts") or {}).get("device") or "")
-            if source and device and (definitions.get(source) or {}) != (base_definitions.get(source) or {}) and sensitive_host_path(device):
-                findings.append(
-                    Finding(
-                        "stop",
-                        f"{OVERRIDE_FILE} backs the volume {source} of {who} with the sensitive host path {device}",
-                        _volume_hint(new, name, "host paths such as the Docker socket, /etc, /proc or /"),
+                elif device and (clash := path_owner(device)):
+                    findings.append(
+                        Finding(
+                            "stop",
+                            f"{OVERRIDE_FILE} backs the volume {source} of {who} with {device}, "
+                            f"where the data of {', '.join(sorted(clash[1]))} lives ({clash[0]})",
+                            _volume_hint(new, name, "another service's data directory"),
+                        )
                     )
-                )
         elif kind != "tmpfs":
             findings.append(
                 Finding(
@@ -746,7 +857,8 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
     """
     findings = []
     rendered = after.get("services") or {}
-    owners = _volume_owners(before)
+    owners = _ownership(before, after)
+    findings += _check_volume_definitions(before, after) + _check_path_collisions(owners)
     for name, service in (before.get("services") or {}).items():
         if name not in rendered:
             findings.append(Finding("stop", f"{OVERRIDE_FILE} removes the {name} service", "Leave the stack's services in place."))
