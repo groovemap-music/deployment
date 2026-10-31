@@ -67,11 +67,53 @@ Ask whether the user keeps homelab configuration in Ansible, Nix or a git reposi
 updaters such as Watchtower must not touch GrooveMap's containers: images are pinned by digest
 and change only through `just env-init` ([stack-managers.md](stack-managers.md)).
 
-## Existing databases
+## Existing PostgreSQL, PgBouncer, Valkey and Redis
 
-From the `docker ps` output, note containers running `postgres`, `neo4j`, `rabbitmq`, `redis`,
-`valkey`, `keydb` or `dragonfly` images, and the host ports they publish. GrooveMap won't use
-them (SKILL.md explains why). They matter only when their host ports collide with GrooveMap's.
+From the `docker ps` output, note containers running `postgres`, `pgbouncer`, `redis`, `valkey`,
+`keydb` or `dragonfly` images (Neo4j and RabbitMQ are always dedicated) and the host ports they
+publish. These checks are read-only and never need a secret. Never print `docker inspect`
+output that includes `.Config.Env`, never read a `secrets/` or `.env` file of another stack, and
+never run anything that writes. Discovery is not authorization to reuse any of it
+([shared-services.md](shared-services.md)).
+
+Without credentials (the agent may run these):
+
+```bash
+# image, version tag/digest, status, networks and compose project, with no environment
+docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}\t{{.Networks}}' \
+  | grep -Ei 'postgres|pgbouncer|redis|valkey|keydb|dragonfly'
+docker inspect <name> --format '{{.Config.Image}} {{json .Config.Labels}} {{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'
+docker inspect <name> --format '{{range .Mounts}}{{.Name}} {{.Destination}}{{println}}{{end}}'   # volumes: persistence on disk?
+docker inspect <name> --format '{{.HostConfig.Memory}} {{.HostConfig.RestartPolicy.Name}}'      # container memory limit (0 = none)
+docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.MemPerc}}' <name>                 # memory headroom
+```
+
+`docker inspect` without `--format` prints `Config.Env`, which usually holds passwords: always
+pass `--format`, and leave `.Config.Env` out. To classify an instance, count what uses it:
+the containers on its networks (`docker network inspect <net> --format '{{range .Containers}}{{.Name}} {{end}}'`)
+and the compose projects of those containers. One application's project name or a single
+consumer means **dedicated to another application**. Several unrelated projects, or a name or
+label such as `shared`, means **shared infrastructure**. Report both as a judgment and let the
+user correct it.
+
+Needs the operator (ask them to run it in their own session, or to authorize read access
+first; the agent never supplies or reads the password):
+
+| What | Command (run by the operator) | Look for |
+| --- | --- | --- |
+| PostgreSQL version | `SELECT version();` | 18 required |
+| Available extensions | `SELECT name FROM pg_available_extensions WHERE name IN ('pg_trgm','vector');` | both present |
+| Connections | `SHOW max_connections;` and `SELECT count(*) FROM pg_stat_activity;` | headroom for GrooveMap's connection budget |
+| Role privileges | `SELECT rolcreatedb, rolcreaterole, rolsuper FROM pg_roles WHERE rolname = current_user;` | what `schema-init` could use |
+| PgBouncer pool mode | `SHOW CONFIG;` on the PgBouncer admin console (`pool_mode`) | `session` only |
+| PgBouncer limits | `SHOW POOLS;` and `SHOW CONFIG;` (`default_pool_size`, `max_client_conn`) | headroom |
+| Valkey version, persistence | `INFO server`, `INFO persistence` (`aof_enabled`) | supported version, AOF on |
+| Valkey eviction, memory | `CONFIG GET maxmemory-policy`, `CONFIG GET maxmemory`, `INFO memory` | `noeviction`, headroom |
+| Valkey auth | whether an unauthenticated `PING` is refused (the operator runs it; report only yes or no) | authentication on |
+| Valkey other users | `INFO keyspace` | which databases hold keys |
+
+Report auth as on or off and never its value. Connection counts and memory are a snapshot, not
+a forecast: say so.
 
 ## Networks
 

@@ -280,6 +280,29 @@ Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOS
 values it drops, and the backup still has them.
 `.env` is created private (mode 0600); a rewrite and its backup keep the mode the file already has.
 
+## Existing PostgreSQL and Valkey
+
+The agent skill discovers existing PostgreSQL, PgBouncer, Valkey and Redis instances read-only
+(versions, networks, connections, memory, eviction policy, persistence, PgBouncer pool mode),
+never displays credentials and never modifies them. When PostgreSQL and Valkey both exist, it
+asks: "This homelab already has PostgreSQL and Valkey. Would you prefer GrooveMap to reuse
+compatible existing services, or run dedicated instances?" It recommends dedicated instances;
+discovery alone never authorizes reusing anything.
+
+**Reusing existing services is not deployable today** (`gm-deployment-e1uh`). The deploy gate
+and its probes read the stack's own `postgres` container; the local stores cannot be removed;
+`schema-init` needs `CREATE DATABASE`, `CREATE ROLE` and `CREATE EXTENSION`; and Valkey has no
+key prefix or DB-index setting yet. Reuse would also need a separate database and role, a
+session-mode PgBouncer (catalog-api holds a session-level advisory lock), and a Valkey with
+`noeviction` and AOF (a separate logical database is not a security boundary). `just deploy`
+refuses an override that rewires either store, with no opt-in
+([the override check](#the-override-and-its-safety-check)). The upstream work is tracked by
+`gm-deployment-e1uh`, `gm-python-libraries-3sm`, `gm-catalog-api-rchs`,
+`gm-analytics-engine-bah5` and `gm-database-schema-2aty`. Until you choose dedicated instances
+or it lands, the skill keeps the deployment stopped. Secrets stay in encrypted storage, and
+nothing is applied without your explicit approval. Details:
+[shared-services.md](../skills/groovemap-homelab/references/shared-services.md).
+
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.
@@ -299,6 +322,8 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   measurement. See [Hardware and sizing](#hardware-and-sizing).
 - **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See
   [Later cycles](#later-cycles).
+- **Existing PostgreSQL and Valkey cannot be reused yet.** See
+  [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations
