@@ -34,6 +34,15 @@ changes any of these on a GrooveMap service:
 | `ports`, `network_mode` on postgres, neo4j, rabbitmq, valkey, victoria-metrics, victoria-traces | Data-tier ports move only through `.env` bind addresses and `*_HOST_PORT` |
 | `networks`, `labels`, `extra_hosts` on the same six data-tier services | Proxy networks, Traefik TCP routers and hosts entries would expose or redirect the data tier. Attach only `explore`, `dashboard` and `grafana` (or `api`) to a proxy network |
 
+It also stops, with no opt-in, if the override points a service at an external PostgreSQL or
+Valkey: a change on any service to `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`,
+`POSTGRES_USERNAME`, `VALKEY_HOST`, `VALKEY_PORT` or their `_FILE` variants (set directly or through
+`env_file`, which Compose inlines into the render), or to the source of a `postgres_*` or
+`valkey_*` secret. The message reads "External PostgreSQL and Valkey are not supported yet" and
+cites `gm-deployment-e1uh` and `docs/homelab.md`: the deploy gate and the MusicBrainz latch probe
+read the stack's own `postgres` container, so a rewired service would leave the gate watching an
+unused database. `POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` (published host ports) are unaffected.
+
 It also stops if the override removes a service, or redefines a top-level network that a
 data-tier service uses (`name`, `external`, `driver`, `attachable`, `internal`, `driver_opts`):
 that would move the data tier onto another network without touching any service. Changing the

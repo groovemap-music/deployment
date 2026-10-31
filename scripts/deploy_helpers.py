@@ -121,6 +121,16 @@ OVERRIDE_DATA_TIER_ISOLATED = (
     ("labels", "reverse-proxy labels (Traefik TCP routers included) could publish the data tier; route only explore, dashboard and grafana"),
     ("extra_hosts", "hosts entries could redirect the data tier's peers"),
 )
+# How a service finds PostgreSQL and Valkey (the optional prefix covers EMBEDDING_PIPELINE_POSTGRES_*).
+# POSTGRES_HOST_PORT and VALKEY_HOST_PORT publish a port on the host and are not matched.
+STORE_CONNECTION = re.compile(r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABASE|USERNAME)|VALKEY_(?:HOST|PORT))(?:_FILE)?$")
+STORE_SECRET = re.compile(r"^(?:postgres|valkey)_")
+EXTERNAL_STORES_EPIC = "gm-deployment-e1uh"
+EXTERNAL_STORES_HINT = (
+    "External PostgreSQL and Valkey are not supported yet: the deploy gate and its probes read this stack's own postgres container, "
+    "so pointing a service elsewhere would leave the Discogs-before-MusicBrainz gate reading an unused database. "
+    f"Remove it and use the stack's dedicated stores. See {EXTERNAL_STORES_EPIC} and docs/homelab.md. This rule has no opt-in."
+)
 # Services the override adds need a sha256 digest, and may publish ports or join groovemap only
 # when named in this variable (in .env or the shell), comma-separated.
 OVERRIDE_ALLOW_VARIABLE = "OVERRIDE_ALLOW_SERVICES"
@@ -864,6 +874,41 @@ def _check_data_tier_networks(before: Mapping[str, Any], after: Mapping[str, Any
     return findings
 
 
+def _secret_sources(service: Mapping[str, Any]) -> dict[str, str]:
+    """Secret target -> source name for a rendered service (short-form entries are their own target)."""
+    mapping = {}
+    for secret in service.get("secrets") or []:
+        pair = secret if isinstance(secret, dict) else {"source": secret}
+        source = str(pair.get("source") or "")
+        mapping[str(pair.get("target") or source)] = source
+    return mapping
+
+
+def _check_external_stores(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Finding]:
+    """Stop an override that rewires a stack service's PostgreSQL or Valkey connection or credential secret.
+
+    The render inlines env_file into environment, so comparing environment covers both routes.
+    """
+    findings = []
+    rendered = after.get("services") or {}
+    for name, service in (before.get("services") or {}).items():
+        changed = rendered.get(name)
+        if changed is None:
+            continue
+        old, new = service.get("environment") or {}, changed.get("environment") or {}
+        for variable in sorted(v for v in old.keys() | new.keys() if STORE_CONNECTION.match(v) and old.get(v) != new.get(v)):
+            findings.append(Finding("stop", f"{OVERRIDE_FILE} changes {variable} on {name}", EXTERNAL_STORES_HINT))
+        old_secrets, new_secrets = _secret_sources(service), _secret_sources(changed)
+        for target in sorted(old_secrets.keys() | new_secrets.keys()):
+            sources = (old_secrets.get(target, ""), new_secrets.get(target, ""))
+            if sources[0] != sources[1] and any(STORE_SECRET.match(source) for source in sources):
+                findings.append(Finding("stop", f"{OVERRIDE_FILE} changes the {target} secret on {name}", EXTERNAL_STORES_HINT))
+    old_top, new_top = before.get("secrets") or {}, after.get("secrets") or {}
+    for secret in sorted(k for k in old_top.keys() | new_top.keys() if STORE_SECRET.match(k) and old_top.get(k) != new_top.get(k)):
+        findings.append(Finding("stop", f"{OVERRIDE_FILE} changes the {secret} secret", EXTERNAL_STORES_HINT))
+    return findings
+
+
 def check_override(
     before: Mapping[str, Any], after: Mapping[str, Any], allowed: frozenset[str] = frozenset(), resolve: bool = False
 ) -> list[Finding]:
@@ -934,7 +979,7 @@ def check_override(
                     )
                 )
         findings += _check_mounts(name, changed, service, before, after, owners, False)
-    findings += _check_data_tier_networks(before, after)
+    findings += _check_data_tier_networks(before, after) + _check_external_stores(before, after)
     for name, service in rendered.items():
         if name not in (before.get("services") or {}):
             mounts = [] if name in allowed else _check_mounts(name, service, {}, before, after, owners, True)

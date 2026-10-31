@@ -60,7 +60,11 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
 6. **Keep `secrets/` and `.env` out of git.** `.gitignore` already covers `.env`, `.env.*.bak`,
    `secrets/` and `docker-compose.override.yml`. Never commit, print or paste a secret value.
 7. **Never edit tracked files** (`docker-compose*.yml`, `scripts/`, `config/`, `.env.example`).
-8. **Ask before you change anything outside the checkout** (proxy configuration, directories
+8. **Never display credentials or modify an existing service.** Discovery of other PostgreSQL,
+   PgBouncer, Valkey and Redis instances is read-only: never print a password, token or
+   connection string, never run `FLUSH*`, `CONFIG SET` or any write against them, and never
+   treat discovery as permission to reuse them.
+9. **Ask before you change anything outside the checkout** (proxy configuration, directories
    on other disks, `daemon.json`, firewall, DNS, systemd units) **and before you start
    containers.**
 
@@ -108,16 +112,53 @@ Run the read-only checks in [references/discovery.md](references/discovery.md). 
 - existing Docker networks, and whether any overlaps GrooveMap's `172.20.0.0/16` subnet;
 - occupied host ports that collide with GrooveMap's defaults;
 - how the user manages stacks (plain Compose, Portainer, Dockge, Komodo, systemd, Ansible);
-- existing PostgreSQL, Neo4j, RabbitMQ, Valkey or Redis containers.
+- existing PostgreSQL, PgBouncer, Neo4j, RabbitMQ, Valkey or Redis containers, and whether each is shared infrastructure or dedicated to another application.
 
-**GrooveMap runs its own databases.** Don't connect it to the user's existing ones. Its images
-are pinned by digest to versions it is tested with: PostgreSQL 18, Neo4j 2026.10 Community
-with APOC, RabbitMQ 4 with its own plugin set and dead-letter policy, and Valkey 9.1.
-`schema-init` owns the schemas, roles and extensions and expects empty stores it controls.
-Neo4j Community has a single user database, so two applications would share one graph. The
-production overlay sizes Neo4j and PostgreSQL for this workload and wires their credentials
-from `secrets/`. Existing database containers matter only because their host ports may
-collide.
+**GrooveMap's images are tested with their own databases.** They are pinned by digest to
+PostgreSQL 18, Neo4j 2026.10 Community with APOC, RabbitMQ 4 with its own plugin set and
+dead-letter policy, and Valkey 9.1. `schema-init` owns the schemas, roles and extensions.
+Neo4j Community has a single user database, so two applications would share one graph, and
+Neo4j and RabbitMQ are always dedicated. Existing PostgreSQL, PgBouncer, Valkey and Redis
+instances get the extra read-only discovery in
+[references/discovery.md](references/discovery.md#existing-postgresql-pgbouncer-valkey-and-redis),
+which classifies each as shared infrastructure or dedicated to another application.
+
+### 2a. Ask: reuse or dedicated (only when PostgreSQL and Valkey already exist)
+
+When discovery finds an existing PostgreSQL **and** an existing Valkey (or Redis), ask the
+user exactly this, before proposing any deployment:
+
+> This homelab already has PostgreSQL and Valkey. Would you prefer GrooveMap to reuse compatible existing services, or run dedicated instances?
+
+If only one of the two exists, adapt the wording to name that one and say that the other is
+dedicated either way. If neither exists, do not ask: the stack's own stores are the only option.
+Then explain both options, recommend one, and wait for the answer:
+
+- **Dedicated instances (what the stack deploys today).** Compatible by construction, isolated,
+  sized by the production overlay, and the only option the tooling supports. Cost: a few
+  more containers and their memory, and one more PostgreSQL and Valkey to back up.
+- **Reuse compatible existing services.** Saves memory and a backup target, but needs a
+  separate GrooveMap database and dedicated role, a connection budget, PgBouncer in session
+  mode only, a Valkey that is `noeviction` with AOF and not shared with another
+  application, and operator-run changes on services GrooveMap does not own.
+  **Reuse is not deployable today** (blockers in
+  [references/shared-services.md](references/shared-services.md#current-status-not-deployable)).
+
+Recommendation rule: recommend **dedicated** unless every one of compatibility (PostgreSQL 18
+with `pg_trgm` and `vector` available; Valkey with the needed version), isolation (an instance
+no other application depends on, or a dedicated database and role), capacity (connection and
+memory headroom) and operational impact (the operator owns its upgrades and restarts) passes.
+While reuse is not deployable, dedicated is the recommendation whatever the matrix says, and
+say why. Discovery is never authorization to reuse, connect to or reconfigure anything.
+
+What happens on each answer:
+
+- **Dedicated:** continue with step 3.
+- **Reuse:** explain that it is not deployable and name the blockers and
+  `gm-deployment-e1uh`. **Keep the deployment stopped**: write no override, start nothing.
+  Offer dedicated instances, or waiting until the upstream work lands. Never work around it
+  by editing connection variables in the override; the override check refuses that.
+- **No answer or unsure:** stay stopped and ask again. Never default to reuse.
 
 ### 3. Propose a plan and get approval
 
@@ -131,6 +172,8 @@ Present the plan before you write anything. Cover:
 - **Network:** a different subnet if `172.20.0.0/16` is taken.
 - **Stack manager:** how GrooveMap fits it. See
   [references/stack-managers.md](references/stack-managers.md).
+- **Stores:** the answer from step 2a. Reuse is not deployable (`gm-deployment-e1uh`), so the
+  plan uses dedicated instances.
 - **Changes outside the checkout:** each one listed separately, each needing a yes.
 - **Expectations:** the first load runs for hours to about two days on the reference hardware,
   longer on a small or emulated host.
@@ -252,6 +295,8 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
 
 - [references/discovery.md](references/discovery.md): read-only commands, and what to look for
   in their output.
+- [references/shared-services.md](references/shared-services.md): reusing an existing
+  PostgreSQL or Valkey: requirements, and why it is not deployable yet.
 - [references/override.md](references/override.md): how the override merges, what deploy
   rejects, restart policies, subnet.
 - [references/reverse-proxy.md](references/reverse-proxy.md): Traefik, Caddy, nginx, Nginx
