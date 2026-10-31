@@ -655,6 +655,10 @@ services:
       # interval, quiet and max-staleness settings keep catalog-api's defaults (see
       # .env.example and docs/configuration.md#identity-ledger-refresh).
       IDENTITY_LEDGER_REFRESH_ENABLED: "true"
+      # Post-import identity healing. catalog-api re-attaches load-order-split catalog items and
+      # projects gm_id by itself once per completed Discogs extraction, so later cycles converge
+      # without an operator running catalog-identity-reattach (docs/maintenance.md).
+      IDENTITY_AUTO_REATTACH_ENABLED: "true"
     ports:
       - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HOST_PORT:-8004}:8004"
       - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HEALTH_HOST_PORT:-8005}:8005"

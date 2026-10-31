@@ -44,7 +44,7 @@ The native-identity and first-party-events program
 changed both `catalog-api` and `database-schema`. Both releases are now cut:
 `database-schema` `v0.3.0` and `catalog-api` `v0.2.0` first carried the identity and
 activity work. `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py` now records
-`database-schema` `v0.5.0` and `catalog-api` `v0.4.0`, and those manifest digests are
+`database-schema` `v0.6.0` and `catalog-api` `v0.6.0`, and those manifest digests are
 recorded as reviewed there and in
 [Recorded release digests](#recorded-release-digests) below.
 
@@ -100,29 +100,29 @@ Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 
 Matching consumer and schema images (Discogs SQL loader and graph enricher
-`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.5.0`, which creates `activity.event_idempotency` and `activity.purge_idempotency_keys`):
+`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda` |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
 | `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
 
-Reviewed catalog API image (`v0.4.0`):
+Reviewed catalog API image (`v0.6.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` |
+| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
 
-Reviewed console, explorer, and analytics images (`v0.1.1`):
+Reviewed console and explorer images (`v0.1.1`) and analytics image (`v0.5.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1` |
 | `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
-| `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69` |
+| `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
 
@@ -139,6 +139,56 @@ These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
 platform other than the one the release workflow published.
 
+### Promotion of catalog-api v0.6.0, analytics-engine v0.5.0 and database-schema v0.6.0 (2026-10-31)
+
+Each digest was resolved from its released tag on GHCR (the index digest, with a `linux/amd64`
+image manifest) and verified with `gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest>
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0 for all three). The
+unattested `database-schema` build `sha256:c5e65477…` was not used.
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `catalog-api:v0.6.0` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` | `v0.4.0` — `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` |
+| `analytics-engine:v0.5.0` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` | `v0.1.1` — `sha256:a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69` |
+| `database-schema:v0.6.0` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` | `v0.5.0` — `sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda` |
+
+The rollback digests are the previous pins, re-resolved against GHCR. `catalog-api` `v0.6.0`
+namespaces every Valkey key under `VALKEY_KEY_PREFIX` (default `groovemap:`) and bounds the upgrade
+from unprefixed keys with `VALKEY_LEGACY_KEYS` (default `read`, a 24-hour window), so rolling back
+to `v0.4.0` strands the prefixed keys it wrote (cache entries and revocations expire on their own).
+
+Compatibility with the pinned loaders and enrichers: `database-schema` `v0.5.0` to `v0.6.0`
+changes no DDL. Its diff touches `src/groovemap_schema/{initializer,postgres}.py` only to add the
+`POSTGRES_PREPROVISIONED` mode (the dedicated path is unchanged) and bumps `msgpack`;
+`contracts/persistence/v1/compatibility.json` changes only `application_runtime.tested_commit`. The
+discogs and musicbrainz SQL loaders and graph enrichers therefore see the schema they were
+reviewed against.
+
+The promotion also sets `IDENTITY_AUTO_REATTACH_ENABLED: "true"` on the `api` service and flips
+`EXTERNAL_STORE_FLOORS` to database-schema 0.6.0 (PostgreSQL) and catalog-api 0.6.0 with
+analytics-engine 0.5.0 (Valkey), so the external-stores mode is supported.
+
+Disposable smokes ran on an arm64 host with the internal images emulated as `linux/amd64`
+(`DOCKER_DEFAULT_PLATFORM` unset), the reviewed `.env` from `just env-init`, and a unique project
+name each (`gm-ew9k-released5`, `gm-ew9k-media`, `gm-ew9k-erasure2`):
+
+- `just smoke-released`: exit 0 for the whole stack, including `schema-init` twice (idempotent DDL),
+  every application service healthy, and a clean `stop`. It needed three local-only adjustments
+  that this repository does not carry, because the pinned MusicBrainz and console images predate
+  the Compose file: the `brainzgraphinator` and `brainztableinator` healthchecks probe `8011` and
+  `8010` (the Compose file probes `8001` and `8002`), the console needs `RABBITMQ_HOST`,
+  `RABBITMQ_USERNAME` and `RABBITMQ_PASSWORD` (it otherwise logs `ACCESS_REFUSED` as
+  `discogsography`), and a longer `start_period` for emulation. None involves a promoted image;
+  promoting those lagging images (`gm-deployment-lqar`) removes the need.
+- `just smoke-media`: 15/15 PASS, including the barcode lookup through `catalog-api` `v0.6.0`.
+- `just smoke-erasure`: 32/32 PASS. The first run failed `valkey recommendation keys present`
+  (9/10) because `catalog-api` `v0.6.0` writes `groovemap:recommend:…`, so the smoke's unprefixed
+  `recommend:*<user>*` pattern and seeded `snapshot:usercount:` key matched nothing the erasure
+  sweeps. `scripts/smoke_erasure.py` now carries the `groovemap:` prefix.
+- Teardown: each exit trap removed its stack; label-filtered `docker ps -a`, `docker volume ls` and
+  `docker network ls` returned no resources for any `gm-ew9k-*` project. No other Compose project
+  was touched.
+
 ### Identifier lookup verification (2026-09-21)
 
 The GHCR tag manifests for `linux/amd64` were checked before the disposable
@@ -150,8 +200,9 @@ smoke. The changed image index digests were:
 | `discogs-graph-enricher:v0.3.0` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` | `v0.2.0` — `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b` |
 | `catalog-api:v0.4.0` | `sha256:4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43` | `v0.2.0` — `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb` |
 
-`database-schema:v0.5.0` is pinned at
-`sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda`.
+`database-schema:v0.5.0` was pinned at
+`sha256:06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda`
+until the 2026-10-31 promotion below.
 Each tag resolved to its recorded index digest; each index contained a
 `linux/amd64` image manifest. The rollback tags were also re-resolved against
 GHCR, not just copied from an older document.
@@ -268,11 +319,14 @@ step you are about to take.
 **Later cycles.** `extractor-discogs` and `extractor-musicbrainz` each then run on their own
 periodic schedule (`PERIODIC_CHECK_DAYS`: 5 days and 3 days) with the same no-ordering
 behavior, so nothing in the stack today keeps a later Discogs cycle ahead of the MusicBrainz
-one it should precede — that is a known gap, not something this procedure enforces. What
-follows instead heals the resulting drift after the fact: run the re-attachment job below once
-the Discogs import for a cycle has completed and its consumer queues have drained, using the
-same `just discogs-import-status` check as above (or, for an admin-triggered re-run, the
-extraction history row reaching `completed`).
+one it should precede — that is a known gap, not something this procedure enforces. The
+re-attachment job below heals the resulting drift after the fact, and it runs by itself: this
+stack sets `IDENTITY_AUTO_REATTACH_ENABLED=true` on the `api` service, so `catalog-api` re-attaches
+and projects once per completed Discogs extraction. Do nothing by hand for a routine cycle. Run
+the manual steps only for a dry run, a forced re-run, a failed or interrupted automatic run, or
+a stack that sets the switch to `false`, and then once the Discogs import has completed and its
+consumer queues have drained, using the same `just discogs-import-status` check as above (or,
+for an admin-triggered re-run, the extraction history row reaching `completed`).
 
 The re-attachment job itself is owned by `catalog-api`
 ([ADR 0014 section 8](https://github.com/groovemap-music/design/blob/main/docs/adr/0014-cross-catalog-edition-candidates.md#8-split-linked-items-catalog-re-attachment-outside-the-matcher),
@@ -317,16 +371,17 @@ for the job's full rule, guards, and lock order.
 
    Alternative: `POST /api/admin/identity/project`.
 
-Run this sequence after the first full load and after every monthly Discogs import.
+The automatic watcher below runs this sequence after the first full load and after every
+Discogs import, so run it by hand only in the cases listed under **Later cycles** above.
 MusicBrainz publishes twice weekly and Discogs monthly, so new MusicBrainz-to-Discogs links
 keep arriving ahead of their Discogs targets between Discogs cycles.
 
-**Automatic alternative.** Set `IDENTITY_AUTO_REATTACH_ENABLED=true` on the `api` service
-(`groovemap-api`) — in `docker-compose.yml`'s `api` environment block, overridable in
-`docker-compose.prod.yml`'s — and `catalog-api` runs the re-attachment (apply) and then the
+**Automatic by default.** `docker-compose.yml` sets `IDENTITY_AUTO_REATTACH_ENABLED: "true"` on
+the `api` service (`groovemap-api`), inherited by the production and smoke overlays and
+overridable in `docker-compose.prod.yml`'s, so `catalog-api` runs the re-attachment (apply) and then the
 `gm_id` projection by itself, once per completed Discogs extraction, detected the same way as
 above from `loader_extraction_latch`. `IDENTITY_AUTO_REATTACH_INTERVAL` (seconds, default 300)
-sets how often it polls; the watcher is off by default and idles until the relation exists.
+sets how often it polls; the watcher idles until the relation exists.
 Every replica polls, but a PostgreSQL advisory lock and a handled marker in `admin_audit_log`
 keep a run to exactly once per extraction: the watcher writes its row first, before any
 identity write, as `identity.reattach.auto.started` (a run whose row cannot be written does

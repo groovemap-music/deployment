@@ -158,10 +158,11 @@ query fails, `just deploy` does not guess; it goes through the Discogs gate.
 
 After the first load the order cannot be strictly enforced: MusicBrainz publishes twice weekly
 and Discogs monthly, so new MusicBrainz links keep arriving ahead of their Discogs targets.
-Today you run the manual re-attach and projection after each Discogs import
-([maintenance](maintenance.md#post-import-identity-maintenance)). Automatic re-attachment
-ships in catalog-api v0.5.0. That version is published but not yet promoted in this repository;
-the promotion is tracked as gm-deployment-ew9k.
+catalog-api re-attaches and projects by itself after each completed Discogs extraction
+(`IDENTITY_AUTO_REATTACH_ENABLED` is `true` on the `api` service), so later cycles heal without
+an operator. The manual `catalog-identity-reattach` and `catalog-identity-projection` commands
+remain for a dry run, a forced re-run, or a stack that sets the switch to `false`
+([maintenance](maintenance.md#post-import-identity-maintenance)).
 
 ## Service map
 
@@ -297,18 +298,17 @@ authoritative in it: the gate and deploy's probes read the external database the
 to, an external store that cannot be reached or is wrong gives "cannot determine" or a refusal,
 and neither ever enables MusicBrainz.
 
-**Status: supported once the capability floors are met, which they are not yet.** `just deploy`
-refuses each external store (exit 3, nothing changed) until the reviewed release set pins images
-that support it, recorded as `EXTERNAL_STORE_FLOORS` beside `RELEASED_IMAGE_DIGESTS` in
-`scripts/check-images.py`:
+**Status: supported.** The reviewed release set meets the capability floors. `just deploy`
+refuses each external store (exit 3, nothing changed) unless `.env` pins images that support it,
+recorded as `EXTERNAL_STORE_FLOORS` beside `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py`:
 
-| Store | Needs | Upstream work | Today |
+| Store | Needs | Upstream work | Floor |
 | --- | --- | --- | --- |
-| PostgreSQL | database-schema with `POSTGRES_PREPROVISIONED` (verify the database, role and `pg_trgm` instead of creating them) | `gm-database-schema-2aty` | merged, not released or promoted |
-| Valkey | catalog-api and analytics-engine that apply `VALKEY_KEY_PREFIX` to every key and speak TLS (`VALKEY_TLS`) | `gm-python-libraries-3sm` and its TLS settings (merged), `gm-catalog-api-rchs`, `gm-analytics-engine-bah5`, `gm-catalog-api-vd7n`, `gm-analytics-engine-m0sz` | services still adopting both; nothing released |
+| PostgreSQL | database-schema with `POSTGRES_PREPROVISIONED` (verify the database, role and `pg_trgm` instead of creating them) | `gm-database-schema-2aty` | database-schema 0.6.0 |
+| Valkey | catalog-api and analytics-engine that apply `VALKEY_KEY_PREFIX` to every key and speak TLS (`VALKEY_TLS`) | `gm-python-libraries-3sm` and its TLS settings, `gm-catalog-api-rchs`, `gm-analytics-engine-bah5`, `gm-catalog-api-vd7n`, `gm-analytics-engine-m0sz` | catalog-api 0.6.0 and analytics-engine 0.5.0 |
 
-Promoting a release that supports a store replaces its `unreleased` floor with that version.
-Your `.env` must then run exactly those reviewed digests (`just env-init`).
+Your `.env` must run exactly the reviewed digests (`just env-init`), or `just deploy` still
+refuses. A later release that raises a floor is recorded in `EXTERNAL_STORE_FLOORS` the same way.
 
 ### What GrooveMap needs from each server
 
@@ -442,10 +442,11 @@ These describe current behavior. A follow-up is planned; no dates are promised.
 - **The disk check cannot measure everything.** Docker Desktop's VM disk, a remote `DOCKER_HOST`,
   network filesystems and non-local volume drivers get a warning with the sizes, not a
   measurement. See [Hardware and sizing](#hardware-and-sizing).
-- **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See
-  [Later cycles](#later-cycles).
-- **Existing PostgreSQL and Valkey are refused until the upstream releases are promoted.** The
-  external-stores mode is in place; `just deploy` refuses it until the capability floors are met.
+- **Later cycles re-attach automatically.** The manual commands are for dry runs and forced
+  re-runs. See [Later cycles](#later-cycles).
+- **Existing PostgreSQL and Valkey need the reviewed images and server prerequisites.** The
+  external-stores mode is supported: the capability floors are met by the reviewed release set,
+  and `just deploy` still refuses a store whose settings, secrets, TLS or server checks fail.
   See [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
 - **MusicBrainz disk use is an estimate.**
 

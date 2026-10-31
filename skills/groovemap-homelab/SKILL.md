@@ -145,9 +145,10 @@ Then explain both options, recommend one, and wait for the answer:
   PgBouncer in session mode only, a Valkey that is `noeviction` with AOF and a key prefix no
   other application uses, TLS to both (or an explicit, risky cleartext opt-out on a network
   the user trusts), and operator-run changes on services GrooveMap does not own.
-  **Reuse is refused until the capability floors are met**, and today they are not: `just deploy`
-  stops with exit 3 until the reviewed images include database-schema's pre-provisioned mode
-  (PostgreSQL) and catalog-api and analytics-engine with the key prefix and TLS (Valkey). Status and
+  **Reuse is refused unless the capability floors are met.** They are met by the reviewed release
+  set (database-schema 0.6.0 for PostgreSQL; catalog-api 0.6.0 and analytics-engine 0.5.0 for
+  Valkey), so reuse is supported; `just deploy` still stops with exit 3 if `.env` pins older
+  images or a setting, secret, TLS or server check fails. Status and
   procedure: [references/shared-services.md](references/shared-services.md).
 
 Recommendation rule: recommend **dedicated** unless every one of compatibility (PostgreSQL 18
@@ -156,15 +157,15 @@ isolation (an instance no other application depends on, or a dedicated database 
 a prefix of its own), capacity (connection and memory headroom) and operational impact (the
 operator owns its upgrades, restarts and backups) passes, **and** that store's capability
 floor is met. Read the floor in `scripts/check-images.py` (`EXTERNAL_STORE_FLOORS`): a store
-whose floor is `unreleased` cannot be external yet. While it is, dedicated is the
-recommendation whatever the matrix says, and say why. Discovery is never authorization to
+whose floor is `unreleased`, or above the version `RELEASED_IMAGE_VERSIONS` pins, cannot be
+external. While it cannot, dedicated is the recommendation whatever the matrix says, and say why. Discovery is never authorization to
 reuse, connect to or reconfigure anything.
 
 What happens on each answer:
 
 - **Dedicated:** continue with step 3.
-- **Reuse, floor not met (today):** explain that `just deploy` refuses it and why, naming the
-  unreleased upstream work and `gm-deployment-e1uh`. **Keep the deployment stopped**: write no
+- **Reuse, floor not met (only if the floors regress or `.env` pins older images):** explain that
+  `just deploy` refuses it and why, naming the floor and `gm-deployment-e1uh`. **Keep the deployment stopped**: write no
   override, set no store variable, start nothing. Offer dedicated instances, or waiting until
   the releases are promoted. Never work around it by editing connection variables in the
   override; the override check refuses that.
@@ -190,9 +191,9 @@ Present the plan before you write anything. Cover:
 - **Network:** a different subnet if `172.20.0.0/16` is taken.
 - **Stack manager:** how GrooveMap fits it. See
   [references/stack-managers.md](references/stack-managers.md).
-- **Stores:** the answer from step 2a. Reuse is refused until its capability floor is met
-  (`gm-deployment-e1uh`), so today the plan uses dedicated instances. Once it is met, list the
-  external servers, the `.env` values and the operator's provisioning steps.
+- **Stores:** the answer from step 2a. If the user chose reuse and the capability floor is met
+  (`gm-deployment-e1uh`), list the external servers, the `.env` values and the operator's
+  provisioning steps; otherwise the plan uses dedicated instances.
 - **Changes outside the checkout:** each one listed separately, each needing a yes.
 - **Expectations:** the first load runs for hours to about two days on the reference hardware,
   longer on a small or emulated host.
@@ -318,8 +319,8 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
 - [references/discovery.md](references/discovery.md): read-only commands, and what to look for
   in their output.
 - [references/shared-services.md](references/shared-services.md): reusing an existing
-  PostgreSQL or Valkey: requirements, the external-stores procedure, and why it is refused
-  until the capability floors are met.
+  PostgreSQL or Valkey: requirements, the external-stores procedure, and when it is
+  refused (capability floors).
 - [references/override.md](references/override.md): how the override merges, what deploy
   rejects, restart policies, subnet.
 - [references/reverse-proxy.md](references/reverse-proxy.md): Traefik, Caddy, nginx, Nginx
