@@ -115,6 +115,7 @@ def test_public_recipe_surface_remains_stable() -> None:
         "config-prod",
         "coverage",
         "default",
+        "deploy",
         "discogs-import-status",
         "down",
         "embeddings-provision-login",
