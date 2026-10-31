@@ -177,3 +177,116 @@ def test_example_overrides_are_rendered_and_checked_by_just_check() -> None:
     check = (ROOT / "scripts" / "check-compose.sh").read_text()
     assert "skills/groovemap-homelab/assets/override-*.yml" in check
     assert "override-check" in check
+
+
+# --- reusing existing PostgreSQL and Valkey ---------------------------------------------
+
+REUSE_QUESTION = (
+    "This homelab already has PostgreSQL and Valkey. Would you prefer GrooveMap to reuse compatible existing services, or run dedicated instances?"
+)
+EXTERNAL_STORES_BEADS = (
+    "gm-deployment-e1uh",
+    "gm-python-libraries-3sm",
+    "gm-catalog-api-rchs",
+    "gm-analytics-engine-bah5",
+    "gm-database-schema-2aty",
+)
+SHARED_SERVICES = SKILL_DIR / "references" / "shared-services.md"
+HOMELAB_DOC = ROOT / "docs" / "homelab.md"
+CONFIGURATION_DOC = ROOT / "docs" / "configuration.md"
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"\s+", " ", text.replace("> ", ""))
+
+
+def test_skill_asks_the_reuse_question_verbatim() -> None:
+    _, body = _frontmatter()
+    assert REUSE_QUESTION in _flat(body)
+    assert "only when PostgreSQL and Valkey already exist" in body
+    assert "Discovery is never authorization" in _flat(body)
+
+
+def test_skill_recommends_dedicated_while_reuse_is_not_deployable() -> None:
+    _, body = _frontmatter()
+    flat = _flat(body)
+    for dimension in ("compatibility", "isolation", "capacity", "operational impact"):
+        assert dimension in flat, dimension
+    assert "Reuse is not deployable today" in flat
+    assert "Keep the deployment stopped" in flat
+    assert "dedicated is the recommendation" in flat
+
+
+def test_discovery_is_read_only_and_never_shows_credentials() -> None:
+    discovery = _flat((SKILL_DIR / "references" / "discovery.md").read_text())
+    for phrase in (
+        "Never print",
+        "never run anything that writes",
+        "Needs the operator",
+        "pool_mode",
+        "maxmemory-policy",
+        "aof_enabled",
+        "max_connections",
+        "pg_available_extensions",
+    ):
+        assert phrase in discovery, phrase
+    assert "Report auth as on or off and never its value" in discovery
+    _, body = _frontmatter()
+    assert "Never display credentials or modify an existing service." in body
+    # Every inspect command in the discovery page selects fields, because a bare one prints Config.Env.
+    for command in re.findall(r"docker inspect [^\n]+", discovery):
+        assert "--format" in command or "without --format" in command or "Config.Env" in command, command
+
+
+def test_shared_services_states_the_status_and_every_requirement() -> None:
+    page = _flat(SHARED_SERVICES.read_text())
+    assert "not deployable" in page
+    for blocker in (
+        "docker compose exec postgres",
+        "cannot be removed",
+        "CREATE DATABASE",
+        "CREATE ROLE",
+        "CREATE EXTENSION",
+        "no key prefix and no DB-index",
+        "External PostgreSQL and Valkey are not supported yet",
+    ):
+        assert blocker in page, blocker
+    for requirement in (
+        "PostgreSQL 18",
+        "dedicated role",
+        "connection budget",
+        "session pool mode only",
+        "pg_try_advisory_lock",
+        "noeviction",
+        "AOF",
+        "is not a security boundary",
+    ):
+        assert requirement in page.replace("**", ""), requirement
+    assert "Never `FLUSHDB`, `FLUSHALL` or `CONFIG SET`" in page
+
+
+def test_external_store_beads_are_named_consistently() -> None:
+    shared = SHARED_SERVICES.read_text()
+    homelab = HOMELAB_DOC.read_text()
+    for bead in EXTERNAL_STORES_BEADS:
+        assert bead in shared, bead
+        assert bead in homelab, bead
+    for source in (SHARED_SERVICES, SKILL, SKILL_DIR / "references" / "override.md"):
+        text = source.read_text()
+        mentioned = set(re.findall(r"gm-(?:deployment|python-libraries|catalog-api|analytics-engine|database-schema)-[0-9a-z]+", text))
+        assert mentioned <= set(EXTERNAL_STORES_BEADS), (source.name, sorted(mentioned - set(EXTERNAL_STORES_BEADS)))
+    for mentioning in (_frontmatter()[1], HOMELAB_DOC.read_text(), CONFIGURATION_DOC.read_text()):
+        assert "gm-deployment-e1uh" in mentioning
+
+
+def test_docs_state_the_reuse_status_and_the_unchanged_approval_rules() -> None:
+    homelab = _flat(HOMELAB_DOC.read_text())
+    assert REUSE_QUESTION in homelab
+    assert "not deployable today" in homelab
+    assert "a separate logical database is not a security boundary" in homelab
+    assert "session-mode PgBouncer" in homelab
+    assert "explicit approval" in homelab
+    assert "refuses an override that rewires either store, with no opt-in" in homelab
+    configuration = _flat(CONFIGURATION_DOC.read_text())
+    assert "homelab.md#existing-postgresql-and-valkey" in configuration
+    assert "Reuse would also need PgBouncer in session mode only" in configuration

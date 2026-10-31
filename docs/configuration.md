@@ -147,7 +147,7 @@ the check stops (exit 3, before any `compose up`) when it changes `POSTGRES_HOST
 their `_FILE` variants, on any stack service (an `env_file` counts, because Compose inlines it
 into the rendered environment), or changes a `postgres_*` or `valkey_*` secret's source. External
 stores are not supported yet because the deploy gate and the MusicBrainz latch probe read this
-stack's own `postgres` container; see `gm-deployment-e1uh` and [homelab.md](homelab.md).
+stack's own `postgres` container; see `gm-deployment-e1uh` and [homelab.md](homelab.md#existing-postgresql-and-valkey).
 `POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` only publish a port and stay allowed. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
@@ -494,6 +494,8 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 
 ### PostgreSQL Configuration
 
+> These variables describe the stack's own `postgres`. Pointing them at an existing PostgreSQL is not supported yet and the override check refuses it (`gm-deployment-e1uh`; see [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). Reuse would also need PgBouncer in session mode only.
+
 | Variable            | Description                                  | Default          | Required |
 | ------------------- | -------------------------------------------- | ---------------- | -------- |
 | `POSTGRES_HOST`     | PostgreSQL hostname, optionally `host:port`  | `localhost`      | Yes      |
@@ -570,6 +572,8 @@ POSTGRES_POOL_MAX_SIZE=20
 ```
 
 ### Valkey Configuration
+
+> These variables describe the stack's own `valkey`. Pointing them at an existing Valkey is not supported yet and the override check refuses it (`gm-deployment-e1uh`; see [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). A separate logical database is not a security boundary.
 
 | Variable         | Description                            | Default     | Required                               |
 | ---------------- | -------------------------------------- | ----------- | -------------------------------------- |
