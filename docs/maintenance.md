@@ -728,6 +728,11 @@ Record:
 Do not store backup archives in this repository. See
 [Database resilience](database-resilience.md) for failure-mode planning.
 
+With an external PostgreSQL or Valkey (`GROOVEMAP_POSTGRES=external`, `GROOVEMAP_VALKEY=external`),
+that server's backups, upgrades, restarts and monitoring belong to its operator, and the
+PostgreSQL row above is their evidence to record. This stack neither backs it up nor measures
+its disk. See [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey).
+
 ## One-time data migrations
 
 The retained scripts default to read-only counts and require `--apply` to

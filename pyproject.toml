@@ -55,6 +55,7 @@ target-version = "py314"
 "scripts/discogs_import_status.py" = "py310"
 "scripts/env-init.py" = "py310"
 "scripts/check-images.py" = "py310"
+"scripts/stores.py" = "py310"
 
 [tool.ruff.lint]
 select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]

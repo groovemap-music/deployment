@@ -1138,11 +1138,13 @@ case "$*" in
   "compose version --short") echo 5.6.1 ;;
   *"name=^groovemap-extractor-musicbrainz\$"*) printf '%s' "${FAKE_MUSICBRAINZ_CONTAINERS:-}" ;;
   *"name=^groovemap-postgres\$"*) printf '%s' "${FAKE_RUNNING:-}" ;;
+  *"name=^groovemap-neo4j\$"*) printf '%s' "${FAKE_RUNNING_NEO4J:-}" ;;
   "ps -a --filter name=^groovemap- "*) printf '%s' "${FAKE_CONTAINERS:-}" ;;
   "volume ls "*) printf '%s' "${FAKE_VOLUMES:-}" ;;
   *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
   *"-f docker-compose.override.yml --profile * config --format json") printf '%s' "${FAKE_RENDER_OVERRIDE:-$empty}" ;;
-  *"exec -T postgres sh -c"*) printf '%s' "${FAKE_LATCH:-}"; [[ -n "${FAKE_LATCH:-}" ]] || exit 1 ;;
+  *"exec -T postgres sh -c"* | *"run --rm --no-deps -T store-check-postgres sh -c"*) printf '%s' "${FAKE_LATCH:-}"; [[ -n "${FAKE_LATCH:-}" ]] || exit 1 ;;
+  *"run --rm --no-deps -T store-check-"*) exit "${FAKE_STORE_CHECK:-0}" ;;
   *"--profile * config --format json") if [[ -n "${FAKE_RENDER_FILE:-}" ]]; then cat "$FAKE_RENDER_FILE"; else printf '%s' "${FAKE_RENDER:-$empty}"; fi ;;
 esac
 exit 0
@@ -1159,6 +1161,7 @@ sys.exit(int(os.environ.get("FAKE_GATE_WAIT" if "--wait" in argv else "FAKE_GATE
 COPIED = (
     "scripts/deploy.sh",
     "scripts/deploy_helpers.py",
+    "scripts/stores.py",
     "scripts/env-init.py",
     "scripts/check-images.py",
     "scripts/create-secrets.sh",
@@ -1647,7 +1650,8 @@ def test_override_may_not_point_a_service_at_an_external_store(service: str, var
     stops = [finding for finding in findings if finding.level == "stop"]
     assert len(stops) == 1, findings
     assert f"changes {variable} on {service}" in stops[0].message
-    assert "External PostgreSQL and Valkey are not supported yet" in stops[0].hint
+    assert "only through the supported external-stores mode" in stops[0].hint
+    assert "never through the override" in stops[0].hint
     assert "gm-deployment-e1uh" in stops[0].hint
     assert "docs/homelab.md" in stops[0].hint
 
