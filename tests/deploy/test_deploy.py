@@ -1142,7 +1142,8 @@ case "$*" in
   "volume ls "*) printf '%s' "${FAKE_VOLUMES:-}" ;;
   *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
   *"-f docker-compose.override.yml --profile * config --format json") printf '%s' "${FAKE_RENDER_OVERRIDE:-$empty}" ;;
-  *"--profile * config --format json") printf '%s' "${FAKE_RENDER:-$empty}" ;;
+  *"exec -T postgres sh -c"*) printf '%s' "${FAKE_LATCH:-}"; [[ -n "${FAKE_LATCH:-}" ]] || exit 1 ;;
+  *"--profile * config --format json") if [[ -n "${FAKE_RENDER_FILE:-}" ]]; then cat "$FAKE_RENDER_FILE"; else printf '%s' "${FAKE_RENDER:-$empty}"; fi ;;
 esac
 exit 0
 """
@@ -1297,7 +1298,9 @@ def test_rerun_during_the_import_resumes_the_wait(deploy: Deploy) -> None:
     env_before = (deploy.root / ".env").read_text()
     result = deploy.run(FAKE_RUNNING="abc", FAKE_GATE="3", FAKE_GATE_WAIT="0")
     assert result.returncode == 0, result.stderr
-    assert _compose_calls(deploy.calls)[1:5] == [
+    calls = [call for call in _compose_calls(deploy.calls) if "exec -T postgres" not in call]  # the latch probe
+    assert any("exec -T postgres" in call for call in deploy.calls)
+    assert calls[1:5] == [
         "gate --prod",
         f"docker compose {PROD} up -d --wait",
         "gate --prod --wait --interval 300",
@@ -1340,18 +1343,154 @@ def test_profile_exported_in_the_shell_counts_as_enabled(deploy: Deploy) -> None
     "fake",
     [
         {"FAKE_MUSICBRAINZ_CONTAINERS": "0123456789ab\n"},
-        {"FAKE_VOLUMES": "postgres_data\nmusicbrainz_data\n"},
+        {"FAKE_VOLUMES": "postgres_data\nextractor_musicbrainz_logs\n", "FAKE_RENDER_FILE": "RENDER"},
+        {"FAKE_RUNNING": "abc", "FAKE_LATCH": "t\n", "FAKE_GATE": "3"},
         {"FAKE_RUNNING": "abc", "FAKE_GATE": "0"},
     ],
-    ids=["musicbrainz-containers", "musicbrainz-volume", "import-already-complete"],
+    ids=["musicbrainz-containers", "musicbrainz-only-volume", "musicbrainz-latch-row", "import-already-complete"],
 )
-def test_an_existing_musicbrainz_path_is_kept_running(deploy: Deploy, fake: dict[str, str]) -> None:
+def test_an_existing_musicbrainz_path_is_kept_running(deploy: Deploy, fake: dict[str, str], real_render: Path) -> None:
+    fake = {key: str(real_render) if value == "RENDER" else value for key, value in fake.items()}
     result = deploy.run(FAKE_GATE_WAIT="3", **fake)
     assert result.returncode == 0, result.stderr
     assert deploy.env_values["COMPOSE_PROFILES"] == "musicbrainz"
     assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
     assert not any("--wait --interval" in call for call in deploy.calls)
+    assert not any(call.startswith("gate") and "--wait" in call for call in deploy.calls)
     assert not any(" stop" in call or " down" in call for call in deploy.calls)
+
+
+# --- which volumes say "MusicBrainz ran here"? -----------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_render(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`docker compose config` for the real production stack, every profile, as deploy.sh renders it."""
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("no docker binary to render the Compose files")
+    rendered = subprocess.run(
+        [
+            docker,
+            "compose",
+            "--env-file",
+            "config/validation.env",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            "docker-compose.prod.yml",
+            "--profile",
+            "*",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        env={"PATH": str(Path(docker).parent), "HOME": str(Path.home())},
+        timeout=60,
+    ).stdout
+    path = tmp_path_factory.mktemp("render") / "stack.json"
+    path.write_bytes(rendered)
+    return path
+
+
+def _mounted_volumes(config: dict[str, Any], keep: Any) -> set[str]:
+    return {
+        mount["source"]
+        for service in config["services"].values()
+        if keep(service)
+        for mount in service.get("volumes") or []
+        if mount.get("type") == "volume"
+    }
+
+
+def _phase_one_volumes(config: dict[str, Any]) -> set[str]:
+    """The volumes `up` creates without the musicbrainz profile: those a profile-less service mounts."""
+    return _mounted_volumes(config, lambda service: not service.get("profiles"))
+
+
+def test_musicbrainz_evidence_volumes_are_only_what_no_other_service_mounts(real_render: Path) -> None:
+    config = json.loads(real_render.read_text())
+    evidence = helpers.musicbrainz_exclusive_volumes(config)
+    assert evidence == {"extractor_musicbrainz_logs", "brainzgraphinator_logs", "brainztableinator_logs"}
+    assert not evidence & _mounted_volumes(config, lambda service: "musicbrainz" not in (service.get("profiles") or []))
+    # The API mounts musicbrainz_data read-only, so phase 1 creates it.
+    assert "musicbrainz_data" in _phase_one_volumes(config)
+    assert not evidence & _phase_one_volumes(config)
+
+
+def test_a_render_that_cannot_tell_is_no_evidence() -> None:
+    assert helpers.musicbrainz_exclusive_volumes(None) is None
+    assert helpers.musicbrainz_exclusive_volumes({"services": {}}) is None
+
+
+def test_a_service_in_several_profiles_does_not_make_its_volumes_musicbrainz_only() -> None:
+    config = {"services": {"a": {"profiles": ["musicbrainz", "other"], "volumes": [{"type": "volume", "source": "v", "target": "/v"}]}}}
+    assert helpers.musicbrainz_exclusive_volumes(config) == set()
+
+
+def test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence() -> None:
+    def runner(stdout: str, code: int = 0) -> Any:
+        return lambda argv, **_: subprocess.CompletedProcess(argv, code, stdout, "")
+
+    assert helpers.musicbrainz_latch(["docker", "compose"], runner("t\n"))
+    assert not helpers.musicbrainz_latch(["docker", "compose"], runner("f\n"))
+    assert not helpers.musicbrainz_latch(["docker", "compose"], runner("t\n", 1))
+
+    def missing(_argv: list[str], **_kwargs: Any) -> Any:
+        raise FileNotFoundError
+
+    assert not helpers.musicbrainz_latch(["docker", "compose"], missing)
+
+
+def test_the_latch_shell_matches_the_gates() -> None:
+    spec = importlib.util.spec_from_file_location("discogs_import_status", ROOT / "scripts" / "discogs_import_status.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert helpers.PSQL_SHELL == module.PSQL_SHELL
+
+
+def test_resuming_after_phase_one_keeps_waiting_on_the_gate_until_it_reports_complete(deploy: Deploy, real_render: Path) -> None:
+    config = json.loads(real_render.read_text())
+    created = "\n".join(sorted(_phase_one_volumes(config))) + "\n"
+    fake = {"FAKE_RENDER_FILE": str(real_render)}
+
+    # Phase 1, then stop: the profile stays off.
+    first = deploy.run("--no-wait", **fake)
+    assert first.returncode == 0, first.stderr
+    assert "COMPOSE_PROFILES" not in deploy.env_values
+
+    # The resume during the import: phase 1's own volumes exist (musicbrainz_data included), the gate says 3.
+    resumed = {**fake, "FAKE_VOLUMES": created, "FAKE_RUNNING": "abc", "FAKE_GATE": "3"}
+    for code in ("3", "2"):
+        result = deploy.run(**resumed | {"FAKE_GATE": code, "FAKE_GATE_WAIT": code})
+        assert "COMPOSE_PROFILES" not in deploy.env_values, result.stdout
+        assert any(call.startswith("gate") and "--wait" in call for call in deploy.calls), deploy.calls
+        assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
+        assert "MusicBrainz goes next" not in result.stdout
+        assert "stays on" not in result.stdout
+
+    # The gate reports complete: now MusicBrainz is enabled.
+    done = deploy.run(**resumed | {"FAKE_GATE": "0", "FAKE_GATE_WAIT": "0"})
+    assert done.returncode == 0, done.stderr
+    assert deploy.env_values["COMPOSE_PROFILES"] == "musicbrainz"
+    assert "The Discogs import has already finished" in done.stdout
+
+
+def test_a_render_that_cannot_tell_does_not_enable_on_a_guess(deploy: Deploy) -> None:
+    result = deploy.run(
+        FAKE_RENDER='{"services": {}}',
+        FAKE_VOLUMES="musicbrainz_data\nextractor_musicbrainz_logs\n",
+        FAKE_GATE="3",
+        FAKE_GATE_WAIT="2",
+        FAKE_RUNNING="abc",
+    )
+    assert "COMPOSE_PROFILES" not in deploy.env_values, result.stdout
+    assert any(call.startswith("gate") for call in deploy.calls)
 
 
 def test_dev_uses_the_base_stack_without_secrets_or_sizing(deploy: Deploy) -> None:
@@ -1365,8 +1504,8 @@ def test_dev_uses_the_base_stack_without_secrets_or_sizing(deploy: Deploy) -> No
     assert "user admin, password groovemap" in result.stdout
 
 
-def test_project_name_reaches_compose_the_gate_and_the_volume_lookup(deploy: Deploy) -> None:
-    result = deploy.run("-p", "lab", "--no-admin", FAKE_GATE_WAIT="0")
+def test_project_name_reaches_compose_the_gate_and_the_volume_lookup(deploy: Deploy, real_render: Path) -> None:
+    result = deploy.run("-p", "lab", "--no-admin", FAKE_GATE_WAIT="0", FAKE_RENDER_FILE=str(real_render))
     assert result.returncode == 0, result.stderr
     assert deploy.ups[0] == f"docker compose --project-name lab {PROD} up -d --wait"
     assert "gate --project-name lab --prod --wait --interval 300" in deploy.calls

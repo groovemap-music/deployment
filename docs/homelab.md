@@ -146,6 +146,14 @@ only when the loader's latch, Neo4j's completion marker and the eight Discogs qu
 for the newest dump version. `just deploy` runs both for you. Done by hand, run the gate
 until it exits 0 and only then enable the profile.
 
+`just deploy` treats a host as already running MusicBrainz only on evidence that MusicBrainz
+itself produced: one of the three MusicBrainz containers (any state), a Compose volume that
+only `musicbrainz`-profile services mount (such as `extractor_musicbrainz_logs`; computed from
+the rendered Compose config, not a fixed list), or a `loader_extraction_latch` row with
+`loader = 'musicbrainz'` while PostgreSQL runs. `musicbrainz_data` is not evidence: the API
+mounts it read-only, so phase 1 creates it before MusicBrainz ever runs. If the render or the
+query fails, `just deploy` does not guess; it goes through the Discogs gate.
+
 ### Later cycles
 
 After the first load the order cannot be strictly enforced: MusicBrainz publishes twice weekly
@@ -252,8 +260,8 @@ the directory on an existing deployment: the stack would come up on new, empty v
 
 > **If you already run GrooveMap, read this after pulling this change.** MusicBrainz now sits
 > behind the `musicbrainz` Compose profile. Add `COMPOSE_PROFILES=musicbrainz` to `.env`, or
-> run `just deploy`, which detects existing MusicBrainz containers or volumes and sets it
-> for you. Otherwise a plain `docker compose up -d` no longer manages the MusicBrainz services.
+> run `just deploy`, which detects an existing MusicBrainz deployment (see
+> [how it decides](#the-first-load-discogs-before-musicbrainz)) and sets it for you. Otherwise a plain `docker compose up -d` no longer manages the MusicBrainz services.
 
 To move to newly reviewed image digests, pull this repository, refresh `.env` and redeploy:
 
