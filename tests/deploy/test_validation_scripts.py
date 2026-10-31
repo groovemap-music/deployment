@@ -109,11 +109,15 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
     docker = tmp_path / "docker"
     log = tmp_path / "docker.log"
     # `config --services` answers like Compose: the MusicBrainz path only appears with its profile.
+    # `config --format json` renders an empty stack, which passes the override check.
     docker.write_text(
         "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "$*" >>"$DOCKER_LOG"\n'
         'if [[ "$*" == *"--profile musicbrainz"* && "$*" == *"config --services"* ]]; then\n'
         "  printf '%s\\n' extractor-musicbrainz brainzgraphinator brainztableinator\n"
+        "fi\n"
+        'if [[ "$*" == *"config --format json"* ]]; then\n'
+        "  printf '%s\\n' '{\"services\": {}}'\n"
         "fi\n"
     )
     docker.chmod(0o755)
@@ -137,6 +141,14 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         "compose --env-file config/validation.env -f docker-compose.yml --profile musicbrainz config --services",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --services",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml --profile musicbrainz config --services",
+    ] + [
+        call
+        for example in sorted((ROOT / "skills" / "groovemap-homelab" / "assets").glob("override-*.yml"))
+        for call in (
+            f"{validation} -f docker-compose.yml -f docker-compose.prod.yml -f {example.relative_to(ROOT)} config --quiet",
+            "compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --format json",
+            f"compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml -f {example.relative_to(ROOT)} config --format json",
+        )
     ]
 
 

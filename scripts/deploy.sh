@@ -7,13 +7,18 @@
 # interruption or a reboot resumes the wait, and once the profile is enabled a run only
 # reconciles the stack. A deployment that already runs the MusicBrainz path keeps it.
 #
-# The decisions (preflight minimums, Neo4j sizing, .env edits, endpoints) live in
-# scripts/deploy_helpers.py. This starts containers, so it is operator-run only and never part
+# Host-specific settings (reverse-proxy labels and networks, data on another disk, restart
+# policies) go in an untracked docker-compose.override.yml. When it exists, every Compose call
+# and the gate add it last, after it passes the override check.
+#
+# The decisions (preflight minimums, Neo4j sizing, the override check, .env edits, endpoints)
+# live in scripts/deploy_helpers.py. This starts containers, so it is operator-run only and never part
 # of `just check`.
 #
 # Exit codes: 0 done (or phase 1 started with --no-wait), 1 a step failed, 2 bad arguments,
-# 3 preflight stopped before changing anything, 130 interrupted while waiting (the import keeps
-# running in Docker; re-run to resume).
+# 3 preflight stopped before changing anything, or the override check stopped before any
+# container started, 130 interrupted while waiting (the import keeps running in Docker; re-run
+# to resume).
 
 set -euo pipefail
 
@@ -21,6 +26,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 DEFAULT_INTERVAL=300
+OVERRIDE=docker-compose.override.yml
 MUSICBRAINZ_SERVICES=(extractor-musicbrainz brainzgraphinator brainztableinator)
 MUSICBRAINZ_VOLUMES=(musicbrainz_data extractor_musicbrainz_logs brainzgraphinator_logs brainztableinator_logs)
 
@@ -31,6 +37,7 @@ Usage: just deploy [options]
 Installs GrooveMap on this Docker host, or picks up where an earlier run stopped.
 Checks the host, creates .env and secrets/, sizes Neo4j for this machine, starts the
 stack, waits for the Discogs import (it takes about two days), then starts MusicBrainz.
+Host-specific settings in docker-compose.override.yml, if present, are checked and applied.
 
 Options:
   --dev                 use the base development stack instead of the production overlay
@@ -43,8 +50,8 @@ Options:
   --force               go ahead even below the memory and disk minimums
   -h, --help            show this help
 
-Exit codes: 0 done, 1 a step failed, 2 bad arguments, 3 stopped by the host checks,
-130 interrupted while waiting (the import keeps running; re-run to resume).
+Exit codes: 0 done, 1 a step failed, 2 bad arguments, 3 stopped by the host or override
+checks, 130 interrupted while waiting (the import keeps running; re-run to resume).
 EOF
 }
 
@@ -125,6 +132,22 @@ if [[ "$mode" == prod ]]; then
   compose+=(-f docker-compose.prod.yml)
   gate+=(--prod)
 fi
+# Compose reads docker-compose.override.yml by itself only when no -f is given, so name it, last.
+stack_without_override=("${compose[@]}")
+if [[ -f "$OVERRIDE" ]]; then
+  compose+=(-f "$OVERRIDE")
+  gate+=(-f "$OVERRIDE")
+fi
+
+status_command() {
+  local command=(just discogs-import-status)
+  [[ -n "$project" ]] && command+=(-p "$project")
+  [[ "$mode" == prod ]] && command+=(--prod)
+  [[ -f "$OVERRIDE" ]] && command+=(-f "$OVERRIDE")
+  local quoted
+  printf -v quoted '%q ' "${command[@]}"
+  printf '%s' "${quoted% }"
+}
 
 stack_name() { [[ "$mode" == prod ]] && echo "production stack" || echo "development stack"; }
 
@@ -159,6 +182,36 @@ if [[ "$mode" == prod ]]; then
 else
   note "The development stack uses the fixed local credentials and sizes in docker-compose.yml;"
   note "no secrets or sizing to write."
+fi
+
+# The override may add host-specific settings, but not swap an image, flip the musicbrainz
+# profile, rename a container or publish a data-tier port: compare Compose's renders without and
+# with it, every profile included.
+check_override() {
+  local before after status=0
+  before="$(mktemp)"
+  after="$(mktemp)"
+  if "${stack_without_override[@]}" --profile '*' config --format json >"$before" &&
+    "${compose[@]}" --profile '*' config --format json >"$after"; then
+    helper override-check "$before" "$after" || status=$?
+  else
+    echo "deploy: docker compose could not read the stack with $OVERRIDE (see above)" >&2
+    status=3
+  fi
+  rm -f "$before" "$after"
+  return "$status"
+}
+
+if [[ -f "$OVERRIDE" ]]; then
+  say "Checking your host-specific settings in $OVERRIDE"
+  status=0
+  check_override || status=$?
+  if ((status == 3)); then
+    exit 3
+  elif ((status != 0)); then
+    echo "deploy: the override check failed unexpectedly (exit $status)" >&2
+    exit 1
+  fi
 fi
 
 # --- 3. where are we? ------------------------------------------------------------------
@@ -224,7 +277,7 @@ else
     say "Phase 1 is running"
     note "The Discogs import is under way in Docker. It takes about two days on the reference"
     note "hardware, longer on a smaller or emulated host. To check on it:"
-    note "" "  just discogs-import-status${project:+ -p $project}$([[ "$mode" == prod ]] && echo ' --prod')" ""
+    note "" "  $(status_command)" ""
     note "When you want to continue (any time; it waits if the import is still going):"
     note "" "  $(resume_command)"
   else

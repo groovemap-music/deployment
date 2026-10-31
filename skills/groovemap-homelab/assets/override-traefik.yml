@@ -1,0 +1,43 @@
+---
+# Example docker-compose.override.yml: Traefik (v2 or v3) with its Docker provider.
+# Replace before use, reading the real values from the running Traefik (references/discovery.md):
+#   proxy        the Docker network Traefik watches (external, already exists)
+#   websecure    Traefik's HTTPS entrypoint
+#   letsencrypt  Traefik's certificate resolver
+#   *.example.com the host names; the console needs a host name of its own
+# Set WEB_BIND_ADDRESS=127.0.0.1 and APP_BASE_URL=https://groovemap.example.com in .env.
+services:
+  explore:
+    networks:
+      proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.groovemap-explore.rule: "Host(`groovemap.example.com`)"
+      traefik.http.routers.groovemap-explore.entrypoints: websecure
+      traefik.http.routers.groovemap-explore.tls.certresolver: letsencrypt
+      traefik.http.services.groovemap-explore.loadbalancer.server.port: "8006"
+  dashboard:
+    networks:
+      proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.groovemap-console.rule: "Host(`console.groovemap.example.com`)"
+      traefik.http.routers.groovemap-console.entrypoints: websecure
+      traefik.http.routers.groovemap-console.tls.certresolver: letsencrypt
+      traefik.http.services.groovemap-console.loadbalancer.server.port: "8003"
+  grafana:
+    networks:
+      proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.groovemap-grafana.rule: "Host(`grafana.groovemap.example.com`)"
+      traefik.http.routers.groovemap-grafana.entrypoints: websecure
+      traefik.http.routers.groovemap-grafana.tls.certresolver: letsencrypt
+      traefik.http.services.groovemap-grafana.loadbalancer.server.port: "3000"
+
+networks:
+  proxy:
+    external: true

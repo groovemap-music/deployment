@@ -1,0 +1,20 @@
+{
+  "name": "groovemap",
+  "owner": {
+    "name": "GrooveMap",
+    "url": "https://github.com/groovemap-music"
+  },
+  "metadata": {
+    "description": "Agent skills for running GrooveMap."
+  },
+  "plugins": [
+    {
+      "name": "groovemap-homelab",
+      "source": "./",
+      "description": "Integrate GrooveMap into an existing homelab Docker host, adapting to its reverse proxy, storage and stack manager while the repository's scripts keep the digests, secrets and staged first load fixed.",
+      "category": "deployment",
+      "homepage": "https://github.com/groovemap-music/deployment",
+      "license": "MIT"
+    }
+  ]
+}

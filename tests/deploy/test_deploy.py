@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.deploy.test_docker_compose_prod import _load_compose
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -279,6 +281,68 @@ def test_port_bind_groups_match_the_compose_files() -> None:
     assert {variable: group for variable, _, group, _, _ in helpers.PORTS} == prod
 
 
+def test_data_tier_is_every_service_published_on_the_data_or_internal_address() -> None:
+    services = {**_load_compose(ROOT / "docker-compose.yml")["services"]}
+    for name, overlay in _load_compose(ROOT / "docker-compose.prod.yml")["services"].items():
+        services[name] = {**services.get(name, {}), **overlay}
+    published = {name for name, service in services.items() if re.search(r"(DATA|INTERNAL)_BIND_ADDRESS", str(service.get("ports", "")))}
+    assert published == set(helpers.DATA_TIER)
+
+
+def _render(**services: dict[str, Any]) -> dict[str, Any]:
+    stack: dict[str, dict[str, Any]] = {
+        "postgres": {"image": "postgres@sha256:aa", "container_name": "groovemap-postgres", "ports": [{"target": 5432, "published": "5433"}]},
+        "explore": {"image": "explore@sha256:bb", "container_name": "groovemap-explore", "networks": {"groovemap": None}},
+        "extractor-musicbrainz": {"image": "mb@sha256:cc", "container_name": "groovemap-extractor-musicbrainz", "profiles": ["musicbrainz"]},
+    }
+    return {"services": {name: {**service, **services.get(name, {})} for name, service in stack.items()}}
+
+
+def test_override_may_add_proxy_networks_labels_storage_and_restart_policies() -> None:
+    proxied = _render(
+        explore={"networks": {"groovemap": None, "proxy": {}}, "labels": {"traefik.enable": "true"}, "restart": "unless-stopped"},
+        postgres={"volumes": [{"type": "bind", "source": "/mnt/tank/pg", "target": "/var/lib/postgresql/data"}]},
+    )
+    proxied["services"]["sidecar"] = {"image": "tailscale/tailscale:stable"}
+    findings = helpers.check_override(_render(), proxied)
+    assert [finding.level for finding in findings] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    ("service", "change", "why"),
+    [
+        ("explore", {"image": "explore:latest"}, "never a tag or `latest`"),
+        ("explore", {"build": {"context": "."}}, "never builds them"),
+        ("explore", {"platform": "linux/arm64"}, "linux/amd64 only"),
+        ("explore", {"container_name": "explore"}, "groovemap-* container names"),
+        ("extractor-musicbrainz", {"profiles": []}, "import gate reports complete"),
+        ("postgres", {"ports": [{"target": 5432, "published": "5432", "host_ip": "192.168.1.20"}]}, "DATA_BIND_ADDRESS"),
+        ("postgres", {"network_mode": "host"}, "stay off the LAN"),
+    ],
+)
+def test_override_must_not_bypass_digests_the_gate_or_the_data_tier_binds(service: str, change: dict[str, Any], why: str) -> None:
+    findings = helpers.check_override(_render(), _render(**{service: change}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert service in findings[0].message
+    assert why in findings[0].hint
+
+
+def test_override_must_not_drop_a_service() -> None:
+    after = _render()
+    del after["services"]["explore"]
+    assert helpers.check_override(_render(), after)[0].message == "docker-compose.override.yml removes the explore service"
+
+
+def test_override_check_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    before, after = tmp_path / "before.json", tmp_path / "after.json"
+    before.write_text(json.dumps(_render()))
+    after.write_text(json.dumps(_render(explore={"labels": {"a": "b"}})))
+    assert helpers.main(["override-check", str(before), str(after)]) == 0
+    after.write_text(json.dumps(_render(explore={"image": "explore:latest"})))
+    assert helpers.main(["override-check", str(before), str(after)]) == 3
+    assert "Stopping before the stack starts" in capsys.readouterr().out
+
+
 def test_port_conflicts_skip_the_stacks_own_ports() -> None:
     ports = [helpers.Port("GRAFANA_HOST_PORT", "Grafana", "", 3000), helpers.Port("API_HOST_PORT", "Catalog API", "", 8004)]
     findings = helpers.check_ports(ports, {3000}, lambda _address, _port: True)
@@ -486,6 +550,7 @@ def test_main_configure_and_endpoints(scratch_env: Path, capsys: pytest.CaptureF
 
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"$DEPLOY_LOG"
+empty='{"services": {}}'
 case "$*" in
   "info --format {{json .}}") printf '%s\n' "$FAKE_DOCKER_INFO" ;;
   "compose version --short") echo 5.6.1 ;;
@@ -494,6 +559,8 @@ case "$*" in
   "ps -a --filter name=^groovemap- "*) printf '%s' "${FAKE_CONTAINERS:-}" ;;
   "volume ls "*) printf '%s' "${FAKE_VOLUMES:-}" ;;
   *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
+  *"-f docker-compose.override.yml --profile * config --format json") printf '%s' "${FAKE_RENDER_OVERRIDE:-$empty}" ;;
+  *"--profile * config --format json") printf '%s' "${FAKE_RENDER:-$empty}" ;;
 esac
 exit 0
 """
@@ -750,6 +817,50 @@ def test_help_lists_every_option(deploy: Deploy) -> None:
     for option in ("--dev", "--no-wait", "--no-admin", "--admin-email", "--project-name", "--interval", "--yes", "--force"):
         assert option in result.stdout
     assert deploy.log.read_text() == ""
+
+
+OVERRIDE = "-f docker-compose.override.yml"
+
+
+def test_an_override_file_reaches_every_compose_call_and_the_gate(deploy: Deploy) -> None:
+    (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
+    result = deploy.run(FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _compose_calls(deploy.calls) == [
+        f"docker compose {PROD} --profile * config --format json",
+        f"docker compose {PROD} {OVERRIDE} --profile * config --format json",
+        f"docker compose {PROD} {OVERRIDE} up -d --wait",
+        f"gate --prod {OVERRIDE} --wait --interval 300",
+        f"docker compose {PROD} {OVERRIDE} up -d --wait",
+        f"docker compose {PROD} {OVERRIDE} exec -T api catalog-admin-setup --list",
+    ]
+    assert "changes only host-specific settings" in result.stdout
+
+
+def test_no_wait_with_an_override_names_it_in_the_status_command(deploy: Deploy) -> None:
+    (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
+    result = deploy.run("--no-wait", "-p", "lab", "--dev")
+    assert result.returncode == 0, result.stderr
+    assert "just discogs-import-status -p lab -f docker-compose.override.yml\n" in result.stdout
+    assert deploy.ups == [f"docker compose --project-name lab -f docker-compose.yml {OVERRIDE} up -d --wait"]
+
+
+def test_an_override_that_bypasses_the_rules_stops_before_anything_starts(deploy: Deploy) -> None:
+    (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
+    before = json.dumps(_render())
+    after = json.dumps(_render(**{"extractor-musicbrainz": {"profiles": []}}))
+    result = deploy.run(FAKE_GATE_WAIT="0", FAKE_RENDER=before, FAKE_RENDER_OVERRIDE=after)
+    assert result.returncode == 3
+    assert "changes profiles on extractor-musicbrainz" in result.stdout
+    assert deploy.ups == []
+    assert not any(call.startswith("gate") for call in deploy.calls)
+
+
+def test_an_unreadable_override_stops_before_anything_starts(deploy: Deploy) -> None:
+    (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
+    result = deploy.run(FAKE_GATE_WAIT="0", FAKE_RENDER_OVERRIDE="not json")
+    assert result.returncode == 1
+    assert deploy.ups == []
 
 
 def test_recipe_runs_the_script_and_check_never_does() -> None:

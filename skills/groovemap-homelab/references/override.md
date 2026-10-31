@@ -1,0 +1,115 @@
+# docker-compose.override.yml
+
+Every host-specific choice that `.env` can't express goes in one untracked file,
+`docker-compose.override.yml`, at the checkout's root. `.gitignore` already lists it. The
+examples in `../assets/` are rendered on top of the production stack by `just check`, so they
+are known to merge and to pass deploy's override check.
+
+## How it is applied
+
+Compose reads `docker-compose.override.yml` by itself only when no `-f` is given. Production
+always names its files, so the override must come last:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml <command>
+```
+
+`just deploy` does this for you. When the file exists, deploy adds it to every Compose call and
+to the import gate, and prints a status command that includes it. Anything you run by hand
+(`ps`, `logs`, `exec`, `config`, `just discogs-import-status --prod -f docker-compose.override.yml`)
+must name it too.
+
+## What deploy rejects
+
+Before anything starts, `just deploy` renders the stack with and without the override
+(`config --format json`, every profile included) and stops with exit code 3 if the override
+changes any of these on a GrooveMap service:
+
+| Key | Why |
+| --- | --- |
+| `image`, `build` | Images come only from the reviewed digests in `.env`, never a tag or `latest` |
+| `platform` | The images are linux/amd64 only |
+| `container_name` | deploy finds the stack by its `groovemap-*` container names |
+| `profiles` | Only deploy turns on `musicbrainz`, after the import gate reports complete |
+| `ports`, `network_mode` on postgres, neo4j, rabbitmq, valkey, victoria-metrics, victoria-traces | Data-tier ports move only through `.env` bind addresses and `*_HOST_PORT` |
+
+It also stops if the override removes a service. Adding services of your own (a backup job, a
+tunnel sidecar) is allowed.
+
+## Merge behavior
+
+Checked with Docker Compose 5.6.1 by rendering the production stack with each example:
+
+- **Service `networks`** merge by network name. Adding `proxy: {}` keeps the `groovemap`
+  network and its aliases. Use the mapping form shown in the examples.
+- **Service `labels`** merge by key. The base files set no labels on any service.
+- **Service `volumes`** merge by container path. A bind mount to `/var/lib/postgresql/data`
+  replaces the named volume at that path.
+- **Top-level `volumes`** merge by key. Adding `driver_opts` to `postgres_data` keeps the
+  volume's name and moves its location ([storage.md](storage.md)).
+- **`restart`** and other scalars are replaced.
+- **`!override`** replaces a whole node instead of merging it. **`!reset`** removes it.
+
+Never edit `docker-compose.yml` or `docker-compose.prod.yml`.
+
+## Use `.env` instead
+
+These settings are interpolation inputs. Set them in `.env`, not the override:
+
+- host ports: every `*_HOST_PORT`
+- bind addresses: `WEB_BIND_ADDRESS`, `DATA_BIND_ADDRESS`, `INTERNAL_BIND_ADDRESS`
+- URLs: `APP_BASE_URL`, `GRAFANA_URL`, `TRACES_URL`
+- Neo4j sizing: `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`,
+  `NEO4J_TRANSACTION_MEMORY_MAX`. `just deploy` writes these from the machine's memory when
+  they are unset.
+- email sender: `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` (the API key is a secret file)
+- `COMPOSE_PROJECT_NAME`, and `COMPOSE_PROFILES` (written only by deploy)
+
+Hosts, data paths, log levels and consumer timings are literal Compose values. Change one only
+when the user has a reason, with an `environment:` entry in the override.
+
+## Restart policies
+
+The production overlay sets `restart: always` on every long-running service. Docker then starts
+the stack again after a reboot, so no systemd unit is needed. If the user prefers that services
+they stopped by hand stay stopped, set `unless-stopped` per service. Never set
+`deploy.restart_policy`: the production overlay forbids it, because Compose lets it override
+`restart:`.
+
+```yaml
+services:
+  grafana:
+    restart: unless-stopped
+```
+
+## Subnet
+
+The base file pins the `groovemap` network to `172.20.0.0/16`. If that overlaps another
+network or a route, replace it as `../assets/override-network-restart.yml` does:
+
+```yaml
+networks:
+  groovemap:
+    ipam: !override
+      config:
+        - subnet: 172.28.0.0/16
+```
+
+A subnet takes effect when the network is created. On a running stack, stop it with `down`
+(never `down -v`, which deletes the volumes) and run `just deploy` again.
+
+## Only one GrooveMap per Docker host
+
+Container names are fixed (`groovemap-postgres`, `groovemap-explore`, and so on). A second
+copy of the stack on the same engine would collide, whatever its project name.
+
+## Validate
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml config --format json \
+  | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; [print(n, sorted(s[n].get("networks", {})), s[n].get("labels", {})) for n in ("explore", "dashboard", "grafana")]'
+```
+
+An external network that doesn't exist passes `config` but fails at `up`. Check
+`docker network ls` for the exact name.

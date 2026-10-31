@@ -1,0 +1,30 @@
+---
+# Example docker-compose.override.yml: keep the large volumes on another disk, for a fresh
+# install. Each directory must exist, empty, before the first start; see references/storage.md
+# for ownership and for moving an existing deployment's data (this does not move it).
+# Replace /mnt/tank/groovemap with a directory on a local disk with room to spare.
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/tank/groovemap/postgres
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/tank/groovemap/neo4j
+  discogs_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/tank/groovemap/discogs
+  musicbrainz_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/tank/groovemap/musicbrainz

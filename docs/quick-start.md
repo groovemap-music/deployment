@@ -48,8 +48,14 @@ MusicBrainz keeps it.
 | `--force` | Go ahead below the memory and disk minimums |
 
 Exit codes: `0` done (or phase 1 started with `--no-wait`), `1` a step failed,
-`2` bad arguments, `3` stopped by the host checks before changing anything,
-`130` interrupted while waiting.
+`2` bad arguments, `3` stopped by the host checks before changing anything (or
+by the override check before any container started), `130` interrupted while
+waiting.
+
+Host-specific settings go in an untracked `docker-compose.override.yml` next to
+the tracked Compose files; see
+[Docker Compose Override](configuration.md#4-docker-compose-override). When it
+exists, deploy adds it last to every Compose call and to the import gate.
 
 The host checks stop below these minimums unless you pass `--force`, and warn
 below the recommended sizes:
