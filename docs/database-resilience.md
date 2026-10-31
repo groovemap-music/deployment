@@ -187,6 +187,17 @@ When databases undergo nightly maintenance:
 1. **Message Processing**: Queued messages process in order
 1. **Idempotency**: Duplicate prevention via SHA256 hashes
 
+### External PostgreSQL and Valkey
+
+With `GROOVEMAP_POSTGRES=external` or `GROOVEMAP_VALKEY=external` the same behavior applies to
+the shared server's maintenance windows, which its operator schedules and you do not control.
+Plan for them: the Discogs gate and `just deploy` read the external database through the
+`store-check-postgres` container, and an unreachable server is reported as "cannot determine"
+(`just discogs-import-status` exit 2), never as complete, so a window during the first load pauses
+the wait and never starts MusicBrainz early. The tests below stop local containers and do not
+apply to an external server; never stop or restart another application's store to rehearse them.
+See [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey).
+
 ## Monitoring
 
 ### Health Endpoints

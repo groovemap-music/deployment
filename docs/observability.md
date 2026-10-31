@@ -267,6 +267,19 @@ authentication of their own.
 Job names deliberately match the docker-compose service keys, which is what the
 dashboards filter on.
 
+The targets above are the dedicated, local-monitoring defaults. They change with the store and
+monitoring decisions in `.env`, and the job names stay the same:
+
+- With `GROOVEMAP_POSTGRES=external` the local `postgres-exporter` does not run. The
+  `postgres-exporter` job has no target unless `EXTERNAL_POSTGRES_EXPORTER_ADDRESS=host:port` names
+  the exporter that already watches that server; the console then probes that address instead of
+  `postgres-exporter:9187`. `GROOVEMAP_VALKEY=external` likewise leaves `valkey-exporter` without a
+  target.
+- With `GROOVEMAP_MONITORING=shared` there is no local `cadvisor` or `node-exporter`; their jobs
+  scrape `SHARED_CADVISOR_ADDRESS` and `SHARED_NODE_EXPORTER_ADDRESS` when set, and have no target
+  when not. The collector reads these endpoints from its environment, and its healthcheck
+  validates that same configuration.
+
 The broker's `:15692` endpoint is also published on `127.0.0.1` only, and it is
 the single source of queue statistics (ADR 0017). The management plugin's metrics
 collector is disabled (`management_agent.disable_metrics_collector = true`), so
@@ -338,7 +351,10 @@ exporter. Neo4j is observed through the application-side
 Development enables anonymous `Viewer` access so the dashboards open without a
 login. Production disables it and sources the admin password from the
 `grafana_admin_password` Docker secret, created by
-`bash scripts/create-secrets.sh`.
+`bash scripts/create-secrets.sh`. Grafana runs as the owner of the 0600 secret files (not the
+image's UID 472), so a `grafana_data` volume from before that change needs the one-time re-own in
+[Grafana now runs as your user](homelab.md#grafana-now-runs-as-your-user). With shared monitoring
+this stack runs no Grafana and creates no admin password; see [Shared Grafana](#shared-grafana).
 
 ## Conventions
 
