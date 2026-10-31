@@ -92,7 +92,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{service_name}}",
           "range": true,
           "refId": "A"
@@ -185,7 +185,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\"}[$__rate_interval])), 0.001)",
+          "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum by (service_name) (rate(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\"}[$__rate_interval])), 0.001)",
           "legendFormat": "{{service_name}}",
           "range": true,
           "refId": "A"
@@ -278,7 +278,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_namespace=\"groovemap\", service_name=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "{{service_name}} p50",
           "range": true,
           "refId": "A"
@@ -289,7 +289,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_namespace=\"groovemap\", service_name=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "{{service_name}} p95",
           "range": true,
           "refId": "B"
@@ -300,7 +300,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_namespace=\"groovemap\", service_name=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "{{service_name}} p99",
           "range": true,
           "refId": "C"
@@ -393,7 +393,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\", span_name=~\"$span\"}[$__rate_interval]))",
+          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\", span_name=~\"$span\"}[$__rate_interval]))",
           "legendFormat": "{{span_name}}",
           "range": true,
           "refId": "A"
@@ -486,7 +486,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"$service\", span_name=~\"$span\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, span_name) (rate(traces_span_metrics_duration_seconds_bucket{service_namespace=\"groovemap\", service_name=~\"$service\", span_name=~\"$span\"}[$__rate_interval])))",
           "legendFormat": "{{span_name}}",
           "range": true,
           "refId": "A"
@@ -579,7 +579,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\", span_name=~\"$span\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
+          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\", span_name=~\"$span\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
           "legendFormat": "{{span_name}}",
           "range": true,
           "refId": "A"
@@ -632,7 +632,7 @@
             "uid": "${DS_TEMPO}"
           },
           "limit": 20,
-          "query": "{resource.service.name=~\"${service:regex}\"}",
+          "query": "{resource.service.namespace=\"groovemap\" && resource.service.name=~\"${service:regex}\"}",
           "queryType": "traceql",
           "refId": "A",
           "tableType": "traces"
@@ -694,7 +694,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(traces_span_metrics_calls_total, service_name)",
+        "definition": "label_values(traces_span_metrics_calls_total{service_namespace=\"groovemap\"}, service_name)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
@@ -703,7 +703,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(traces_span_metrics_calls_total, service_name)",
+          "query": "label_values(traces_span_metrics_calls_total{service_namespace=\"groovemap\"}, service_name)",
           "refId": "serviceVariable"
         },
         "refresh": 2,
@@ -722,7 +722,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"$service\"}, span_name)",
+        "definition": "label_values(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\"}, span_name)",
         "hide": 0,
         "includeAll": true,
         "label": "Span",
@@ -731,7 +731,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"$service\"}, span_name)",
+          "query": "label_values(traces_span_metrics_calls_total{service_namespace=\"groovemap\", service_name=~\"$service\"}, span_name)",
           "refId": "spanVariable"
         },
         "refresh": 2,

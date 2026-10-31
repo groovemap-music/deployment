@@ -138,6 +138,25 @@ remote-write exporter, which promotes the OTEL resource attributes
 (`service.name`, `service.namespace`, `deployment.environment.name`,
 `service.version`) to Prometheus labels.
 
+The remote-write exporter also carries the external label
+`service_namespace="groovemap"`, the stack scope every dashboard and alert query
+selects ([Shared Grafana](#shared-grafana)). Application series already carry it
+from `OTEL_RESOURCE_ATTRIBUTES`, and a series' own label wins over an external
+label, so it changes nothing there; it stamps the scraped exporter series and the
+collector's own, which have no resource namespace. A resource attribute would not
+do: the exporter folds a resource `service.namespace` into `job`
+(`groovemap/rabbitmq`), renaming every scrape job.
+
+The two write endpoints and the scrape targets of the exporters an overlay may
+omit (postgres-exporter, valkey-exporter, cadvisor, node-exporter) are
+`${env:COLLECTOR_*:-default}` references, expanded by the collector from its
+container environment. The defaults are the stack's own services and the base and
+production files set no `COLLECTOR_*` variable, so the local configuration is
+exactly the one written in the file. The shared-monitoring and external-store
+overlays set only those variables ([configuration](configuration.md#shared-monitoring));
+a `*_TARGETS` value of `[]` is a job with no target, which scrapes nothing and
+writes no `up` series, so an omitted exporter is never reported down.
+
 The `spanmetrics` connector sits in both pipelines at once: it is an exporter
 of the traces pipeline and a receiver of the metrics pipeline. Every span that
 passes through becomes RED metrics — request rate, error rate, duration — with
@@ -156,7 +175,9 @@ runs here and it would only add a constant label to every series.
 
 The collector image is distroless, so its container healthcheck re-validates the
 mounted config with the collector's own binary rather than calling an HTTP
-endpoint. The operator-facing liveness probe is
+endpoint. It runs in the collector's own container environment, so it validates
+the same effective configuration, overlay endpoints included: a shared endpoint
+the exporters reject makes the collector unhealthy. The operator-facing liveness probe is
 `http://otel-collector:13133/`, reachable from any other container on the
 `groovemap` network.
 
@@ -933,6 +954,72 @@ dashboards.
 4. Add a row to the table above and to `EXPECTED_ALERT_SEVERITIES` in
    `tests/deploy/test_dashboards.py`; the rule set is closed on both sides.
 5. Run `uv run python scripts/check-dashboards.py`, then `just check`.
+
+## Shared Grafana
+
+The same dashboards and alert rules serve this stack's own Grafana and a
+Grafana, VictoriaMetrics and VictoriaTraces shared with other stacks
+([shared monitoring](homelab.md#shared-monitoring)). What makes that safe is the
+stack scope:
+
+- Every series GrooveMap writes carries `service_namespace="groovemap"`: the
+  services set it in `OTEL_RESOURCE_ATTRIBUTES` and the collector stamps it on
+  everything it scrapes (an external label, above).
+- Every metric selector in every dashboard panel, dashboard variable
+  (`label_values(<selector>, <label>)`) and alert rule selects
+  `service_namespace="groovemap"`, and the TraceQL panel filters on
+  `resource.service.namespace="groovemap"`. A shared VictoriaMetrics holding
+  another stack's `rabbitmq_*`, `node_*` or `up` series therefore never shows
+  them on a GrooveMap panel, and `ScrapeTargetDown` never fires for another
+  stack's target.
+- `scripts/check-dashboards.py` (part of `just check`) fails any panel, variable
+  or alert query with a selector that does not carry the scope, and any TraceQL
+  panel query without it. A new panel must write
+  `metric{service_namespace="groovemap", ...}`.
+
+Series written before the scope label existed have it only on the application
+series, so the scoped infrastructure panels start at that upgrade. The explore
+links inside the Traces dashboard filter by service or span name only.
+
+### Import procedure
+
+Do this once on the shared Grafana, and again whenever a deployment update
+changes `config/grafana/` (dashboards are code; never edit them in the UI).
+Mounting the checkout's directories into the shared Grafana's provisioning keeps
+them in sync without a manual step.
+
+1. **Give GrooveMap an organization of its own** (Administration > General >
+   Organizations > New org, for example `GrooveMap`). It keeps the datasource uids
+   below from colliding with the main organization's, and keeps the console's
+   Viewer token to GrooveMap's alerts only. Note its id. Using an existing
+   organization works too, as long as the uids are free there.
+2. **Datasources.** In that organization, add the shared VictoriaMetrics as a
+   Prometheus datasource with uid `prometheus`, and the shared VictoriaTraces as a
+   Tempo datasource with uid `tempo` and URL `<VictoriaTraces>/select/tempo`. As
+   provisioning, copy `config/grafana/provisioning/datasources/prometheus.yaml`,
+   set `orgId` on both entries and replace the two URLs with the shared ones. The
+   alert rules name the uid `prometheus` directly, so it must be exactly that; the
+   dashboards bind to any datasource through their `DS_PROMETHEUS` and `DS_TEMPO`
+   variables.
+3. **Dashboards.** Either provision them: put `config/grafana/dashboards/*.json`
+   where the shared Grafana can read them and add a provider like
+   `config/grafana/provisioning/dashboards/groovemap.yaml` with your `orgId` and
+   that `path` (folder `GrooveMap`); or import each JSON in the UI (Dashboards >
+   New > Import) into a `GrooveMap` folder, choosing the datasources from step 2.
+   Keep the uids (`groovemap-*`): the console's deep links use them.
+4. **Alert rules.** Provision `config/grafana/provisioning/alerting/groovemap.yaml`
+   with its `orgId: 1` changed to your organization's id. Grafana rejects the whole
+   file if `prometheus` does not resolve in that organization.
+5. **Check** in Explore, with the `prometheus` datasource:
+   `count by (job) (up{service_namespace="groovemap"})` lists GrooveMap's scrape
+   jobs (the shared exporters only when their addresses are set) and nothing of
+   another stack, and the GrooveMap folder's panels draw data.
+6. **Optional:** a Viewer token for the console's alerts, created on this Grafana:
+   [Grafana Viewer token](maintenance.md#on-a-shared-grafana).
+
+The console's deep links open the dashboards at `GRAFANA_URL`; with a separate
+organization, switch to it in Grafana once (or add `?orgId=<id>` to a link) if a
+link opens a dashboard that is not found.
 
 
 ## Verification

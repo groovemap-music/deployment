@@ -686,7 +686,7 @@ def store_settings(args: argparse.Namespace, environ: Mapping[str, str]) -> tupl
 
 
 def compose_files(args: argparse.Namespace, configured: Any = None) -> list[str]:
-    """`--prod` names the files relative to the repository root, where the probes run, and adds the external-store overlays."""
+    """`--prod` names the files relative to the repository root, where the probes run, and adds the overlays `.env` selects (external stores, shared monitoring)."""
     files = [*PROD_COMPOSE_FILES, *(configured or stores.Stores()).overlays] if args.prod else []
     return files + [str(Path(path).resolve()) for path in args.files]
 

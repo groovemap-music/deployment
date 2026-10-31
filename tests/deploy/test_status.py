@@ -288,3 +288,15 @@ def test_status_only_reads(tmp_path: Path) -> None:
     }
     assert verbs <= {"ps", "inspect", "compose exec", "compose run"}, verbs
     assert not any(word in call for call in engine.calls for word in ("pull", "up", "start", "stop", "rm", "down"))
+
+
+def test_shared_monitoring_services_read_as_shared_not_missing(tmp_path: Path) -> None:
+    """In shared mode the omitted monitoring services are the shared ones, not services that failed to install."""
+    containers = stack(*(name for name in CORE if name not in status.stores.SHARED_MONITORING_SERVICES))
+    _, out, _ = run(FakeEngine(containers), tmp_path, "GROOVEMAP_MONITORING=shared\n")
+    assert "Monitoring   shared (.env)" in out
+    for service in status.stores.SHARED_MONITORING_SERVICES:
+        assert "shared  - GROOVEMAP_MONITORING=shared" in line(out, service), service
+    _, local, _ = run(FakeEngine(containers), tmp_path, "")
+    assert "Monitoring   local (default)" in local
+    assert "not installed" in line(local, "grafana")

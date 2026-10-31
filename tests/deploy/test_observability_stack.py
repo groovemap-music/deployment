@@ -24,6 +24,7 @@ from typing import Any
 
 import yaml
 
+from tests.deploy import collector_config
 from tests.deploy.test_docker_compose_prod import _load_compose, default_port
 
 
@@ -55,8 +56,8 @@ def _prod_compose() -> dict[str, Any]:
 
 
 def _collector_config() -> dict[str, Any]:
-    loaded: dict[str, Any] = yaml.safe_load(COLLECTOR_CONFIG.read_text())
-    return loaded
+    """The effective configuration of the local stack: every `${env:COLLECTOR_*:-default}` at its default."""
+    return collector_config.effective()
 
 
 class TestBackendServicesExist:

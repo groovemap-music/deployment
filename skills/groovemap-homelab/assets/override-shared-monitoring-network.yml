@@ -1,0 +1,29 @@
+---
+# Example docker-compose.override.yml: GrooveMap reports to an existing Grafana, VictoriaMetrics,
+# VictoriaTraces, node-exporter and cAdvisor (GROOVEMAP_MONITORING=shared in .env) that run as
+# containers on their own Docker network, so SHARED_VICTORIA_METRICS_URL, SHARED_VICTORIA_TRACES_URL,
+# SHARED_GRAFANA_URL and the SHARED_*_ADDRESS values use the container names or aliases on that
+# network (references/shared-services.md, Shared monitoring).
+#
+# Docker resolves a name only on a shared network. Exactly two GrooveMap services talk to the shared
+# monitoring services, and both join it (MONITORING_CLIENTS in scripts/stores.py; the tests keep this
+# list equal to it):
+#   - otel-collector remote-writes metrics and pushes spans to the shared stores, and scrapes the
+#     shared node-exporter and cAdvisor (and EXTERNAL_POSTGRES_EXPORTER_ADDRESS, if set);
+#   - dashboard, the operations console, probes all of them and reads history and alerts.
+# No other service needs it: the applications send telemetry only to otel-collector, on groovemap.
+# The shared Grafana reads the shared VictoriaMetrics itself and never reaches into GrooveMap.
+# Replace monitoring_network with the name `docker network ls` shows. Not needed when the shared
+# services are reached by a LAN address or host.docker.internal.
+services:
+  dashboard:
+    networks:
+      monitoring: {}
+  otel-collector:
+    networks:
+      monitoring: {}
+
+networks:
+  monitoring:
+    external: true
+    name: monitoring_network
