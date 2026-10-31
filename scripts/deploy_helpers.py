@@ -38,6 +38,7 @@ import ipaddress
 import json
 import math
 import os
+import posixpath
 import re
 import shutil
 import socket
@@ -123,6 +124,29 @@ OVERRIDE_DATA_TIER_ISOLATED = (
 OVERRIDE_ALLOW_VARIABLE = "OVERRIDE_ALLOW_SERVICES"
 DIGEST_PINNED = re.compile(r"@sha256:[0-9a-f]{64}$")
 STACK_NETWORK = "groovemap"
+# The only keys an override-only service may set without an OVERRIDE_ALLOW_SERVICES opt-in.
+# ports, network_mode and build have their own rules (and their own messages) below.
+OVERRIDE_NEW_SERVICE_KEYS = frozenset(
+    {
+        "image", "command", "entrypoint", "environment", "env_file", "labels", "networks", "restart", "healthcheck", "logging",
+        "user", "working_dir", "read_only", "tmpfs", "init", "stop_grace_period", "deploy", "container_name", "depends_on", "volumes",
+        "ports", "network_mode", "build",
+    }
+)  # fmt: skip
+OVERRIDE_NEW_SERVICE_DEPLOY_KEYS = frozenset({"resources"})
+# Keys that give a container more of the host than the base file does; adding or changing one
+# on a service of the stack stops, with no opt-in.
+OVERRIDE_HOST_ACCESS_KEYS = (
+    "privileged", "cap_add", "devices", "security_opt", "pid", "ipc", "uts", "cgroup", "cgroup_parent", "userns_mode", "volumes_from",
+)  # fmt: skip
+# Host paths no override mount (or bind-backed named volume) may expose, with everything under
+# them and everything above them (mounting /var/lib or /run reaches the sockets below).
+OVERRIDE_SENSITIVE_PATHS = (
+    "/var/run/docker.sock", "/run/docker.sock", "/var/run/podman", "/run/podman", "/var/run/containerd", "/run/containerd",
+    "/var/lib/docker", "/var/lib/containerd", "/var/lib/podman", "/var/lib/containers", "/proc", "/sys", "/dev", "/etc", "/root", "/boot",
+)  # fmt: skip
+# Rootless engines keep their sockets under /run/user/<uid>.
+ROOTLESS_SOCKET = re.compile(r"^/run/user/\d+/(docker|podman|containerd)")
 
 
 @dataclass(frozen=True)
@@ -492,7 +516,112 @@ def _joins_stack_network(service: Mapping[str, Any], networks: Mapping[str, Any]
     return service.get("network_mode") not in (None, "", "none", "bridge")
 
 
-def _check_new_service(name: str, service: Mapping[str, Any], networks: Mapping[str, Any], allowed: frozenset[str]) -> list[Finding]:
+def sensitive_host_path(path: str) -> bool:
+    """True for `/`, a documented sensitive host path, anything under one, or a parent that contains one."""
+    if not path.startswith("/"):
+        return False
+    normal = posixpath.normpath(path)
+    if normal in ("/", "//") or ROOTLESS_SOCKET.match(normal) or re.match(r"^/run/user(/\d+)?$", normal):
+        return True
+    return any(normal == bad or normal.startswith(bad + "/") or bad.startswith(normal + "/") for bad in OVERRIDE_SENSITIVE_PATHS)
+
+
+def _mounts(service: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A service's volumes as long-syntax mappings; short strings ("src:target[:mode]") are expanded."""
+    mounts = []
+    for entry in service.get("volumes") or []:
+        if isinstance(entry, dict):
+            mounts.append(dict(entry))
+            continue
+        parts = str(entry).split(":")
+        if len(parts) == 1:
+            mounts.append({"type": "volume", "target": parts[0]})
+            continue
+        source = parts[0]
+        kind = "bind" if source.startswith(("/", ".", "~")) else "volume"
+        mounts.append({"type": kind, "source": source, "target": parts[1]})
+    return mounts
+
+
+def _mount_id(mount: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (str(mount.get("type") or "volume"), str(mount.get("source") or ""), str(mount.get("target") or ""))
+
+
+def _volume_owners(before: Mapping[str, Any]) -> dict[str, set[str]]:
+    """Each named volume of the base stack and the services that mount it (an unmounted one has none)."""
+    owners: dict[str, set[str]] = {name: set() for name in before.get("volumes") or {}}
+    for name, service in (before.get("services") or {}).items():
+        for mount in _mounts(service):
+            if mount.get("type", "volume") == "volume" and mount.get("source"):
+                owners.setdefault(str(mount["source"]), set()).add(name)
+    return owners
+
+
+def _check_mounts(
+    name: str,
+    service: Mapping[str, Any],
+    previous: Mapping[str, Any],
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    owners: Mapping[str, set[str]],
+    new: bool,
+) -> list[Finding]:
+    """Stop mounts that reach the host or another service's data; a service's own volume may move."""
+    findings = []
+    known = {_mount_id(mount) for mount in _mounts(previous)}
+    definitions, base_definitions = after.get("volumes") or {}, before.get("volumes") or {}
+    who = f"{name} service" if new else name
+    for mount in _mounts(service):
+        kind, source, _ = _mount_id(mount)
+        fresh = _mount_id(mount) not in known
+        if kind == "bind":
+            if fresh and sensitive_host_path(source):
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} mounts the sensitive host path {source} into {who}",
+                        _volume_hint(new, name, "host paths such as the Docker socket, /etc, /proc or /"),
+                    )
+                )
+        elif kind == "volume":
+            if source in owners and fresh and name not in owners[source]:
+                holders = ", ".join(sorted(owners[source])) or "no service"
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} mounts the stack volume {source} (used by {holders}) into {who}",
+                        _volume_hint(new, name, "another service's data volume"),
+                    )
+                )
+            device = str(((definitions.get(source) or {}).get("driver_opts") or {}).get("device") or "")
+            if source and device and (definitions.get(source) or {}) != (base_definitions.get(source) or {}) and sensitive_host_path(device):
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} backs the volume {source} of {who} with the sensitive host path {device}",
+                        _volume_hint(new, name, "host paths such as the Docker socket, /etc, /proc or /"),
+                    )
+                )
+        elif kind != "tmpfs":
+            findings.append(
+                Finding(
+                    "stop",
+                    f"{OVERRIDE_FILE} mounts a {kind} volume into {who}",
+                    _volume_hint(new, name, "mount types other than volume, bind and tmpfs"),
+                )
+            )
+    return findings
+
+
+def _volume_hint(new: bool, name: str, what: str) -> str:
+    if new:
+        return f"An added service may not mount {what}. If {name} must (a backup sidecar, say), add it to {OVERRIDE_ALLOW_VARIABLE} in .env (comma-separated service names), then re-run."
+    return f"An override may relocate a service's own data volume, but not mount {what}. This rule has no opt-in."
+
+
+def _check_new_service(
+    name: str, service: Mapping[str, Any], networks: Mapping[str, Any], allowed: frozenset[str], mounts: list[Finding] | None = None
+) -> list[Finding]:
     optin = f"To allow it, add {name} to {OVERRIDE_ALLOW_VARIABLE} in .env (comma-separated service names), then re-run"
     findings = []
     image = str(service.get("image") or "")
@@ -517,6 +646,19 @@ def _check_new_service(name: str, service: Mapping[str, Any], networks: Mapping[
                     f"{optin}. Without it, leave it on the default network (omit networks).",
                 )
             )
+        for key, value in service.items():
+            if key not in OVERRIDE_NEW_SERVICE_KEYS and value:
+                findings.append(
+                    Finding("stop", f"{OVERRIDE_FILE} adds the {name} service with {key}, which an added service may not set", f"{optin}.")
+                )
+        extra = set(service.get("deploy") or {}) - OVERRIDE_NEW_SERVICE_DEPLOY_KEYS
+        if extra:
+            findings.append(
+                Finding(
+                    "stop", f"{OVERRIDE_FILE} adds the {name} service with deploy.{sorted(extra)[0]}, which an added service may not set", f"{optin}."
+                )
+            )
+        findings += mounts or []
     return findings
 
 
@@ -529,12 +671,17 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
     Compose's own renders (`config --format json`) judges what the merge does, `!override` and
     `!reset` included, rather than how the file spells it.
 
+    Services the override adds may set only OVERRIDE_NEW_SERVICE_KEYS and may mount only new named
+    volumes or non-sensitive host paths unless named in `allowed`; existing services may not gain
+    OVERRIDE_HOST_ACCESS_KEYS, sensitive mounts or another service's data volume.
+
     Services the override adds must be pinned by digest. One that publishes ports or joins the
     groovemap network (a forwarder into the data tier, say) must also be named in `allowed`.
     A new service on the project's default network alone cannot reach the stack, so it passes.
     """
     findings = []
     rendered = after.get("services") or {}
+    owners = _volume_owners(before)
     for name, service in (before.get("services") or {}).items():
         if name not in rendered:
             findings.append(Finding("stop", f"{OVERRIDE_FILE} removes the {name} service", "Leave the stack's services in place."))
@@ -557,9 +704,20 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
             for key, why in OVERRIDE_DATA_TIER_ISOLATED:
                 if service.get(key) != changed.get(key):
                     findings.append(Finding("stop", f"{OVERRIDE_FILE} changes {key} on {name}", f"Remove it: {why}."))
+        for key in OVERRIDE_HOST_ACCESS_KEYS:
+            if changed.get(key) and changed.get(key) != service.get(key):
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"{OVERRIDE_FILE} adds {key} to {name}",
+                        "Remove it: an override may not widen a stack service's access to the host. This rule has no opt-in.",
+                    )
+                )
+        findings += _check_mounts(name, changed, service, before, after, owners, False)
     for name, service in rendered.items():
         if name not in (before.get("services") or {}):
-            findings += _check_new_service(name, service, after.get("networks") or {}, allowed)
+            mounts = [] if name in allowed else _check_mounts(name, service, {}, before, after, owners, True)
+            findings += _check_new_service(name, service, after.get("networks") or {}, allowed, mounts)
     if not findings:
         findings.append(Finding("ok", f"{OVERRIDE_FILE} changes only host-specific settings"))
     return findings

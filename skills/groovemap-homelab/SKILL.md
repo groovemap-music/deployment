@@ -155,6 +155,9 @@ Inside the checkout:
 3. Write `docker-compose.override.yml` from [references/override.md](references/override.md),
    [references/reverse-proxy.md](references/reverse-proxy.md) and the examples in `assets/`.
    Keep it to proxy labels and networks, volume locations, restart policies and the subnet.
+   The check denies unknown keys on added services, host-access keys on existing ones, and
+   mounts of the Docker socket, sensitive host paths or another service's data volume. A
+   backup sidecar (it reads `postgres_data`) needs `OVERRIDE_ALLOW_SERVICES` in `.env`.
 4. `just secrets-bootstrap` writes the missing `secrets/` files and never replaces existing
    ones.
 5. Validate the merge without starting anything:

@@ -36,20 +36,54 @@ changes any of these on a GrooveMap service:
 
 It also stops if the override removes a service.
 
+The check denies what it does not understand. On a service that already exists it also
+stops (no opt-in) when the override adds or changes any of these:
+
+| Key or mount | Why |
+| --- | --- |
+| `privileged`, `cap_add`, `devices`, `security_opt` | Wider access to the host than the base file grants |
+| `pid`, `ipc`, `uts`, `cgroup`, `cgroup_parent`, `userns_mode`, `volumes_from` | Shares another container's or the host's namespaces or data |
+| a bind mount of a sensitive host path | The Docker socket or the host's own files |
+| a mount of a named volume that another service uses (or that no service uses) | Another service's data, such as `postgres_data` |
+
+A service may still move **its own** data volume: a bind mount at its data path, or `driver_opts`
+on its top-level volume ([storage.md](storage.md)), as in `assets/override-storage.yml`. That
+stays allowed unless the target is a sensitive host path.
+
+Sensitive host paths: `/`; the Docker, containerd and podman sockets (`/var/run/docker.sock`,
+`/run/docker.sock`, `/run/podman`, `/run/containerd`, `/var/run/...` equivalents and
+`/run/user/<uid>/docker|podman|containerd`); `/var/lib/docker`, `/var/lib/containerd`,
+`/var/lib/podman`, `/var/lib/containers`; `/proc`, `/sys`, `/dev`, `/etc`, `/root`, `/boot`;
+anything under them; and any parent that contains one (`/var/lib`, `/run`). Paths are
+compared after `..` is resolved, but symlinks are not followed, so do not point a bind at a
+symlink to one of these.
+
 ### Services you add
 
 A service that exists only in the override (a backup job, a tunnel sidecar) is allowed if:
 
 - its `image` is pinned by digest (`repo@sha256:<64 hex digits>`), with no `build`. There is no opt-in for this.
+- it sets only these keys: `image`, `command`, `entrypoint`, `environment`, `env_file`,
+  `labels`, `networks`, `restart`, `healthcheck`, `logging`, `user`, `working_dir`,
+  `read_only`, `tmpfs`, `init`, `stop_grace_period`, `deploy.resources`, `container_name`,
+  `depends_on` and `volumes`. Anything else (`privileged`, `cap_add`, `devices`,
+  `security_opt`, `volumes_from`, `pid`/`ipc`/`uts`/`cgroup`, ...) stops.
+- its `volumes` are new named volumes, `tmpfs`, or host paths outside the sensitive list. It
+  does not mount a stack volume (`postgres_data`, `neo4j_data`, ...) or the Docker socket.
 - it publishes no `ports` and does not join the `groovemap` network (by network, by a renamed
-  network, or through `network_mode: service:...`), unless you name it in
-  `OVERRIDE_ALLOW_SERVICES` in `.env` (or the shell), comma-separated:
-  `OVERRIDE_ALLOW_SERVICES=pg-forward,backup`.
+  network, or through `network_mode: service:...`).
+
+Name the service in `OVERRIDE_ALLOW_SERVICES` in `.env` (or the shell), comma-separated, to
+lift every rule above except the digest pin and no `build`:
+`OVERRIDE_ALLOW_SERVICES=pg-forward,backup`.
+
+**A backup sidecar needs `OVERRIDE_ALLOW_SERVICES`.** Reading `postgres_data` or `neo4j_data`
+(or a socket) is exactly what the check stops, so add the sidecar's name to the variable, keep
+it digest-pinned, and mount the volumes read-only.
 
 A new service that omits `networks` lands on the project's default network, which has no route
 to the stack, so it needs no opt-in. Listing a service is a decision to let it reach (or expose)
-the stack, so a socat forwarder into postgres needs it. Each message names the service and the
-rule, for example `docker-compose.override.yml adds the pg-forward service and publishes ports`.
+the stack, so a socat forwarder into postgres needs it. Each message names the service, the key or mount and the opt-in, for example `docker-compose.override.yml adds the pg-forward service and publishes ports`.
 
 ## Merge behavior
 
