@@ -32,9 +32,24 @@ changes any of these on a GrooveMap service:
 | `container_name` | deploy finds the stack by its `groovemap-*` container names |
 | `profiles` | Only deploy turns on `musicbrainz`, after the import gate reports complete |
 | `ports`, `network_mode` on postgres, neo4j, rabbitmq, valkey, victoria-metrics, victoria-traces | Data-tier ports move only through `.env` bind addresses and `*_HOST_PORT` |
+| `networks`, `labels`, `extra_hosts` on the same six data-tier services | Proxy networks, Traefik TCP routers and hosts entries would expose or redirect the data tier. Attach only `explore`, `dashboard` and `grafana` (or `api`) to a proxy network |
 
-It also stops if the override removes a service. Adding services of your own (a backup job, a
-tunnel sidecar) is allowed.
+It also stops if the override removes a service.
+
+### Services you add
+
+A service that exists only in the override (a backup job, a tunnel sidecar) is allowed if:
+
+- its `image` is pinned by digest (`repo@sha256:<64 hex digits>`), with no `build`. There is no opt-in for this.
+- it publishes no `ports` and does not join the `groovemap` network (by network, by a renamed
+  network, or through `network_mode: service:...`), unless you name it in
+  `OVERRIDE_ALLOW_SERVICES` in `.env` (or the shell), comma-separated:
+  `OVERRIDE_ALLOW_SERVICES=pg-forward,backup`.
+
+A new service that omits `networks` lands on the project's default network, which has no route
+to the stack, so it needs no opt-in. Listing a service is a decision to let it reach (or expose)
+the stack, so a socat forwarder into postgres needs it. Each message names the service and the
+rule, for example `docker-compose.override.yml adds the pg-forward service and publishes ports`.
 
 ## Merge behavior
 

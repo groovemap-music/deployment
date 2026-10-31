@@ -436,12 +436,23 @@ def _render(**services: dict[str, Any]) -> dict[str, Any]:
     return {"services": {name: {**service, **services.get(name, {})} for name, service in stack.items()}}
 
 
+PINNED = "backup@sha256:" + "ab" * 32
+FORWARDER = {"image": PINNED, "ports": [{"target": 5432, "published": "5432"}], "networks": {"groovemap": None}}
+
+
+def _with_new(name: str, service: dict[str, Any]) -> dict[str, Any]:
+    after = _render()
+    after["services"][name] = service
+    after["networks"] = {"groovemap": {"name": "lab_groovemap"}, "proxy": {"name": "proxy_network"}}
+    return after
+
+
 def test_override_may_add_proxy_networks_labels_storage_and_restart_policies() -> None:
     proxied = _render(
         explore={"networks": {"groovemap": None, "proxy": {}}, "labels": {"traefik.enable": "true"}, "restart": "unless-stopped"},
         postgres={"volumes": [{"type": "bind", "source": "/mnt/tank/pg", "target": "/var/lib/postgresql/data"}]},
     )
-    proxied["services"]["sidecar"] = {"image": "tailscale/tailscale:stable"}
+    proxied["services"]["sidecar"] = {"image": PINNED}
     findings = helpers.check_override(_render(), proxied)
     assert [finding.level for finding in findings] == ["ok"]
 
@@ -463,6 +474,79 @@ def test_override_must_not_bypass_digests_the_gate_or_the_data_tier_binds(servic
     assert [finding.level for finding in findings] == ["stop"]
     assert service in findings[0].message
     assert why in findings[0].hint
+
+
+@pytest.mark.parametrize(
+    ("service", "change", "rule"),
+    [
+        ("postgres", {"networks": {"groovemap": None, "proxy": {}}}, "changes networks on postgres"),
+        ("neo4j", {"labels": {"traefik.tcp.routers.bolt.rule": "HostSNI(`*`)"}}, "changes labels on neo4j"),
+        ("rabbitmq", {"extra_hosts": ["postgres:10.0.0.9"]}, "changes extra_hosts on rabbitmq"),
+    ],
+)
+def test_override_keeps_the_data_tier_off_proxies_and_hosts_entries(service: str, change: dict[str, Any], rule: str) -> None:
+    before = _render(neo4j={"image": "n@sha256:dd"}, rabbitmq={"image": "r@sha256:ee"})
+    before["services"]["neo4j"] = {"image": "n@sha256:dd"}
+    before["services"]["rabbitmq"] = {"image": "r@sha256:ee"}
+    after = json.loads(json.dumps(before))
+    after["services"].setdefault(service, {}).update(change)
+    findings = helpers.check_override(before, after)
+    assert [finding.level for finding in findings] == ["stop"]
+    assert rule in findings[0].message
+
+
+def test_override_may_still_proxy_a_service_outside_the_data_tier() -> None:
+    after = _render(explore={"networks": {"groovemap": None, "proxy": {}}, "labels": {"traefik.enable": "true"}, "extra_hosts": ["a:10.0.0.1"]})
+    assert [finding.level for finding in helpers.check_override(_render(), after)] == ["ok"]
+
+
+@pytest.mark.parametrize("image", ["backup:latest", "backup@sha256:aa", ""])
+def test_a_new_service_needs_a_digest_pinned_image(image: str) -> None:
+    findings = helpers.check_override(_render(), _with_new("backup", {"image": image}), frozenset({"backup"}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "adds the backup service with an image that is not pinned by digest" in findings[0].message
+
+
+def test_a_new_forwarder_publishing_a_port_into_the_stack_network_stops() -> None:
+    findings = helpers.check_override(_render(), _with_new("pg-forward", FORWARDER))
+    assert [finding.level for finding in findings] == ["stop", "stop"]
+    assert "adds the pg-forward service and publishes ports" in findings[0].message
+    assert "adds the pg-forward service on the groovemap network" in findings[1].message
+    assert "OVERRIDE_ALLOW_SERVICES" in findings[0].hint
+
+
+def test_a_new_service_on_a_renamed_stack_network_or_a_shared_namespace_counts_as_joining() -> None:
+    renamed = _with_new("tool", {"image": PINNED, "networks": {"proxy": None}})
+    renamed["networks"]["proxy"] = {"name": "lab_groovemap"}
+    assert "on the groovemap network" in helpers.check_override(_render(), renamed)[0].message
+    shared = _with_new("tool", {"image": PINNED, "network_mode": "service:postgres"})
+    assert "on the groovemap network" in helpers.check_override(_render(), shared)[0].message
+
+
+def test_an_allowlisted_new_service_may_publish_and_join_but_still_needs_a_digest() -> None:
+    assert [finding.level for finding in helpers.check_override(_render(), _with_new("pg-forward", FORWARDER), frozenset({"pg-forward"}))] == ["ok"]
+    unpinned = _with_new("pg-forward", {**FORWARDER, "image": "alpine/socat:latest"})
+    assert [finding.level for finding in helpers.check_override(_render(), unpinned, frozenset({"pg-forward"}))] == ["stop"]
+
+
+def test_a_new_service_on_the_default_network_only_is_allowed() -> None:
+    assert [
+        finding.level for finding in helpers.check_override(_render(), _with_new("backup", {"image": PINNED, "networks": {"default": None}}))
+    ] == ["ok"]
+
+
+def test_the_allowlist_variable_comes_from_env_or_the_shell() -> None:
+    assert helpers.parse_allowed_services("a, b  c,") == {"a", "b", "c"}
+
+
+def test_override_check_command_honours_the_allowlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    before, after = tmp_path / "before.json", tmp_path / "after.json"
+    before.write_text(json.dumps(_render()))
+    after.write_text(json.dumps(_with_new("pg-forward", FORWARDER)))
+    monkeypatch.delenv("OVERRIDE_ALLOW_SERVICES", raising=False)
+    assert helpers.main(["override-check", str(before), str(after)]) == 3
+    monkeypatch.setenv("OVERRIDE_ALLOW_SERVICES", "pg-forward")
+    assert helpers.main(["override-check", str(before), str(after)]) == 0
 
 
 def test_override_must_not_drop_a_service() -> None:
