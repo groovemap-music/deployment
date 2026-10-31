@@ -8,6 +8,7 @@ architecture overview.
 
 ## Start here
 
+- [Run GrooveMap in your homelab](homelab.md): prerequisites, sizing, the one-command install, the staged first load, ports, reverse proxy, upgrades.
 - [Quick start](quick-start.md)
 - [Architecture](architecture.md)
 - [Configuration](configuration.md)

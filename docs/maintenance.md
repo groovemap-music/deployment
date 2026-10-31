@@ -206,6 +206,11 @@ therefore sits behind the `musicbrainz` Compose profile, so a plain `up` leaves 
 of the three is a dependency of any other Compose service, so nothing else fails to start
 without them. Leave `COMPOSE_PROFILES` unset in `.env` for the first load.
 
+`just deploy` automates this whole sequence: it starts the stack without the profile, waits
+on the gate described below, then sets `COMPOSE_PROFILES=musicbrainz` and starts MusicBrainz
+(see the [homelab guide](homelab.md#the-first-load-discogs-before-musicbrainz)). The manual
+steps that follow are what it runs.
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait
 ```
