@@ -23,6 +23,19 @@ It is written for an operator or agent with no other context. Work through it fr
 bottom. Every step names a command, the result to expect, and what to do when the result
 differs. Every constraint states its reason.
 
+> **Status (2026-10-31): the reviewed release set carries this rollout.** The coupled releases
+> are published, attested and recorded in `RELEASED_IMAGE_DIGESTS`: `musicbrainz-graph-enricher`
+> `v0.4.0` (health `8001`), `musicbrainz-sql-loader` `v0.5.0` (health `8002`),
+> `operations-console` `v0.2.0` (no AMQP credentials), `catalog-api` `v0.6.0` and
+> `database-schema` `v0.6.0`, together with `discogs-ingestion` `v0.4.0`,
+> `musicbrainz-ingestion` `v0.3.0` and `graph-explorer` `v0.2.2`. T1 to T3 and F1 to F4 are
+> satisfied by that set; T4 and F5 to F7 are deployment and operator steps. Disposable
+> `smoke-released`, `smoke-media` and `smoke-erasure` runs on unmodified Compose files passed
+> ([record](maintenance.md#promotion-of-the-lagging-service-images-2026-10-31)). The Discogs
+> consumers stay at `v0.3.0`; their `HEALTH_PORT` override and exit-1 commits are unreleased
+> (O5). Applying the set to a live environment is still the approval-gated procedure below. The
+> text below is the original plan and keeps its historical version numbers.
+
 ## Conventions
 
 - `WORKSPACE` is the directory that holds the sibling clones (`$WORKSPACE/catalog-api`,

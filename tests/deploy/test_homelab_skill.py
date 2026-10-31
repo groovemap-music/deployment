@@ -214,7 +214,7 @@ def test_skill_recommends_dedicated_until_the_capability_floor_is_met() -> None:
     flat = _flat(body)
     for dimension in ("compatibility", "isolation", "capacity", "operational impact"):
         assert dimension in flat, dimension
-    assert "Reuse is refused until the capability floors are met" in flat
+    assert "Reuse is refused unless the capability floors are met" in flat
     assert "EXTERNAL_STORE_FLOORS" in flat
     assert "Keep the deployment stopped" in flat
     assert "dedicated is the recommendation" in flat
@@ -246,8 +246,8 @@ def test_discovery_is_read_only_and_never_shows_credentials() -> None:
 
 def test_shared_services_states_the_status_and_every_requirement() -> None:
     page = _flat(SHARED_SERVICES.read_text())
-    assert "supported once the capability floors are met" in page
-    assert "refuses it today" in page
+    assert "Current status: supported" in page
+    assert "supported once the capability floors are met" not in page
     for answer in (
         "docker compose exec postgres",
         "store-check-postgres",
@@ -293,7 +293,7 @@ def test_external_store_beads_are_named_consistently() -> None:
 def test_docs_state_the_reuse_status_and_the_unchanged_approval_rules() -> None:
     homelab = _flat(HOMELAB_DOC.read_text())
     assert REUSE_QUESTION in homelab
-    assert "Status: supported once the capability floors are met, which they are not yet." in homelab.replace("**", "")
+    assert "Status: supported. The reviewed release set meets the capability floors." in homelab.replace("**", "")
     assert "neither is a security boundary" in homelab
     assert "A PgBouncer must pool by session" in homelab
     assert "explicit approval" in homelab
@@ -303,7 +303,7 @@ def test_docs_state_the_reuse_status_and_the_unchanged_approval_rules() -> None:
     assert "Reuse needs PgBouncer in session mode only" in configuration
 
 
-def test_docs_give_the_external_stores_procedure_and_what_still_blocks_it() -> None:
+def test_docs_give_the_external_stores_procedure_and_the_met_floors() -> None:
     homelab = _flat(HOMELAB_DOC.read_text())
     configuration = _flat(CONFIGURATION_DOC.read_text())
     shared = _flat(SHARED_SERVICES.read_text())
@@ -318,7 +318,7 @@ def test_docs_give_the_external_stores_procedure_and_what_still_blocks_it() -> N
             assert name in page, name
     for page in (homelab, shared):
         assert "gm-database-schema-2aty" in page
-        assert "merged, not released or promoted" in page
+        assert "database-schema 0.6.0" in page
     for setting in ("noeviction", "AOF", "PostgreSQL 18", "pg_trgm", "60 usable connections", "session"):
         assert setting in homelab, setting
     assert "store-check-postgres" in configuration and "store-check-valkey" in configuration

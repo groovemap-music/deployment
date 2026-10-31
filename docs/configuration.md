@@ -641,8 +641,8 @@ Production overlay only. `just deploy` and `just discogs-import-status --prod` r
 the shell, then `.env`, and add `docker-compose.external-postgres.yml` or
 `docker-compose.external-valkey.yml` after `docker-compose.prod.yml`. Unset, they change nothing:
 the rendered stack is byte for byte the dedicated one. `just deploy` refuses an external store
-(exit 3) until the reviewed images support it (`EXTERNAL_STORE_FLOORS` in
-`scripts/check-images.py`, both `unreleased` today). The procedure and what each server needs
+(exit 3) unless the reviewed images support it (`EXTERNAL_STORE_FLOORS` in
+`scripts/check-images.py`; the reviewed release set meets both floors). The procedure and what each server needs
 are in [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey).
 
 | Variable | Default | Meaning |

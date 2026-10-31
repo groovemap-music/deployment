@@ -344,17 +344,33 @@ def test_usable_external_settings_pass_and_local_stores_need_none() -> None:
     assert stores.setting_problems(stores.Stores(), {}, {}) == []
 
 
-def test_the_capability_floors_refuse_both_external_stores_until_a_release_supports_them() -> None:
-    """The recorded floors are the UNRELEASED sentinel today, so neither store can be external yet."""
+def test_the_reviewed_release_set_meets_both_capability_floors() -> None:
+    """database-schema 0.6.0 (pre-provisioned PostgreSQL), catalog-api 0.6.0 and analytics-engine 0.5.0 (Valkey prefix and TLS)."""
     assert images.EXTERNAL_STORE_FLOORS == {
+        "postgres": {"DATABASE_SCHEMA_IMAGE": "0.6.0"},
+        "valkey": {"CATALOG_API_IMAGE": "0.6.0", "ANALYTICS_ENGINE_IMAGE": "0.5.0"},
+    }
+    env = {
+        variable: f"ghcr.io/groovemap-music/{images.IMAGE_OWNERS[variable]}@sha256:{digest}"
+        for variable, digest in images.RELEASED_IMAGE_DIGESTS.items()
+    }
+    for store in ("postgres", "valkey"):
+        assert not list(
+            stores.floor_problems(
+                store, images.EXTERNAL_STORE_FLOORS, images.RELEASED_IMAGE_VERSIONS, images.RELEASED_IMAGE_DIGESTS, images.IMAGE_OWNERS, env, {}
+            )
+        ), store
+
+
+def test_an_unreleased_floor_refuses_both_external_stores() -> None:
+    """The UNRELEASED sentinel is never met, so a capability no release has yet keeps the store from being external."""
+    floors = {
         "postgres": {"DATABASE_SCHEMA_IMAGE": images.UNRELEASED},
         "valkey": {"CATALOG_API_IMAGE": images.UNRELEASED, "ANALYTICS_ENGINE_IMAGE": images.UNRELEASED},
     }
     env = {variable: f"ghcr.io/x@sha256:{digest}" for variable, digest in images.RELEASED_IMAGE_DIGESTS.items()}
     for store, repositories in (("postgres", ["database-schema"]), ("valkey", ["catalog-api", "analytics-engine"])):
-        problems = stores.floor_problems(
-            store, images.EXTERNAL_STORE_FLOORS, images.RELEASED_IMAGE_VERSIONS, images.RELEASED_IMAGE_DIGESTS, images.IMAGE_OWNERS, env, {}
-        )
+        problems = stores.floor_problems(store, floors, images.RELEASED_IMAGE_VERSIONS, images.RELEASED_IMAGE_DIGESTS, images.IMAGE_OWNERS, env, {})
         assert [problem.split(" ", 1)[0] for problem in problems] == repositories
         assert all("has no release with external" in problem for problem in problems)
 
@@ -370,12 +386,12 @@ def test_a_met_floor_also_needs_env_to_run_the_reviewed_digest() -> None:
     def problems(floors: dict[str, dict[str, str]], env: dict[str, str]) -> list[str]:
         return list(stores.floor_problems("postgres", floors, images.RELEASED_IMAGE_VERSIONS, digests, images.IMAGE_OWNERS, env, {}))
 
-    assert problems(_floors("0.5.0"), reviewed) == []
-    assert problems(_floors("0.4.9"), reviewed) == []
-    assert "below v0.6.0" in problems(_floors("0.6.0"), reviewed)[0]
+    assert problems(_floors("0.6.0"), reviewed) == []
+    assert problems(_floors("0.5.9"), reviewed) == []
+    assert "below v0.7.0" in problems(_floors("0.7.0"), reviewed)[0]
     older = {"DATABASE_SCHEMA_IMAGE": "ghcr.io/groovemap-music/database-schema@sha256:" + "0" * 64}
-    assert "run `just env-init`" in problems(_floors("0.5.0"), older)[0]
-    assert "run `just env-init`" in problems(_floors("0.5.0"), {})[0]
+    assert "run `just env-init`" in problems(_floors("0.6.0"), older)[0]
+    assert "run `just env-init`" in problems(_floors("0.6.0"), {})[0]
 
 
 def test_released_versions_match_the_comments_beside_the_digests() -> None:
@@ -401,15 +417,24 @@ def _store_findings(
 
 
 class PromotedPolicy:
-    """The image policy as it will read once both upstream releases are promoted."""
+    """The image policy with both upstream releases promoted."""
 
     EXTERNAL_STORE_FLOORS: dict[str, dict[str, str]] = {  # noqa: RUF012
-        "postgres": {"DATABASE_SCHEMA_IMAGE": "0.5.0"},
-        "valkey": {"CATALOG_API_IMAGE": "0.4.0", "ANALYTICS_ENGINE_IMAGE": "0.1.1"},
+        "postgres": {"DATABASE_SCHEMA_IMAGE": "0.6.0"},
+        "valkey": {"CATALOG_API_IMAGE": "0.6.0", "ANALYTICS_ENGINE_IMAGE": "0.5.0"},
     }
     RELEASED_IMAGE_VERSIONS = images.RELEASED_IMAGE_VERSIONS
     RELEASED_IMAGE_DIGESTS = images.RELEASED_IMAGE_DIGESTS
     IMAGE_OWNERS = images.IMAGE_OWNERS
+
+
+class UnreleasedPolicy(PromotedPolicy):
+    """The image policy while no release supports either store."""
+
+    EXTERNAL_STORE_FLOORS: dict[str, dict[str, str]] = {  # noqa: RUF012
+        "postgres": {"DATABASE_SCHEMA_IMAGE": images.UNRELEASED},
+        "valkey": {"CATALOG_API_IMAGE": images.UNRELEASED, "ANALYTICS_ENGINE_IMAGE": images.UNRELEASED},
+    }
 
 
 def _reviewed_env() -> dict[str, str]:
@@ -431,9 +456,11 @@ def test_local_stores_need_nothing(tmp_path: Path) -> None:
     assert "the stack's own postgres container" in findings[0].message
 
 
-def test_the_unreleased_floor_refuses_external_stores_today(tmp_path: Path) -> None:
+def test_the_unreleased_floor_refuses_external_stores(tmp_path: Path) -> None:
     _write_secrets(tmp_path)
-    stops = [finding for finding in _store_findings(env={**BOTH, **_reviewed_env()}, tmp_path=tmp_path) if finding.level == "stop"]
+    stops = [
+        finding for finding in _store_findings(env={**BOTH, **_reviewed_env()}, tmp_path=tmp_path, policy=UnreleasedPolicy) if finding.level == "stop"
+    ]
     assert [finding.message.split(":")[0] for finding in stops] == [
         "External PostgreSQL is refused",
         "External Valkey is refused",
@@ -661,15 +688,15 @@ class ExternalDeploy(Deploy):
         super().__init__(root)
         for name in ("docker-compose.external-postgres.yml", "docker-compose.external-valkey.yml"):
             shutil.copy(ROOT / name, root / name)
-        if promoted:
+        if not promoted:
             policy = root / "scripts" / "check-images.py"
             text = policy.read_text()
-            text = text.replace('"postgres": {"DATABASE_SCHEMA_IMAGE": UNRELEASED}', '"postgres": {"DATABASE_SCHEMA_IMAGE": "0.5.0"}')
+            text = text.replace('"postgres": {"DATABASE_SCHEMA_IMAGE": "0.6.0"}', '"postgres": {"DATABASE_SCHEMA_IMAGE": UNRELEASED}')
             text = text.replace(
+                '{"CATALOG_API_IMAGE": "0.6.0", "ANALYTICS_ENGINE_IMAGE": "0.5.0"}',
                 '{"CATALOG_API_IMAGE": UNRELEASED, "ANALYTICS_ENGINE_IMAGE": UNRELEASED}',
-                '{"CATALOG_API_IMAGE": "0.4.0", "ANALYTICS_ENGINE_IMAGE": "0.1.1"}',
             )
-            assert "UNRELEASED}" not in text
+            assert text.count("UNRELEASED}") >= 2
             policy.write_text(text)
         created = subprocess.run([sys.executable, str(root / "scripts" / "env-init.py")], capture_output=True, text=True, check=False, cwd=root)
         assert created.returncode == 0, created.stderr
@@ -707,7 +734,7 @@ def test_external_happy_path_runs_both_phases_with_the_overlays_everywhere(exter
         assert (external.root / "secrets" / name).read_text() == "operator-written\n"  # never replaced
 
 
-def test_today_deploy_refuses_external_stores_before_anything_changes(tmp_path: Path) -> None:
+def test_deploy_refuses_unreleased_external_stores_before_anything_changes(tmp_path: Path) -> None:
     deploy = ExternalDeploy(tmp_path, promoted=False)
     result = deploy.run(FAKE_GATE_WAIT="0")
     assert result.returncode == 3, result.stdout + result.stderr
@@ -1184,6 +1211,7 @@ def test_the_store_helper_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     env.write_text("COMPOSE_PROJECT_NAME=lab\n" + "".join(f"{key}={value}\n" for key, value in {**BOTH, **_reviewed_env()}.items()))
     _write_secrets(tmp_path / "secrets")
+    monkeypatch.setattr(helpers, "load_image_policy", lambda: UnreleasedPolicy)
     assert helpers.main(["stores"], docker=docker, environ={}) == 3  # the floors are unreleased
     assert "External PostgreSQL is refused" in capsys.readouterr().out
     assert seen[-1][:5] == ["docker", "volume", "ls", "--filter", "label=com.docker.compose.project=lab"]
