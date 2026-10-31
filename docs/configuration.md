@@ -148,6 +148,36 @@ configuration. The sections below describe service runtime contracts; change a
 literal Compose value with a reviewed override file, not by assuming every
 source-level variable is an `.env` interpolation.
 
+### Neo4j sizing written by `just deploy`
+
+`just deploy` writes `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE` and
+`NEO4J_MEMORY_LIMIT` into `.env` for the production overlay, sized from the
+memory Docker reports (`docker info` MemTotal, rounded up to whole GB, so a
+16 GB machine counts as 16). For total memory T in GB:
+
+- heap + page cache = half of T, at most 24 GB (the overlay's 8g + 16g)
+- heap = a third of that, at least 1 GB and at most 8 GB; page cache = the rest
+- limit = twice heap + page cache, but at most T − 4 GB, and always at least
+  1 GB above heap + page cache
+
+| Memory | Heap | Page cache | Limit |
+| --- | --- | --- | --- |
+| 16 GB | `2g` | `6g` | `12G` |
+| 32 GB | `5g` | `11g` | `28G` |
+| 64 GB or more | `8g` | `16g` | `48G` (the overlay defaults) |
+
+It writes a value only when nobody has chosen one: the variable is absent or
+empty, or it is still exactly what `.env.example` ships. The template's
+`NEO4J_HEAP_SIZE=2G` counts as unset, because left alone it would hold the
+production heap at 2 GB beside a 16 GB page cache. Deploy marks what it wrote
+with a comment and never rewrites any of it, so edit the values freely
+afterwards. The base stack (`just deploy --dev`) fixes Neo4j's memory in
+`docker-compose.yml`, so nothing is written there.
+
+The production overlay also fixes Neo4j's transaction memory cap at 8G. Below
+48 GB of memory the heap is smaller than that cap, so the cap no longer bounds
+transaction memory.
+
 ### Identity ledger refresh
 
 The Identity Ledger's works list and density read precomputed views that `catalog-api` rebuilds.

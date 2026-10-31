@@ -11,6 +11,65 @@ does not provide a source-development environment for those services.
 - enough memory and storage for the selected stack and imported datasets
 - approved manifest digests for every required GrooveMap image
 
+## The short way: `just deploy`
+
+On a Docker host you control, one command takes GrooveMap from nothing to fully
+loaded, Discogs first and MusicBrainz after it:
+
+```bash
+git clone https://github.com/groovemap-music/deployment.git
+cd deployment
+mise install
+just deploy
+```
+
+It checks the host, writes `.env` (`just env-init`) and `secrets/`
+(`just secrets-bootstrap`), sizes Neo4j for the machine
+([sizing](configuration.md#neo4j-sizing-written-by-just-deploy)), starts the
+production stack without the `musicbrainz` profile, and waits for the Discogs
+import (about two days on the reference hardware). When the import has
+finished it sets `COMPOSE_PROFILES=musicbrainz` in `.env`, starts MusicBrainz,
+prints the endpoints, and offers to create the first admin account.
+
+Ctrl-C, a closed terminal or a reboot loses nothing: the import keeps running
+in Docker, and re-running `just deploy` resumes the wait. Once MusicBrainz is
+enabled, a run only brings the stack up to date. A deployment that already runs
+MusicBrainz keeps it.
+
+| Option | Effect |
+| --- | --- |
+| `--dev` | Use the base development stack instead of the production overlay |
+| `--no-wait` | Start phase 1 and exit; re-run later to continue |
+| `--no-admin` | Do not offer to create the first admin |
+| `--admin-email EMAIL` | Create the first admin with this email (prompts for the password) |
+| `-p`, `--project-name NAME` | Compose project name |
+| `--interval SECONDS` | Seconds between import checks while waiting (default 300) |
+| `-y`, `--yes` | Go ahead under amd64 emulation on an arm64 host without asking |
+| `--force` | Go ahead below the memory and disk minimums |
+
+Exit codes: `0` done (or phase 1 started with `--no-wait`), `1` a step failed,
+`2` bad arguments, `3` stopped by the host checks before changing anything,
+`130` interrupted while waiting.
+
+The host checks stop below these minimums unless you pass `--force`, and warn
+below the recommended sizes:
+
+| Check | Minimum | Recommended | Source |
+| --- | --- | --- | --- |
+| Memory for Docker, production | 16 GB | 32 GB | Neo4j sizing above, plus PostgreSQL's 2 GB shared buffers and 6 GB cache in `docker-compose.prod.yml` |
+| Memory for Docker, `--dev` | 8 GB | 16 GB | Neo4j's fixed 2 GiB heap and 1 GiB page cache in `docker-compose.yml` |
+| Free disk on Docker's data root, new install | 100 GB | 200 GB | Discogs is ~76 GB on disk plus its ~11.3 GB dump ([architecture](architecture.md), "Dataset Scale"); MusicBrainz is not measured yet, so the recommendation assumes it is as large |
+
+On an existing deployment the disk check only warns below 20 GB free. Every
+configured host port must be free (ports the stack already holds are fine), and
+Docker Engine with Compose v2 must be working. GrooveMap's own images are built
+for `linux/amd64` only; on an arm64 host they run under emulation, much more
+slowly, and deploy asks before going ahead (Linux needs amd64 binfmt emulation
+registered first).
+
+`just deploy` starts containers, so `just check` and CI never run it. The steps
+below are the manual path it automates.
+
 ## 1. Clone and validate
 
 ```bash
