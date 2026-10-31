@@ -108,7 +108,14 @@ def test_license_policy_script() -> None:
 def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -> None:
     docker = tmp_path / "docker"
     log = tmp_path / "docker.log"
-    docker.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"$DOCKER_LOG"\n')
+    # `config --services` answers like Compose: the MusicBrainz path only appears with its profile.
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >>"$DOCKER_LOG"\n'
+        'if [[ "$*" == *"--profile musicbrainz"* && "$*" == *"config --services"* ]]; then\n'
+        "  printf '%s\\n' extractor-musicbrainz brainzgraphinator brainztableinator\n"
+        "fi\n"
+    )
     docker.chmod(0o755)
 
     subprocess.run(
@@ -118,13 +125,18 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         env=os.environ | {"PATH": f"{tmp_path}:{os.environ['PATH']}", "DOCKER_LOG": str(log)},
     )
 
+    validation = "compose --profile musicbrainz --env-file config/validation.env"
     assert log.read_text().splitlines() == [
-        "compose --env-file config/validation.env config --quiet",
-        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --quiet",
-        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.smoke.yml config --quiet",
-        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
-        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
-        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.erasure-smoke.yml config --quiet",
+        f"{validation} config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.prod.yml config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.smoke.yml config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.erasure-smoke.yml config --quiet",
+        "compose --env-file config/validation.env -f docker-compose.yml config --services",
+        "compose --env-file config/validation.env -f docker-compose.yml --profile musicbrainz config --services",
+        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --services",
+        "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml --profile musicbrainz config --services",
     ]
 
 
