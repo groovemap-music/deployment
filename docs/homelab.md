@@ -287,6 +287,37 @@ Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOS
 values it drops, and the backup still has them.
 `.env` is created private (mode 0600); a rewrite and its backup keep the mode the file already has.
 
+### Grafana now runs as your user
+
+The production overlay runs Grafana as `${UID:-1000}:${GID:-1000}`, the owner of the 0600 files
+in `secrets/`. The image's own user is UID 472, which cannot read them. A `grafana_data` volume
+created before this change holds files owned by 472, and Grafana as your user cannot write
+them: it exits with `permission denied` on `/var/lib/grafana/grafana.db`. A fresh volume needs
+nothing.
+
+To tell, with the stack's project name (the `.env` `COMPOSE_PROJECT_NAME`, else the checkout
+directory name) in `<project>`:
+
+```bash
+docker run --rm --entrypoint ls -v <project>_grafana_data:/v grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f -ln /v
+```
+
+Owner `472` on `grafana.db` means the volume predates this change. Re-own it in place; this
+changes ownership only and keeps every file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop grafana
+docker run --rm --user root --entrypoint chown -v <project>_grafana_data:/v \
+  grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f \
+  -R "$(id -u):$(id -g)" /v
+just deploy
+```
+
+Run it against the `grafana_data` volume only. If the listing shows the volume is empty, it
+holds nothing and `docker volume rm` of that one volume is also safe; never remove a volume
+that has data. Dashboards are provisioned from `config/grafana/`, but users, preferences and
+API tokens live in `grafana.db`.
+
 ## Existing PostgreSQL and Valkey
 
 The agent skill discovers existing PostgreSQL, PgBouncer, Valkey and Redis instances read-only

@@ -335,7 +335,8 @@ services:
   # Grafana reads GF_SECURITY_ADMIN_PASSWORD__FILE as its own process (UID 472 in the image),
   # so it runs as the secrets' owner. The image makes /var/lib/grafana writable by an arbitrary
   # UID; a grafana_data volume first created by the dev stack holds files owned by 472 and has
-  # to be recreated or re-owned before the production overlay can write to it.
+  # to be re-owned (never deleted: it holds grafana.db) before the production overlay can write
+  # to it. See docs/homelab.md#grafana-now-runs-as-your-user.
   grafana:
     restart: always
     user: "${UID:-1000}:${GID:-1000}"
