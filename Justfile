@@ -60,9 +60,10 @@ secrets-bootstrap:
 # for this machine, starts the stack without MusicBrainz, waits for the Discogs import, then
 # enables the musicbrainz profile. Idempotent: re-run to resume or to bring the stack up to date.
 # Starts containers, so it is operator-run only and never part of `check`. `just deploy --help`.
+# Without mise or just, the same command is `bash scripts/deploy.sh` on the host's own python3.
 [positional-arguments]
 deploy *args:
-    bash scripts/deploy.sh "$@"
+    DEPLOY_INVOKED_AS="just deploy" bash scripts/deploy.sh "$@"
 
 # Writes .env from .env.example, filling every image digest from the reviewed release set in
 # scripts/check-images.py. Refuses to replace an existing .env unless --force is given, which

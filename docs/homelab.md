@@ -7,24 +7,24 @@ Docker host to a fully loaded instance. The quick path comes first, the technica
 
 ## Quick path
 
-You need a Linux (or macOS) machine with Docker Engine and Docker Compose v2, git, about 16 GB
-of memory for Docker and about 100 GB of free disk (200 GB recommended). See
+You need a Linux (or macOS) machine with Docker Engine and Docker Compose v2, git, python3 3.10
+or newer (Debian 12 and Ubuntu 22.04 ship it), about 16 GB of memory for Docker and about 100 GB of free disk (200 GB recommended). See
 [Hardware and sizing](#hardware-and-sizing) for the numbers.
 
 ```bash
 git clone https://github.com/groovemap-music/deployment.git
 cd deployment
-mise install        # installs just and uv, pinned by the repository
-just deploy
+bash scripts/deploy.sh
 ```
 
-`just deploy` checks the host, writes `.env` and `secrets/`, sizes Neo4j for your memory,
+The script checks the host, writes `.env` and `secrets/`, sizes Neo4j for your memory,
 starts GrooveMap, waits for the Discogs import, then starts MusicBrainz. It prints your URLs and
 offers to create the first admin account. Expect the first load to take hours to about two
 days: releases alone take about 40 hours on the reference hardware
 ([dataset scale table in the architecture guide](architecture.md)). Ctrl-C, a closed terminal or a reboot loses
-nothing: the import keeps running in Docker, and running `just deploy` again resumes. Use
-`tmux` or `screen` anyway so you can watch it.
+nothing: the import keeps running in Docker, and running `bash scripts/deploy.sh` again resumes. Use
+`tmux` or `screen` anyway so you can watch it. If you use [mise](https://mise.jdx.dev/) and
+[just](https://just.systems/), both optional, `just deploy` runs the same script.
 
 Before you start, read these three notes:
 
@@ -53,7 +53,10 @@ workflow.
 ## Prerequisites
 
 - Docker Engine with Docker Compose v2. Deploy stops if Compose is older than v2.
-- git and [mise](https://mise.jdx.dev/), which pins `just` and `uv`.
+- git and python3 3.10 or newer. The deploy helpers use only the Python standard library, so
+  the distro's `python3` is enough. mise, `just` and `uv` are optional maintainer tooling; with
+  `uv` installed, the script uses it instead of `python3`. Set `DEPLOY_PYTHON` to pick another
+  interpreter.
 - A host that meets [the sizing minimums](#hardware-and-sizing).
 - Free host ports for the services you publish (see [Ports and bind addresses](#ports-and-bind-addresses)).
   Deploy refuses to start if a configured port is taken by something other than this stack.
@@ -101,7 +104,7 @@ registered first. Multi-arch images are tracked as gm-automation-2ik.
 
 ## What `just deploy` does
 
-The step-by-step flags and exit codes are in the [quick start](quick-start.md#the-short-way-just-deploy).
+The step-by-step flags and exit codes are in the [quick start](quick-start.md#the-short-way-bash-scriptsdeploysh).
 In order, it:
 
 1. Runs the host checks above, stopping with exit code 3 before changing anything if a

@@ -679,8 +679,34 @@ def test_the_profile_is_off_while_phase_one_runs(deploy: Deploy) -> None:
     assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
     assert not any(call.startswith("gate") for call in deploy.calls)
     assert "COMPOSE_PROFILES" not in deploy.env_values
+    assert "bash scripts/deploy.sh\n" in result.stdout
+    assert f"{sys.executable} scripts/discogs_import_status.py --prod" in result.stdout
+    assert "just" not in result.stdout
+
+
+def test_hints_print_the_just_form_when_started_through_just(deploy: Deploy) -> None:
+    result = deploy.run("--no-wait", DEPLOY_INVOKED_AS="just deploy")
+    assert result.returncode == 0, result.stderr
     assert "just deploy\n" in result.stdout
     assert "just discogs-import-status --prod" in result.stdout
+    assert "bash scripts/deploy.sh" not in result.stdout
+
+
+def test_help_and_usage_errors_name_the_form_the_user_typed(deploy: Deploy) -> None:
+    assert "Usage: bash scripts/deploy.sh [options]" in deploy.run("--help").stdout
+    assert "Usage: just deploy [options]" in deploy.run("--help", DEPLOY_INVOKED_AS="just deploy").stdout
+    failed = deploy.run("--bogus")
+    assert failed.returncode == 2
+    assert "Run 'bash scripts/deploy.sh --help'" in failed.stderr
+
+
+def test_a_python_older_than_3_10_stops_with_a_clear_message(deploy: Deploy) -> None:
+    (deploy.root / "bin" / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (deploy.root / "bin" / "python3").chmod(0o755)
+    result = deploy.run(DEPLOY_PYTHON="python3")
+    assert result.returncode == 1
+    assert "Python 3.10 or newer is needed" in result.stderr
+    assert not any(call.startswith("gate") or "compose" in call for call in deploy.calls)
 
 
 def test_rerun_during_the_import_resumes_the_wait(deploy: Deploy) -> None:
@@ -702,7 +728,7 @@ def test_interrupting_the_wait_exits_130_and_says_how_to_resume(deploy: Deploy) 
     result = deploy.run("--interval", "60", "--no-admin", FAKE_GATE_WAIT="130")
     assert result.returncode == 130
     assert "COMPOSE_PROFILES" not in deploy.env_values
-    assert "just deploy --no-admin --interval 60" in result.stdout
+    assert "bash scripts/deploy.sh --no-admin --interval 60" in result.stdout
     assert not any("catalog-admin-setup" in call for call in deploy.calls)
 
 
@@ -839,7 +865,7 @@ def test_an_override_file_reaches_every_compose_call_and_the_gate(deploy: Deploy
 
 def test_no_wait_with_an_override_names_it_in_the_status_command(deploy: Deploy) -> None:
     (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
-    result = deploy.run("--no-wait", "-p", "lab", "--dev")
+    result = deploy.run("--no-wait", "-p", "lab", "--dev", DEPLOY_INVOKED_AS="just deploy")
     assert result.returncode == 0, result.stderr
     assert "just discogs-import-status -p lab -f docker-compose.override.yml\n" in result.stdout
     assert deploy.ups == [f"docker compose --project-name lab -f docker-compose.yml {OVERRIDE} up -d --wait"]
@@ -865,7 +891,7 @@ def test_an_unreadable_override_stops_before_anything_starts(deploy: Deploy) -> 
 
 def test_recipe_runs_the_script_and_check_never_does() -> None:
     justfile = (ROOT / "Justfile").read_text()
-    assert 'deploy *args:\n    bash scripts/deploy.sh "$@"' in justfile
+    assert 'deploy *args:\n    DEPLOY_INVOKED_AS="just deploy" bash scripts/deploy.sh "$@"' in justfile
     check_line = next(line for line in justfile.splitlines() if line.startswith("check:"))
     assert "deploy" not in check_line
     for workflow in (ROOT / ".github/workflows").glob("*.yml"):

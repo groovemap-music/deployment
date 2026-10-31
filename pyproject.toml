@@ -48,6 +48,13 @@ target-version = "py314"
 [tool.ruff.per-file-target-version]
 # Lux host and pinned legacy consumer images execute these helpers on Python 3.13.
 "scripts/extractor*.py" = "py313"
+# A newcomer's host runs the deploy-time scripts on its distro python3 (Debian 12: 3.11, Ubuntu
+# 22.04: 3.10), so they stay on 3.10 syntax and stdlib: no datetime.UTC, no PEP 758 `except A, B`.
+# tests/deploy/test_python310_compat.py runs them under 3.10.
+"scripts/deploy_helpers.py" = "py310"
+"scripts/discogs_import_status.py" = "py310"
+"scripts/env-init.py" = "py310"
+"scripts/check-images.py" = "py310"
 
 [tool.ruff.lint]
 select = ["ARG", "B", "C4", "E", "F", "I", "PLC", "PTH", "RUF", "S", "SIM", "T20", "TCH", "UP", "W"]
