@@ -213,3 +213,22 @@ def test_deploy_is_quiet_with_https_the_opt_in_or_the_dev_stack(deploy: Deploy) 
         result = deploy.run(*args)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Console sign-in" not in result.stdout
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_the_opt_in_keeps_the_env_private(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("APP_BASE_URL=http://nas:8006\n")
+    env_path.chmod(0o600)
+    status = helpers.console_http(
+        "prod",
+        env_path=env_path,
+        environ={},
+        hostname="nas",
+        recreate_command="docker compose up -d --no-deps dashboard",
+        interactive=True,
+        ask=lambda _: "y",
+    )
+    assert status == helpers.CONSOLE_RECREATE
+    assert helpers.parse_env(env_path.read_text())[OPT_IN] == "true"
+    assert env_path.stat().st_mode & 0o777 == 0o600

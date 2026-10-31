@@ -113,6 +113,7 @@ def backup_name(target: Path) -> Path:
 
 def write_env(target: Path, text: str, *, force: bool) -> Path | None:
     """Write the env file, keeping an existing one as a timestamped backup when forced."""
+    helpers = load_deploy_helpers()
     backup = None
     if target.exists():
         if not force:
@@ -120,8 +121,8 @@ def write_env(target: Path, text: str, *, force: bool) -> Path | None:
                 f"{target.name} already exists; run without --force to upgrade it in place, or pass --force to regenerate it (the old file is kept as a timestamped backup)"
             )
         backup = backup_name(target)
-        target.rename(backup)
-    target.write_text(text)
+        helpers.write_new_env_text(backup, target.read_text(), helpers.env_mode(target))
+    helpers.write_env_text(target, text)
     return backup
 
 
@@ -155,9 +156,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if merged == existing:
         print(f"{TARGET.name} is already up to date; nothing changed")
         return 0
+    helpers = load_deploy_helpers()
     backup = backup_name(TARGET)
-    backup.write_text(existing)
-    TARGET.write_text(merged)
+    helpers.write_new_env_text(backup, existing, helpers.env_mode(TARGET))
+    helpers.write_env_text(TARGET, merged)
     print(f"kept the previous {TARGET.name} as {backup.name}")
     if refreshed:
         print(f"refreshed to the reviewed digests: {', '.join(refreshed)}")

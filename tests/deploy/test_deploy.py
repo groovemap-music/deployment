@@ -1023,3 +1023,36 @@ def test_recipe_runs_the_script_and_check_never_does() -> None:
     for workflow in (ROOT / ".github/workflows").glob("*.yml"):
         assert "deploy.sh" not in workflow.read_text()
         assert "just deploy" not in workflow.read_text()
+
+
+# --- .env file mode on every write path -------------------------------------------------
+
+
+def _mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_write_env_text_makes_a_new_file_private_and_keeps_an_existing_mode(tmp_path: Path) -> None:
+    fresh = tmp_path / ".env"
+    helpers.write_env_text(fresh, "A=1\n")
+    assert _mode(fresh) == helpers.ENV_MODE == 0o600
+
+    existing = tmp_path / "other.env"
+    existing.write_text("A=1\n")
+    existing.chmod(0o640)
+    helpers.write_env_text(existing, "A=2\n")
+    assert _mode(existing) == 0o640
+    assert existing.read_text() == "A=2\n"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_configure_and_enable_profile_keep_the_env_private(scratch_env: Path) -> None:
+    scratch_env.write_text("COMPOSE_PROJECT_NAME=lab\n")
+    scratch_env.chmod(0o600)
+    helpers.configure(scratch_env, ROOT / ".env.example", 32 * GIB, "lab", {})
+    assert _mode(scratch_env) == 0o600
+    assert helpers.main(["enable-profile"], environ={}) == 0
+    assert _mode(scratch_env) == 0o600
+    assert helpers.parse_env(scratch_env.read_text())["COMPOSE_PROFILES"] == "musicbrainz"
