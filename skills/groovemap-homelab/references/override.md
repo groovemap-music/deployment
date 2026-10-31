@@ -34,7 +34,10 @@ changes any of these on a GrooveMap service:
 | `ports`, `network_mode` on postgres, neo4j, rabbitmq, valkey, victoria-metrics, victoria-traces | Data-tier ports move only through `.env` bind addresses and `*_HOST_PORT` |
 | `networks`, `labels`, `extra_hosts` on the same six data-tier services | Proxy networks, Traefik TCP routers and hosts entries would expose or redirect the data tier. Attach only `explore`, `dashboard` and `grafana` (or `api`) to a proxy network |
 
-It also stops if the override removes a service.
+It also stops if the override removes a service, or redefines a top-level network that a
+data-tier service uses (`name`, `external`, `driver`, `attachable`, `internal`, `driver_opts`):
+that would move the data tier onto another network without touching any service. Changing the
+`groovemap` network's `ipam` subnet stays allowed (`assets/override-network-restart.yml`).
 
 The check denies what it does not understand. On a service that already exists it also
 stops (no opt-in) when the override adds or changes any of these:
@@ -81,8 +84,9 @@ lift every rule above except the digest pin and no `build`:
 (or a socket) is exactly what the check stops, so add the sidecar's name to the variable, keep
 it digest-pinned, and mount the volumes read-only.
 
-A new service that omits `networks` lands on the project's default network, which has no route
-to the stack, so it needs no opt-in. Listing a service is a decision to let it reach (or expose)
+A new service that omits `networks` lands on the project's default network, a separate network
+from `groovemap`, so it needs no opt-in. That only means no route over `groovemap`; it says
+nothing about the host or LAN, which the key and mount rules cover. Listing a service is a decision to let it reach (or expose)
 the stack, so a socat forwarder into postgres needs it. Each message names the service, the key or mount and the opt-in, for example `docker-compose.override.yml adds the pg-forward service and publishes ports`.
 
 ## Merge behavior

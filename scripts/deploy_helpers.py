@@ -662,6 +662,32 @@ def _check_new_service(
     return findings
 
 
+def _check_data_tier_networks(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Finding]:
+    """Stop an override that redefines a network a data-tier service uses; only its ipam may change."""
+    used = {
+        key
+        for render in (before, after)
+        for name, service in (render.get("services") or {}).items()
+        if name in DATA_TIER
+        for key in service.get("networks") or {}
+    }
+    findings = []
+    for key in sorted(used):
+        new = (after.get("networks") or {}).get(key) or {}
+        old = (before.get("networks") or {}).get(key) or {}
+        changed = sorted(field for field in set(old) | set(new) if field != "ipam" and old.get(field) != new.get(field))
+        if changed:
+            findings.append(
+                Finding(
+                    "stop",
+                    f"{OVERRIDE_FILE} changes {', '.join(changed)} of the {key} network used by the data tier",
+                    "Remove it: redefining the network could move the data tier onto a proxy or external network. "
+                    "Only its ipam (subnet) may change. This rule has no opt-in.",
+                )
+            )
+    return findings
+
+
 def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed: frozenset[str] = frozenset()) -> list[Finding]:
     """Compare the rendered stack without and with docker-compose.override.yml.
 
@@ -677,7 +703,11 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
 
     Services the override adds must be pinned by digest. One that publishes ports or joins the
     groovemap network (a forwarder into the data tier, say) must also be named in `allowed`.
-    A new service on the project's default network alone cannot reach the stack, so it passes.
+    A new service that omits `networks` joins the project's default network, a separate network
+    from groovemap, so it passes without an opt-in. That guarantees no route to the stack over
+    groovemap only: it says nothing about what the service reaches on the host or the LAN, which
+    the key, mount and image rules cover, and it does not hold if the override redefines
+    networks (the data-tier network check covers groovemap itself).
     """
     findings = []
     rendered = after.get("services") or {}
@@ -714,6 +744,7 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
                     )
                 )
         findings += _check_mounts(name, changed, service, before, after, owners, False)
+    findings += _check_data_tier_networks(before, after)
     for name, service in rendered.items():
         if name not in (before.get("services") or {}):
             mounts = [] if name in allowed else _check_mounts(name, service, {}, before, after, owners, True)

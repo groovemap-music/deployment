@@ -711,6 +711,36 @@ def test_opt_in_lets_a_backup_sidecar_mount_stack_data_but_not_skip_the_digest()
     assert [finding.level for finding in findings] == ["stop", "stop"]
 
 
+def _networked(**network: Any) -> dict[str, Any]:
+    stack = _render()
+    stack["services"]["postgres"]["networks"] = {"groovemap": None}
+    stack["networks"] = {"groovemap": {"name": "lab_groovemap", "driver": "bridge", **network}}
+    return stack
+
+
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [
+        ({"external": True}, "external"),
+        ({"name": "proxy_network"}, "name"),
+        ({"driver": "host"}, "driver"),
+        ({"attachable": True}, "attachable"),
+        ({"internal": False}, "internal"),
+        ({"driver_opts": {"com.docker.network.bridge.name": "br0"}}, "driver_opts"),
+    ],
+)
+def test_override_may_not_redefine_a_network_the_data_tier_uses(change: dict[str, Any], field: str) -> None:
+    findings = helpers.check_override(_networked(internal=True), _networked(**{"internal": True, **change}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert field in findings[0].message
+    assert "groovemap network used by the data tier" in findings[0].message
+
+
+def test_override_may_change_the_stack_networks_subnet() -> None:
+    after = _networked(ipam={"config": [{"subnet": "172.28.0.0/16"}]})
+    assert [finding.level for finding in helpers.check_override(_networked(), after)] == ["ok"]
+
+
 def test_override_must_not_drop_a_service() -> None:
     after = _render()
     del after["services"]["explore"]

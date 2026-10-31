@@ -122,8 +122,13 @@ services. Sensitive host paths are `/`, the Docker, containerd and podman socket
 (`/var/run/docker.sock`, `/run/docker.sock`, `/run/podman`, `/run/containerd`,
 `/run/user/<uid>/...`), `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/podman`,
 `/var/lib/containers`, `/proc`, `/sys`, `/dev`, `/etc`, `/root` and `/boot`, anything
-under them, and any parent that contains one (`/var/lib`, `/run`). A new service left on
-the project's default network cannot reach the stack and needs no network opt-in. Move published ports with the
+under them, and any parent that contains one (`/var/lib`, `/run`). The override may
+not redefine a network that a data-tier service uses (`name`, `external`, `driver`,
+`attachable`, `internal`, `driver_opts`), which would move the data tier without touching any
+service's `networks`; changing its `ipam` subnet is fine. A new service that omits `networks`
+joins the project's default network, a separate network from `groovemap`, so it needs no
+network opt-in; that says nothing about what the service reaches on the host or LAN, which
+the key and mount rules cover. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
 to address the same stack by hand.
