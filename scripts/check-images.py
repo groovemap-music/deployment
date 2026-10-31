@@ -66,8 +66,8 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "06fcc517d7f41075eff4d7ab202dd928b9069abc0bc39fabead4740672197fda",  # database-schema v0.5.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "4889f1ce04568a335bdfe698e11a3c8133238e0b0b61c91447ea4448a3e3ae43",  # catalog-api v0.4.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465",  # database-schema v0.6.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5",  # catalog-api v0.6.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c",  # discogs-ingestion v0.3.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37",  # musicbrainz-ingestion v0.2.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d",  # discogs-graph-enricher v0.3.0  gitleaks:allow
@@ -76,14 +76,14 @@ RELEASED_IMAGE_DIGESTS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027",  # musicbrainz-sql-loader v0.2.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1",  # operations-console v0.1.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b",  # graph-explorer v0.1.1  gitleaks:allow
-    "ANALYTICS_ENGINE_IMAGE": "a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69",  # analytics-engine v0.1.1  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa",  # analytics-engine v0.5.0  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.5.0",
-    "CATALOG_API_IMAGE": "0.4.0",
+    "DATABASE_SCHEMA_IMAGE": "0.6.0",
+    "CATALOG_API_IMAGE": "0.6.0",
     "DISCOGS_INGESTION_IMAGE": "0.3.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.2.1",
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.3.0",
@@ -92,7 +92,7 @@ RELEASED_IMAGE_VERSIONS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.2.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.1.1",
     "GRAPH_EXPLORER_IMAGE": "0.1.1",
-    "ANALYTICS_ENGINE_IMAGE": "0.1.1",
+    "ANALYTICS_ENGINE_IMAGE": "0.5.0",
 }
 
 # A capability floor that no release meets yet. `just deploy` refuses the external store it guards.
@@ -104,13 +104,13 @@ UNRELEASED = "unreleased"
 # Promoting a release that supports it means replacing UNRELEASED with its version here.
 EXTERNAL_STORE_FLOORS = {
     # POSTGRES_PREPROVISIONED: verify an operator-provisioned database instead of creating one
-    # (gm-database-schema-2aty, database-schema main dd21dfd; not released yet).
-    "postgres": {"DATABASE_SCHEMA_IMAGE": UNRELEASED},
+    # (gm-database-schema-2aty), first released in database-schema v0.6.0.
+    "postgres": {"DATABASE_SCHEMA_IMAGE": "0.6.0"},
     # VALKEY_KEY_PREFIX applied to every key (python-libraries fd0e548, gm-python-libraries-3sm),
     # adopted by the only two Valkey clients (gm-catalog-api-rchs, gm-analytics-engine-bah5), and
     # VALKEY_TLS (valkeys://, python-libraries 5f35c03), adopted in gm-catalog-api-vd7n and
     # gm-analytics-engine-m0sz: the floor is the first release of each with both.
-    "valkey": {"CATALOG_API_IMAGE": UNRELEASED, "ANALYTICS_ENGINE_IMAGE": UNRELEASED},
+    "valkey": {"CATALOG_API_IMAGE": "0.6.0", "ANALYTICS_ENGINE_IMAGE": "0.5.0"},
 }
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external

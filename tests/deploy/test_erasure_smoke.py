@@ -148,8 +148,8 @@ def arranged_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tu
     }
     cypher = {f"MATCH (u:User {{id: '{user_id}'}}) RETURN count(u) AS value": "1"}
     valkey = {
-        f"--scan --pattern recommend:*{user_id}*": f"recommend:explore:{user_id}:artist:999000101:2\n",
-        f"EXISTS snapshot:usercount:{user_id}": "1",
+        f"--scan --pattern groovemap:recommend:*{user_id}*": f"groovemap:recommend:explore:{user_id}:artist:999000101:2\n",
+        f"EXISTS groovemap:snapshot:usercount:{user_id}": "1",
     }
     return sql, cypher, valkey
 
@@ -172,7 +172,7 @@ def erased_answers(user_id: str = USER_ID, subject_id: str = SUBJECT_ID) -> tupl
         valued("is_active", "users", by_id): "f",
     }
     cypher = {f"MATCH (u:User {{id: '{user_id}'}}) RETURN count(u) AS value": "0"}
-    valkey = {f"EXISTS snapshot:usercount:{user_id}": "0"}
+    valkey = {f"EXISTS groovemap:snapshot:usercount:{user_id}": "0"}
     return sql, cypher, valkey
 
 
@@ -331,8 +331,8 @@ def test_a_surviving_cache_key_for_the_user_fails_the_run() -> None:
     # A 28-day recommendation cache outliving an erasure means the system still holds
     # something keyed to the user, which ADR 0010 deletes rather than lets expire.
     leftovers = {
-        f"--scan --pattern recommend:*{USER_ID}*": f"recommend:enhanced:{USER_ID}\n",
-        f"EXISTS snapshot:usercount:{USER_ID}": "1",
+        f"--scan --pattern groovemap:recommend:*{USER_ID}*": f"groovemap:recommend:enhanced:{USER_ID}\n",
+        f"EXISTS groovemap:snapshot:usercount:{USER_ID}": "1",
     }
     results = [probe() for probe in smoke_erasure.absence_probes(FakeStack(sql, cypher, leftovers), USER_ID, SUBJECT_ID)]
 
@@ -670,7 +670,7 @@ def test_the_run_creates_its_own_catalog_neighbourhood_and_user_subgraph() -> No
 
     for table in ("catalog_items", "artifacts", "user_collections", "owned_copies", "observations"):
         assert any(f"INSERT INTO {table} " in query for query in stack.sql_queries), f"nothing was written to {table}"
-    assert stack.valkey_commands[-1][:2] == ["SET", f"snapshot:usercount:{USER_ID}"]
+    assert stack.valkey_commands[-1][:2] == ["SET", f"groovemap:snapshot:usercount:{USER_ID}"]
 
 
 def test_the_reserved_smoke_identities_stay_outside_any_real_catalog_range() -> None:

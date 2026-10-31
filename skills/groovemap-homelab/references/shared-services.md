@@ -1,32 +1,32 @@
 # Reusing an existing PostgreSQL or Valkey
 
 The user may prefer to reuse a PostgreSQL or Valkey the homelab already runs. This page says
-what reuse requires, how the repository's **external-stores mode** does it, and why `just deploy`
-**refuses it today**. SKILL.md step 2a asks the question; this page backs the answer.
+what reuse requires, how the repository's **external-stores mode** does it, and when `just deploy`
+**refuses it**. SKILL.md step 2a asks the question; this page backs the answer.
 
 Discovery is never authorization. Finding a compatible instance does not permit connecting to
 it, creating anything on it or changing it. Never display its credentials, and never run
 `FLUSH*`, `CONFIG SET` or any other write against an instance GrooveMap does not own.
 
-## Current status: supported once the capability floors are met
+## Current status: supported
 
 Tracking: epic `gm-deployment-e1uh`. The repository has the mode: `GROOVEMAP_POSTGRES=external`
 and `GROOVEMAP_VALKEY=external` in `.env` select an existing server for each store, independently.
 The Discogs-before-MusicBrainz gate stays authoritative in it.
 
-`just deploy` refuses each external store, with exit 3 before anything changes, until the
+`just deploy` refuses each external store, with exit 3 before anything changes, unless the
 reviewed release set supports it. The floors sit beside `RELEASED_IMAGE_DIGESTS` in
-`scripts/check-images.py` as `EXTERNAL_STORE_FLOORS`, and both are `unreleased` today:
+`scripts/check-images.py` as `EXTERNAL_STORE_FLOORS`, and the reviewed set meets both:
 
 | Store | Needs | Upstream work | Status |
 | --- | --- | --- | --- |
-| PostgreSQL | database-schema with `POSTGRES_PREPROVISIONED` (verify an operator-provisioned database, role and `pg_trgm` instead of creating them) | `gm-database-schema-2aty` | merged, not released or promoted |
-| Valkey | catalog-api and analytics-engine that apply `VALKEY_KEY_PREFIX` to every key (python-libraries `valkey_key`) and connect over TLS (`VALKEY_TLS`) | `gm-python-libraries-3sm` and its TLS settings (merged), `gm-catalog-api-rchs`, `gm-analytics-engine-bah5`, `gm-catalog-api-vd7n`, `gm-analytics-engine-m0sz` | services still adopting both; nothing released |
+| PostgreSQL | database-schema with `POSTGRES_PREPROVISIONED` (verify an operator-provisioned database, role and `pg_trgm` instead of creating them) | `gm-database-schema-2aty` | released in database-schema 0.6.0, promoted (floor met) |
+| Valkey | catalog-api and analytics-engine that apply `VALKEY_KEY_PREFIX` to every key (python-libraries `valkey_key`) and connect over TLS (`VALKEY_TLS`) | `gm-python-libraries-3sm` and its TLS settings (merged), `gm-catalog-api-rchs`, `gm-analytics-engine-bah5`, `gm-catalog-api-vd7n`, `gm-analytics-engine-m0sz` | released in catalog-api 0.6.0 and analytics-engine 0.5.0, promoted (floor met) |
 
-When a release is promoted, its floor becomes that version. `.env` must then run exactly those
-reviewed digests (`just env-init`), or `just deploy` still refuses. A store whose floor reads
-`unreleased` cannot be external: **the skill keeps the deployment stopped** when the user chooses
-reuse of it, until they pick dedicated instances or the floor is met.
+A floor is the first release with the capability. `.env` must run exactly the reviewed digests
+(`just env-init`), or `just deploy` still refuses. A store whose floor reads `unreleased`, or
+sits above the pinned version, cannot be external: **the skill keeps the deployment stopped**
+when the user chooses reuse of it, until they pick dedicated instances or the floor is met.
 
 ## How the mode keeps the gate authoritative
 
@@ -134,7 +134,7 @@ operator. `postgres-exporter` and `valkey-exporter` do not run in this mode.
 
 | | Dedicated (default) | Reuse (external-stores mode) |
 | --- | --- | --- |
-| Deployable | Yes | Once the capability floors are met; refused today |
+| Deployable | Yes | Yes, when the capability floors are met (they are) and the store checks pass |
 | Compatibility | Pinned versions, tested | PostgreSQL 18, Valkey 8.0+, session-mode PgBouncer; verified by the store checks |
 | Isolation | Full | Database and role, and a key prefix; a logical DB or prefix alone is not a security boundary |
 | Capacity | Sized by the overlay | Shared connections and memory with the other application |

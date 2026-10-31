@@ -83,8 +83,13 @@ EXPORT_MEDIA_TYPE = "application/x-ndjson"
 # wider than the two shapes `RecommendCache.invalidate_user` knows: it is still scoped to
 # this user's id, and a surviving key under some third `recommend:` shape is exactly the
 # kind of residue this assertion exists to catch.
-RECOMMEND_KEY_PATTERN = "recommend:*{user_id}*"
-SNAPSHOT_USER_COUNT_KEY = "snapshot:usercount:{user_id}"
+#
+# catalog-api namespaces every Valkey key under VALKEY_KEY_PREFIX (v0.6.0 and later). This stack
+# leaves the variable unset, so the prefix is catalog-api's default, `groovemap:`; the SCAN
+# pattern and the seeded snapshot key carry it, or they would match nothing the erasure touches.
+VALKEY_KEY_PREFIX = "groovemap:"
+RECOMMEND_KEY_PATTERN = VALKEY_KEY_PREFIX + "recommend:*{user_id}*"
+SNAPSHOT_USER_COUNT_KEY = VALKEY_KEY_PREFIX + "snapshot:usercount:{user_id}"
 
 # Non-production development credentials from docker-compose.yml, the same ones the media
 # smoke uses. The smoke stack is disposable and unpublished.
@@ -338,7 +343,7 @@ def record_activity(api: ApiClient, token: str) -> None:
 
     The search records `search.query` against the account. The personalized traversal is
     the recommendation surface whose cached body is keyed by the user, so it both records
-    impressions and leaves the `recommend:explore:<user>:…` key the erasure must sweep.
+    impressions and leaves the `groovemap:recommend:explore:<user>:…` key the erasure must sweep.
     """
     expect(api.request("GET", "/api/search?q=groovemap%20smoke", token=token), 200, "the recorded search")
     expect(
