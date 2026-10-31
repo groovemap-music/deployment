@@ -52,6 +52,14 @@ change labels, networks, environment, restart and volumes on web-tier services:
 | a bind mount of a sensitive host path | The Docker socket or the host's own files |
 | a mount of a named volume that another service uses (or that no service uses) | Another service's data, such as `postgres_data` |
 
+Volumes are judged by engine identity, not Compose key. A top-level volume with `name:` or
+`external: true` that resolves to a stack volume (`<project>_postgres_data`) is that stack
+volume, so mounting the alias into another service stops. A bind mount, or a volume
+`driver_opts.device`, that is, contains or lies inside the host directory another service's
+data was relocated to stops for non-owners. The override may not change `name`, `external` or
+`driver` on a stack volume, and two services may not relocate data into overlapping
+directories. `OVERRIDE_ALLOW_SERVICES` lifts the mount rules for an added service only.
+
 A service may still move **its own** data volume: a bind mount at its data path, or `driver_opts`
 on its top-level volume ([storage.md](storage.md)), as in `assets/override-storage.yml`. That
 stays allowed unless the target is a sensitive host path.
