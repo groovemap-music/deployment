@@ -22,9 +22,12 @@
 #   - connection headroom: the server's max_connections minus superuser_reserved_connections,
 #     reserved_connections and the connections in use now, and each role or database limit minus the
 #     connections in use under it, must leave the 60 the services need. Every number is printed.
-#     When GrooveMap already runs against this server (STORE_CHECK_STACK_RUNNING=1, set by
-#     `just deploy`), its own connections to this database count as headroom, since a re-run
-#     replaces them;
+#     When GrooveMap already runs against this server, its own connections to this database count
+#     as headroom, since a re-run replaces or keeps them. `just deploy` says so with
+#     STORE_CHECK_STACK_RUNNING=1; every other `docker compose up` runs this check again first with
+#     no such flag, so the check also looks for the stack's own PostgreSQL clients on its network
+#     (their fixed container names resolve only while they run). Without that, a re-run against a
+#     role or database limit of exactly 60, like lux's, refused the stack's own connections;
 #   - session pooling: two concurrent sessions must not share a server backend. A PgBouncer in
 #     transaction or statement mode hands the second session the backend the first one just
 #     released; catalog-api's session-level advisory lock breaks silently there. A direct
@@ -37,6 +40,9 @@ MIN_SERVER_VERSION_NUM=180000
 MIN_CONNECTIONS=60
 # `just deploy` sets this to 1 when the stack is already running, so its connections are not counted against it.
 stack_running="${STORE_CHECK_STACK_RUNNING:-0}"
+# The long-running PostgreSQL clients (STORE_CLIENTS in scripts/stores.py, less the one-shots), by
+# their fixed container names: Docker's DNS on the stack's network answers for them only while they run.
+STACK_PEERS="groovemap-api groovemap-tableinator groovemap-brainztableinator groovemap-dashboard groovemap-insights"
 SESSION_HOLD_SECONDS=3
 
 fail() {
@@ -194,6 +200,14 @@ for count in "$server_used" "$role_used" "$database_used" "$own_used"; do
     '' | *[!0-9]*) fail "unreadable connection counts from $where: $in_use" ;;
   esac
 done
+if [ "$stack_running" != "1" ] && command -v getent >/dev/null 2>&1; then
+  for peer in $STACK_PEERS; do
+    if getent hosts "$peer" >/dev/null 2>&1; then
+      stack_running=1
+      break
+    fi
+  done
+fi
 credit=0
 [ "$stack_running" = "1" ] && credit="$own_used"
 headroom=$((usable - server_used + credit))
