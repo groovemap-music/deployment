@@ -577,6 +577,11 @@ def _stack_after(service: str, change: dict[str, Any], volumes: dict[str, Any] |
         ("uts", "host"),
         ("cgroup", "host"),
         ("volumes_from", ["postgres"]),
+        ("device_cgroup_rules", ["c 1:3 mr"]),
+        ("sysctls", {"net.ipv4.ip_forward": "1"}),
+        ("runtime", "runc-privileged"),
+        ("isolation", "process"),
+        ("group_add", ["docker"]),
     ],
 )
 def test_existing_service_may_not_gain_host_access(key: str, value: Any) -> None:
@@ -739,6 +744,13 @@ def test_override_may_not_redefine_a_network_the_data_tier_uses(change: dict[str
 def test_override_may_change_the_stack_networks_subnet() -> None:
     after = _networked(ipam={"config": [{"subnet": "172.28.0.0/16"}]})
     assert [finding.level for finding in helpers.check_override(_networked(), after)] == ["ok"]
+
+
+@pytest.mark.parametrize("mode", ["host", "service:postgres", "container:other", "none"])
+def test_network_mode_of_a_web_tier_service_may_not_change(mode: str) -> None:
+    findings = helpers.check_override(_render(), _render(explore={"network_mode": mode}))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "changes network_mode on explore" in findings[0].message
 
 
 def test_override_must_not_drop_a_service() -> None:

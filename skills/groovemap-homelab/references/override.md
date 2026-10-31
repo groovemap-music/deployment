@@ -40,11 +40,14 @@ that would move the data tier onto another network without touching any service.
 `groovemap` network's `ipam` subnet stays allowed (`assets/override-network-restart.yml`).
 
 The check denies what it does not understand. On a service that already exists it also
-stops (no opt-in) when the override adds or changes any of these:
+stops (no opt-in) when the override adds or changes any of these. Existing services are
+checked against this denylist rather than a key allowlist, because overrides legitimately
+change labels, networks, environment, restart and volumes on web-tier services:
 
 | Key or mount | Why |
 | --- | --- |
-| `privileged`, `cap_add`, `devices`, `security_opt` | Wider access to the host than the base file grants |
+| `privileged`, `cap_add`, `devices`, `security_opt`, `device_cgroup_rules`, `sysctls`, `runtime`, `isolation`, `group_add` | Wider access to the host than the base file grants |
+| `network_mode` (any service) | `host`, `service:` and `container:` share another network namespace |
 | `pid`, `ipc`, `uts`, `cgroup`, `cgroup_parent`, `userns_mode`, `volumes_from` | Shares another container's or the host's namespaces or data |
 | a bind mount of a sensitive host path | The Docker socket or the host's own files |
 | a mount of a named volume that another service uses (or that no service uses) | Another service's data, such as `postgres_data` |

@@ -138,6 +138,7 @@ OVERRIDE_NEW_SERVICE_DEPLOY_KEYS = frozenset({"resources"})
 # on a service of the stack stops, with no opt-in.
 OVERRIDE_HOST_ACCESS_KEYS = (
     "privileged", "cap_add", "devices", "security_opt", "pid", "ipc", "uts", "cgroup", "cgroup_parent", "userns_mode", "volumes_from",
+    "device_cgroup_rules", "sysctls", "runtime", "isolation", "group_add",
 )  # fmt: skip
 # Host paths no override mount (or bind-backed named volume) may expose, with everything under
 # them and everything above them (mounting /var/lib or /run reaches the sockets below).
@@ -734,6 +735,14 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
             for key, why in OVERRIDE_DATA_TIER_ISOLATED:
                 if service.get(key) != changed.get(key):
                     findings.append(Finding("stop", f"{OVERRIDE_FILE} changes {key} on {name}", f"Remove it: {why}."))
+        if name not in DATA_TIER and service.get("network_mode") != changed.get("network_mode"):
+            findings.append(
+                Finding(
+                    "stop",
+                    f"{OVERRIDE_FILE} changes network_mode on {name}",
+                    "Remove it: host, service: and container: modes share another network namespace. This rule has no opt-in.",
+                )
+            )
         for key in OVERRIDE_HOST_ACCESS_KEYS:
             if changed.get(key) and changed.get(key) != service.get(key):
                 findings.append(
