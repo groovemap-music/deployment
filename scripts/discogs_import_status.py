@@ -602,6 +602,12 @@ def observe(compose: Compose) -> Observation:
 # --- output ----------------------------------------------------------------------------
 
 
+IN_PROGRESS_NOTE = (
+    "Exit 3 is normal progress, not a failure: the import is still running. "
+    "Wait with --wait (add --interval N), or run this command again later; exit 0 means it has finished."
+)
+
+
 def render(report: Report) -> str:
     """The full per-signal report."""
     lines = [f"Discogs import: {report.status.label.upper()} (exit {int(report.status)})"]
@@ -615,6 +621,9 @@ def render(report: Report) -> str:
         lines.extend(f"  {queue.name.ljust(width)}  {queue.ready:>8}  {queue.unacked:>8}  {queue.consumers:>9}" for queue in report.queues)
     for warning in report.warnings:
         lines.append(f"warning: {warning}")
+    if report.status is Status.IN_PROGRESS:
+        lines.append("")
+        lines.append(IN_PROGRESS_NOTE)
     return "\n".join(lines)
 
 

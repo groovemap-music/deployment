@@ -535,7 +535,7 @@ def test_bad_arguments_never_exit_zero(argv: list[str]) -> None:
 
 def test_recipe_exists_and_documents_the_exit_codes() -> None:
     justfile = (REPO_ROOT / "Justfile").read_text()
-    assert '[positional-arguments]\ndiscogs-import-status *args:\n    uv run python scripts/discogs_import_status.py "$@"' in justfile
+    assert '[positional-arguments]\ndiscogs-import-status *args:\n    {{operator_python}} scripts/discogs_import_status.py "$@"' in justfile
     maintenance = (REPO_ROOT / "docs" / "maintenance.md").read_text()
     assert "just discogs-import-status --prod --wait" in maintenance
     assert "exit 0 complete, 3 in progress, 2 cannot determine" in maintenance

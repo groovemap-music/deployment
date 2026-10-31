@@ -8,7 +8,8 @@ does not provide a source-development environment for those services.
 - Git
 - Docker Engine with Docker Compose v2
 - python3 3.10 or newer (the distro's is enough; Debian 12 and Ubuntu 22.04 ship it)
-- Optional, for maintainers: [mise](https://mise.jdx.dev/) for the repository toolchain
+- Optional: `just` for the recipe shortcuts; every operator recipe also works without `uv`, on
+  the distro's python3. Maintainers can use [mise](https://mise.jdx.dev/) for the full toolchain
   (`just` and `uv`)
 - enough memory and storage for the selected stack and imported datasets
 - approved manifest digests for every required GrooveMap image

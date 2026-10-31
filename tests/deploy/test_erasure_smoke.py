@@ -777,7 +777,7 @@ def test_the_overlay_does_not_reuse_another_disposable_run_s_subnet_or_port() ->
 
 def test_recipe_exists_renders_and_stays_out_of_the_credential_free_gate() -> None:
     justfile = (REPO_ROOT / "Justfile").read_text()
-    assert "smoke-erasure:\n    bash scripts/smoke-erasure.sh" in justfile
+    assert "smoke-erasure: _require-uv\n    bash scripts/smoke-erasure.sh" in justfile
     gate = next(line for line in justfile.splitlines() if line.startswith("check:"))
     assert gate == "check: source-check typecheck test", "the credential-free gate must not start containers"
     for recipe in ("source-check:", "test:", "typecheck:", "_compose-check:", "_source-analysis:"):

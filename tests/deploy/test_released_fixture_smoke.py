@@ -94,7 +94,7 @@ def test_overlay_selects_the_packaged_v1_manifest_and_isolates_state() -> None:
 
 def test_recipe_is_operator_gated_and_statically_rendered() -> None:
     justfile = (ROOT / "Justfile").read_text()
-    assert "smoke-released-fixture:\n    bash scripts/smoke-released-fixture.sh" in justfile
+    assert "smoke-released-fixture: _require-uv\n    bash scripts/smoke-released-fixture.sh" in justfile
     assert "check: source-check typecheck test" in justfile
     assert "check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml" in (ROOT / "scripts" / "check-compose.sh").read_text()
     for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
