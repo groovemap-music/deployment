@@ -193,6 +193,7 @@ organization, then a token, which the operator writes to `secrets/grafana_viewer
 their secret store ([maintenance](../../../docs/maintenance.md#on-a-shared-grafana)). This stack
 runs no Grafana in shared mode, so never suggest creating or using a local Grafana login for it.
 
-**Tell the user** that until the operations-console release with configurable targets is
-promoted, the console shows the shared services as unreachable (`just deploy` warns), and that
+**Tell the user** that the console needs operations-console v0.3.0 or newer (the reviewed set
+pins it) to show the shared services truthfully; an older one shows them as unreachable
+(`just deploy` warns), and that
 shared endpoints needing authentication are not supported yet.

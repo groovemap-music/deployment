@@ -738,10 +738,11 @@ anything starts.
 
 The console gets the operations-console configurable targets (`<NAME>_MODE` and its URL):
 `shared` with the URLs above for VictoriaMetrics, VictoriaTraces, Grafana, node-exporter and
-cAdvisor, and `disabled` or `shared` for an omitted PostgreSQL or Valkey exporter. A console
-release that predates them ignores the variables, which is harmless, but keeps probing the omitted
-services by their compose names and shows them unreachable; `just deploy` warns while the reviewed
-console is below `CONSOLE_TARGETS_FLOOR` in `scripts/check-images.py`.
+cAdvisor, and `disabled` or `shared` for an omitted PostgreSQL or Valkey exporter. The reviewed
+operations-console v0.3.0 reads them. A console that predates them ignores the variables, which is
+harmless, but keeps probing the omitted services by their compose names and shows them
+unreachable; `just deploy` warns while `.env` pins a console below `CONSOLE_TARGETS_FLOOR` in
+`scripts/check-images.py`.
 
 Shared endpoints must accept unauthenticated writes and reads from this host (the usual homelab
 setup on an internal Docker network); an `https://` endpoint must present a certificate the system

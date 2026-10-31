@@ -215,8 +215,8 @@ supported, with these consequences to state:
 - Someone with admin rights on the shared Grafana imports GrooveMap's dashboards and alert rules
   (every query is scoped to `service_namespace="groovemap"`, so they never mix in other stacks),
   ideally into an organization of their own, and creates the optional Viewer token there.
-- Until the operations-console release with configurable targets is promoted, the console shows
-  the shared services as unreachable (`just deploy` warns).
+- The reviewed operations-console v0.3.0 reads the configurable targets and shows the shared
+  services as Shared; a console pinned older shows them as unreachable (`just deploy` warns).
 - Shared endpoints must accept unauthenticated access on an internal network.
 
 With approval, set only `GROOVEMAP_MONITORING=shared` and the `SHARED_*` values in `.env` (and
