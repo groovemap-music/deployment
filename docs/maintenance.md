@@ -116,12 +116,12 @@ Reviewed catalog API image (`v0.6.0`):
 | --- | --- | --- |
 | `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
 
-Reviewed console (`v0.2.0`), explorer (`v0.2.2`) and analytics (`v0.5.0`) images:
+Reviewed console (`v0.3.0`), explorer (`v0.3.0`) and analytics (`v0.5.0`) images:
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:61656dfdae0d82d9b413e19404ab29c9ca83cc320e52529b0d69ad1c47736fd0` |
-| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` |
+| `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691` |
+| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:ad1c3b6a7e21beb9393fca5057050ff883475a72972ee11e8c7eed5863b5d31e` |
 | `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
@@ -229,6 +229,31 @@ name each (`gm-ew9k-released5`, `gm-ew9k-media`, `gm-ew9k-erasure2`):
 - Teardown: each exit trap removed its stack; label-filtered `docker ps -a`, `docker volume ls` and
   `docker network ls` returned no resources for any `gm-ew9k-*` project. No other Compose project
   was touched.
+
+### Promotion of graph-explorer v0.3.0 and operations-console v0.3.0 (2026-10-31)
+
+Each digest was resolved from its released tag on GHCR and verified with `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` (exit 0 for both; signer `reusable-release.yml`, built from each
+repository's `refs/tags/v0.3.0`).
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `graph-explorer:v0.3.0` | `sha256:ad1c3b6a7e21beb9393fca5057050ff883475a72972ee11e8c7eed5863b5d31e` | `v0.2.2` — `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` |
+| `operations-console:v0.3.0` | `sha256:1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691` | `v0.2.0` — `sha256:61656dfdae0d82d9b413e19404ab29c9ca83cc320e52529b0d69ad1c47736fd0` |
+
+Evidence:
+
+- `just smoke-released` passed on unmodified compose files with a `just env-init` environment.
+  Teardown was proven by label: no containers, volumes or networks remained for the
+  `groovemap-released-smoke` project.
+- The published-image theme test for the canonical Explore theme passed against these images.
+- `just smoke-media` and `just smoke-erasure` were waived for this interim promotion: neither
+  exercises the two changed images, and both passed on these exact images at `6af13ec`.
+- The console's own test pins its default `*_MODE` and `*_URL` targets to this deployment's, so the
+  platform-health comparison against `v0.2.0` was not re-run.
+
+Rolling back is a pin change to the rollback digest above for the affected image alone.
 
 ### Identifier lookup verification (2026-09-21)
 
