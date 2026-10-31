@@ -130,6 +130,13 @@ smoke-released-fixture: _require-uv
 smoke-infra:
     bash scripts/smoke-infra.sh
 
+# lux's homelab shape on real Docker (Linux amd64 only): a TLS "homelab" PostgreSQL on its own
+# network, the production stack against it via `just deploy` with uv off PATH, the gate from 3 to 0
+# on the Discogs extractor's packaged fixture, and the negative cases that must fail closed.
+# Disposable: its own projects, removed by label on every exit. CI runs it on PRs touching the stack.
+smoke-homelab: _require-uv
+    bash scripts/smoke-homelab.sh
+
 # Requires a reviewed env file containing approved immutable digests for every
 # repository-owned image. Runs only a disposable, non-published stack.
 smoke-released:
