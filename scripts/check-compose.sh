@@ -46,3 +46,26 @@ check_profile() {
 
 check_profile docker-compose.yml
 check_profile docker-compose.yml docker-compose.prod.yml
+
+# The homelab skill's example overrides must merge onto the production stack and pass the
+# override check `just deploy` runs (scripts/deploy_helpers.py override-check).
+check_override_example() {
+  local stack=(docker compose --profile '*' --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml)
+  local before after output status=0
+  before="$(mktemp)"
+  after="$(mktemp)"
+  "${stack[@]}" config --format json >"$before"
+  "${stack[@]}" -f "$1" config --format json >"$after"
+  if ! output=$(uv run --quiet python scripts/deploy_helpers.py override-check "$before" "$after" 2>&1); then
+    echo "check-compose: $1 does not pass the override check:" >&2
+    echo "$output" >&2
+    status=1
+  fi
+  rm -f "$before" "$after"
+  return "$status"
+}
+
+for example in skills/groovemap-homelab/assets/override-*.yml; do
+  check_compose docker-compose.yml docker-compose.prod.yml "$example"
+  check_override_example "$example"
+done
