@@ -1,0 +1,119 @@
+---
+# External Valkey overlay: GrooveMap uses an existing Valkey (or Redis) instead of running its
+# own. Never apply it by hand: `just deploy` adds it, after docker-compose.prod.yml and before
+# docker-compose.override.yml, when .env sets GROOVEMAP_VALKEY=external, and only once the
+# capability floor in scripts/check-images.py is met (catalog-api and analytics-engine releases
+# that apply VALKEY_KEY_PREFIX to every key). See docs/homelab.md#existing-postgresql-and-valkey.
+#
+# - valkey and valkey-exporter move into the `local-stores` profile, which nothing enables, so
+#   they are omitted rather than removed.
+# - store-check-valkey, a one-shot from the same pinned image, verifies the server before api
+#   and insights connect (scripts/store-check-valkey.sh): version, authentication,
+#   maxmemory-policy noeviction, AOF, and a non-empty key prefix. It never touches a key.
+# - api and insights connect to EXTERNAL_VALKEY_HOST with the password in
+#   secrets/valkey_password.txt, which the operator writes, inside database EXTERNAL_VALKEY_DB
+#   and under the prefix EXTERNAL_VALKEY_KEY_PREFIX.
+# - TLS is on by default (EXTERNAL_VALKEY_TLS, python-libraries' VALKEY_TLS: valkeys://), verified
+#   against the CA in secrets/valkey_ca.crt, host name included unless
+#   EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME=false. `just deploy` refuses cleartext to a server off this
+#   machine unless EXTERNAL_VALKEY_ALLOW_PLAINTEXT=true. With TLS off the CA file is an empty
+#   placeholder that python-libraries never reads.
+#
+# Without the production overlay the valkey_password secret does not exist, so this overlay
+# only renders on top of docker-compose.yml + docker-compose.prod.yml.
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-external-valkey-env: &external-valkey-env
+  VALKEY_HOST: "${EXTERNAL_VALKEY_HOST:?Set EXTERNAL_VALKEY_HOST to the external Valkey host}"
+  VALKEY_PORT: "${EXTERNAL_VALKEY_PORT:-6379}"
+  VALKEY_DB: "${EXTERNAL_VALKEY_DB:-0}"
+  VALKEY_KEY_PREFIX: "${EXTERNAL_VALKEY_KEY_PREFIX:?Set EXTERNAL_VALKEY_KEY_PREFIX to GrooveMap's key prefix, e.g. groovemap:}"
+  VALKEY_TLS: "${EXTERNAL_VALKEY_TLS:-true}"
+  VALKEY_TLS_VERIFY_HOSTNAME: "${EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME:-true}"
+  VALKEY_TLS_CA_FILE: /run/secrets/valkey_ca
+
+secrets:
+  valkey_ca:
+    file: ./secrets/valkey_ca.crt
+
+x-store-check-valkey: &store-check-valkey
+  store-check-valkey:
+    condition: service_completed_successfully
+
+services:
+  valkey:
+    profiles:
+      - local-stores
+
+  valkey-exporter:
+    profiles:
+      - local-stores
+
+  # Read-only: AUTH, SELECT, PING, INFO and QUIT, never a key, FLUSH* or CONFIG. The image is the
+  # stack's own pinned valkey (tests keep the two equal). Over TLS the script verifies the
+  # certificate and host name with the image's openssl before sending the password, and sends it
+  # only over a connection verified that way (valkey-cli never checks the host name). No
+  # credential reaches a command line.
+  store-check-valkey:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    container_name: groovemap-store-check-valkey
+    hostname: store-check-valkey
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["sh", "/scripts/store-check-valkey.sh"]
+    environment:
+      <<: *external-valkey-env
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_password
+      GROOVEMAP_ALLOW_PLAINTEXT: "${EXTERNAL_VALKEY_ALLOW_PLAINTEXT:-false}"
+    volumes:
+      - ./scripts/store-check-valkey.sh:/scripts/store-check-valkey.sh:ro
+    secrets:
+      - valkey_password
+      - valkey_ca
+    networks:
+      - groovemap
+    # A server on this Docker host but outside Docker is reachable as host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  api:
+    environment:
+      <<: *external-valkey-env
+    secrets:
+      - valkey_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      valkey: !reset null
+      <<: *store-check-valkey
+
+  insights:
+    environment:
+      <<: *external-valkey-env
+    secrets:
+      - valkey_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      valkey: !reset null
+      <<: *store-check-valkey
+
+  # The console reads no VALKEY_* setting; its platform-health page only pings this address.
+  dashboard:
+    environment:
+      VALKEY_HEALTH_ADDRESS: "${EXTERNAL_VALKEY_HOST:?Set EXTERNAL_VALKEY_HOST to the external Valkey host}:${EXTERNAL_VALKEY_PORT:-6379}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

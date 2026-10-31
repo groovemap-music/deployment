@@ -19,6 +19,25 @@ check_compose docker-compose.yml docker-compose.media-smoke.yml
 check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml
 check_compose docker-compose.yml docker-compose.erasure-smoke.yml
 
+# The external-store overlays render only on the production stack, each alone and together, with
+# syntax-only external settings: a service still depending on an omitted local store fails here.
+external_stores=(
+  EXTERNAL_POSTGRES_HOST=db.validation.invalid
+  EXTERNAL_VALKEY_HOST=cache.validation.invalid
+  EXTERNAL_VALKEY_KEY_PREFIX=groovemap:
+)
+check_external() {
+  local command=(env "${external_stores[@]}" docker compose --profile '*' --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml)
+  local compose_file
+  for compose_file in "$@"; do
+    command+=(-f "$compose_file")
+  done
+  "${command[@]}" config --quiet
+}
+check_external docker-compose.external-postgres.yml
+check_external docker-compose.external-valkey.yml
+check_external docker-compose.external-postgres.yml docker-compose.external-valkey.yml
+
 # The profile is what keeps a bare `docker compose up` safe on first load, so assert both
 # sides: absent by default, present when enabled, for the base and the production overlay.
 musicbrainz_services=(extractor-musicbrainz brainzgraphinator brainztableinator)

@@ -130,6 +130,7 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
     )
 
     validation = "compose --profile musicbrainz --env-file config/validation.env"
+    external = "compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml"
     assert log.read_text().splitlines() == [
         f"{validation} config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.prod.yml config --quiet",
@@ -137,6 +138,9 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         f"{validation} -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.erasure-smoke.yml config --quiet",
+        f"{external} -f docker-compose.external-postgres.yml config --quiet",
+        f"{external} -f docker-compose.external-valkey.yml config --quiet",
+        f"{external} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml config --quiet",
         "compose --env-file config/validation.env -f docker-compose.yml config --services",
         "compose --env-file config/validation.env -f docker-compose.yml --profile musicbrainz config --services",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --services",

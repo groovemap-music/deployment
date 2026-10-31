@@ -79,6 +79,47 @@ RELEASED_IMAGE_DIGESTS = {
     "ANALYTICS_ENGINE_IMAGE": "a50a9eb79f58f463f287de379d6a87b68c39c3df84b8aa6a7c80f93294210c69",  # analytics-engine v0.1.1  gitleaks:allow
 }
 
+# Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
+# digest (tests keep the two in step). The capability floors below are judged against these.
+RELEASED_IMAGE_VERSIONS = {
+    "DATABASE_SCHEMA_IMAGE": "0.5.0",
+    "CATALOG_API_IMAGE": "0.4.0",
+    "DISCOGS_INGESTION_IMAGE": "0.3.1",
+    "MUSICBRAINZ_INGESTION_IMAGE": "0.2.1",
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.3.0",
+    "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "0.2.0",
+    "DISCOGS_SQL_LOADER_IMAGE": "0.3.0",
+    "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.2.0",
+    "OPERATIONS_CONSOLE_IMAGE": "0.1.1",
+    "GRAPH_EXPLORER_IMAGE": "0.1.1",
+    "ANALYTICS_ENGINE_IMAGE": "0.1.1",
+}
+
+# A capability floor that no release meets yet. `just deploy` refuses the external store it guards.
+UNRELEASED = "unreleased"
+
+# External stores (docker-compose.external-*.yml) -> image variable -> the first release that
+# supports it. `just deploy` refuses GROOVEMAP_POSTGRES=external or GROOVEMAP_VALKEY=external until
+# RELEASED_IMAGE_VERSIONS meets every floor of that store and .env runs those reviewed digests.
+# Promoting a release that supports it means replacing UNRELEASED with its version here.
+EXTERNAL_STORE_FLOORS = {
+    # POSTGRES_PREPROVISIONED: verify an operator-provisioned database instead of creating one
+    # (gm-database-schema-2aty, database-schema main dd21dfd; not released yet).
+    "postgres": {"DATABASE_SCHEMA_IMAGE": UNRELEASED},
+    # VALKEY_KEY_PREFIX applied to every key (python-libraries fd0e548, gm-python-libraries-3sm),
+    # adopted by the only two Valkey clients (gm-catalog-api-rchs, gm-analytics-engine-bah5), and
+    # VALKEY_TLS (valkeys://, python-libraries 5f35c03), adopted in gm-catalog-api-vd7n and
+    # gm-analytics-engine-m0sz: the floor is the first release of each with both.
+    "valkey": {"CATALOG_API_IMAGE": UNRELEASED, "ANALYTICS_ENGINE_IMAGE": UNRELEASED},
+}
+
+# Overlay service -> the base service whose pinned image it must run, byte for byte: the external
+# store checks use the stack's own postgres and valkey images, so one Dependabot bump moves both.
+OVERLAY_IMAGES = {
+    "docker-compose.external-postgres.yml": {"store-check-postgres": "postgres"},
+    "docker-compose.external-valkey.yml": {"store-check-valkey": "valkey"},
+}
+
 # Compose service -> the reviewed repository (registry host included when it is not Docker
 # Hub) of the third-party image it runs. These are public registry images nobody here
 # publishes. The review is of WHERE an image comes from and that it is immutable, not of
@@ -146,6 +187,13 @@ def check_declarations() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
         "a reviewed release digest must be a full manifest digest"
     )
+    assert set(RELEASED_IMAGE_VERSIONS) == set(RELEASED_IMAGE_DIGESTS), "every reviewed release digest needs its version"
+    assert all(re.fullmatch(r"\d+\.\d+\.\d+", version) for version in RELEASED_IMAGE_VERSIONS.values()), "a reviewed version is X.Y.Z"
+    for store, floors in EXTERNAL_STORE_FLOORS.items():
+        assert floors, f"the external {store} floor must name at least one image"
+        for variable, floor in floors.items():
+            assert variable in IMAGE_OWNERS, f"the external {store} floor names {variable}, which is not an owned image"
+            assert floor == UNRELEASED or re.fullmatch(r"\d+\.\d+\.\d+", floor), f"the external {store} floor for {variable} is X.Y.Z or UNRELEASED"
     assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_REPOSITORIES), "a service runs either a released GrooveMap image or a public one"
     assert all(
         repository and "@" not in repository and ":" not in repository.rsplit("/", 1)[-1] for repository in THIRD_PARTY_REPOSITORIES.values()
@@ -188,6 +236,23 @@ def check_compose(compose_text: str, env_templates: Mapping[str, str]) -> None:
             )
 
 
+def check_overlay_images(base_text: str, overlay_texts: Mapping[str, str]) -> None:
+    """Each overlay service in OVERLAY_IMAGES runs exactly the image of its base service."""
+    import yaml  # noqa: PLC0415
+
+    class ComposeLoader(yaml.SafeLoader):
+        """Reads Compose's merge tags (`!reset`, `!override`) as their plain value."""
+
+    ComposeLoader.add_multi_constructor(
+        "!", lambda loader, _suffix, node: loader.construct_scalar(node) if isinstance(node, yaml.ScalarNode) else None
+    )
+    base = yaml.safe_load(base_text)["services"]
+    for name, text in overlay_texts.items():
+        services = yaml.load(text, Loader=ComposeLoader)["services"]  # noqa: S506 - a SafeLoader subclass
+        for service, source in OVERLAY_IMAGES[name].items():
+            assert services[service]["image"] == base[source]["image"], f"{name}: {service} must run {source}'s image {base[source]['image']}"
+
+
 def check_provenance(provenance: Mapping[str, Mapping[str, str]], promoted_files: Mapping[str, bytes]) -> None:
     """Validate promoted artifact metadata against supplied file content."""
     assert "extraction-rules.yaml" in provenance, "the promoted extraction rules must stay recorded"
@@ -214,6 +279,7 @@ def check_repository(root: Path = ROOT) -> None:
         (root / "docker-compose.yml").read_text(),
         {name: (root / name).read_text() for name in env_names},
     )
+    check_overlay_images((root / "docker-compose.yml").read_text(), {name: (root / name).read_text() for name in OVERLAY_IMAGES})
     provenance: dict[str, dict[str, str]] = json.loads((root / "config/provenance.json").read_text())
     promoted_files = {
         relative_path: (root / "config" / relative_path).read_bytes() for relative_path in provenance if (root / "config" / relative_path).is_file()
