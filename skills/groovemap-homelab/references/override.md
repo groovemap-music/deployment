@@ -52,6 +52,11 @@ change labels, networks, environment, restart and volumes on web-tier services:
 | a bind mount of a sensitive host path | The Docker socket or the host's own files |
 | a mount of a named volume that another service uses (or that no service uses) | Another service's data, such as `postgres_data` |
 
+Paths are compared after leading slashes are collapsed and `.`/`..` resolved
+(`//var/run/docker.sock` is the Docker socket). On a local engine symlinks are followed too, so
+a link to a sensitive or relocated path is judged by where it leads; with a remote
+`DOCKER_HOST` the paths are on another machine and symlinks are not resolved.
+
 Volumes are judged by engine identity, not Compose key. A top-level volume with `name:` or
 `external: true` that resolves to a stack volume (`<project>_postgres_data`) is that stack
 volume, so mounting the alias into another service stops. A bind mount, or a volume
@@ -69,8 +74,7 @@ Sensitive host paths: `/`; the Docker, containerd and podman sockets (`/var/run/
 `/run/user/<uid>/docker|podman|containerd`); `/var/lib/docker`, `/var/lib/containerd`,
 `/var/lib/podman`, `/var/lib/containers`; `/proc`, `/sys`, `/dev`, `/etc`, `/root`, `/boot`;
 anything under them; and any parent that contains one (`/var/lib`, `/run`). Paths are
-compared after `..` is resolved, but symlinks are not followed, so do not point a bind at a
-symlink to one of these.
+compared in canonical form, and symlinks are followed on a local engine (see below).
 
 ### Services you add
 
