@@ -92,23 +92,23 @@ MusicBrainz, or vice versa, unless an independent incident calls for both.
 
 ### Recorded release digests
 
-Reviewed per-source producer images (Discogs `v0.3.1`, MusicBrainz `v0.2.1`):
+Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c` |
-| `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
+| `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
+| `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
 Matching consumer and schema images (Discogs SQL loader and graph enricher
-`v0.3.0`; other consumers `v0.2.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
+`v0.3.0`; MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
 | `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
-| `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
-| `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
+| `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
+| `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
 Reviewed catalog API image (`v0.6.0`):
 
@@ -116,12 +116,12 @@ Reviewed catalog API image (`v0.6.0`):
 | --- | --- | --- |
 | `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
 
-Reviewed console and explorer images (`v0.1.1`) and analytics image (`v0.5.0`):
+Reviewed console (`v0.2.0`), explorer (`v0.2.2`) and analytics (`v0.5.0`) images:
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1` |
-| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
+| `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:61656dfdae0d82d9b413e19404ab29c9ca83cc320e52529b0d69ad1c47736fd0` |
+| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` |
 | `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
@@ -138,6 +138,47 @@ and `CATALOG_API_IMAGE`
 These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
 platform other than the one the release workflow published.
+
+### Promotion of the lagging service images (2026-10-31)
+
+Completes the [October 2026 operations console rollout](rollout-2026-10-operations-console.md)
+in the reviewed set. Every digest was resolved from its released tag on GHCR and verified with
+`gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` (exit 0 for all eight images in this section). Each tag is the latest published version of
+its repository.
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `musicbrainz-graph-enricher:v0.4.0` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` | `v0.2.0` — `sha256:541cc5ef9823a970a44af2952e641a6c925011e1d653274e419fbfc72df62b6e` |
+| `musicbrainz-sql-loader:v0.5.0` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` | `v0.2.0` — `sha256:cab35264260d6df0e3a86e2022ed3a6b02506b8404aa845921ff7ec18605b027` |
+| `operations-console:v0.2.0` | `sha256:61656dfdae0d82d9b413e19404ab29c9ca83cc320e52529b0d69ad1c47736fd0` | `v0.1.1` — `sha256:fa771bc34f5ed69a028587ae62095268301a774426ef90ee18c0b18f2e5f59b1` |
+| `discogs-ingestion:v0.4.0` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` | `v0.3.1` — `sha256:db418bfc97d2d364ac0e64045b492ad8492b500c84f8ce105a04cadd400ee17c` |
+| `musicbrainz-ingestion:v0.3.0` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` | `v0.2.1` — `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
+| `graph-explorer:v0.2.2` | `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` | `v0.1.1` — `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
+
+`discogs-graph-enricher` and `discogs-sql-loader` stay at `v0.3.0` (already the latest tags).
+Commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5` (SQL loader), the
+rollout's `HEALTH_PORT` override and exit-1 changes, are in no tag yet. Rollout constraint O5 says
+those releases are not coupled to anything, so nothing waits on them.
+
+Rolling the MusicBrainz consumers or the console back is not independent: they are coupled to the
+Compose health ports and to the console's credentials (rollout constraints T1 and T2). Use the
+[rollout's coupled-set rollback](rollout-2026-10-operations-console.md#roll-back-the-coupled-set-approval),
+not a lone digest swap.
+
+Disposable smokes ran on unmodified Compose files with an arm64 host's emulation only (internal
+images as `linux/amd64`, `DOCKER_DEFAULT_PLATFORM` unset), the reviewed `.env` from
+`just env-init`, and unique project names:
+
+- `just smoke-released` (`gm-lqar-released`): exit 0, every service healthy, clean stop, and no
+  `ACCESS_REFUSED` in any log. With the promoted images the brainz healthchecks on `8001` and
+  `8002` pass, and the console starts without AMQP credentials.
+- `just smoke-media` (`gm-lqar-media`): 15/15 PASS.
+- `just smoke-erasure` (`gm-lqar-erasure`): 32/32 PASS.
+- `just smoke-released-fixture` (`gm-lqar-fixture`, `discogs-ingestion` `v0.4.0` still ships the
+  v1 extractor-smoke contract): 7/7 PASS.
+- Teardown: label-filtered `docker ps -a`, `docker volume ls` and `docker network ls` returned no
+  resources for any `gm-lqar-*` project.
 
 ### Promotion of catalog-api v0.6.0, analytics-engine v0.5.0 and database-schema v0.6.0 (2026-10-31)
 
