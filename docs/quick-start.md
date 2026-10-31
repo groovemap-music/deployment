@@ -13,6 +13,9 @@ does not provide a source-development environment for those services.
 
 ## The short way: `just deploy`
 
+The [homelab guide](homelab.md) covers sizing, ports, reverse proxies, upgrades and known
+limitations in full. This section is the short version.
+
 On a Docker host you control, one command takes GrooveMap from nothing to fully
 loaded, Discogs first and MusicBrainz after it:
 
@@ -137,23 +140,24 @@ before deploying. See [Configuration](configuration.md) and
 
 ## 4. Start only with operator approval
 
-After reviewing the exact image digests, configuration, backup state, and
-target environment, the approved operator may run:
+For a first start, use `just deploy` ([above](#the-short-way-just-deploy)): it runs the
+Discogs import to completion before it starts MusicBrainz, which a plain `up` would not. After
+reviewing the exact image digests, configuration, backup state, and target environment, the
+approved operator may run it. `just down` likewise changes the live environment and requires
+approval.
 
-```bash
-just smoke
-```
-
-That command starts the stack and waits for service health. It is intentionally
-excluded from CI and `just check`. Likewise, `just down` changes the live
-environment and requires approval.
-
-For a production overlay, use the reviewed Compose command appropriate to the
-target environment:
+`just smoke` starts the development stack and waits for service health, which is useful for
+validating a change but not a way to install GrooveMap: it never runs the staged load or
+enables MusicBrainz, and it is excluded from CI and `just check`. To bring an
+already-loaded production stack up by hand, use the reviewed command for the target
+environment (add `-f docker-compose.override.yml` last if you have one):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait
 ```
+
+MusicBrainz starts with this command only when `COMPOSE_PROFILES=musicbrainz` is set in
+`.env`; see [Upgrading an existing deployment](homelab.md#upgrading-an-existing-deployment).
 
 ## Service endpoints
 
