@@ -84,20 +84,46 @@ def test_project_name_follows_compose(explicit: str | None, env_values: dict[str
 
 @pytest.mark.parametrize(
     ("total", "expected"),
-    [(8, (1, 3, 5)), (16, (2, 6, 12)), (24, (4, 8, 20)), (32, (5, 11, 28)), (48, (8, 16, 44)), (64, (8, 16, 48)), (256, (8, 16, 48))],
+    [
+        (8, (1, 3, 5, 1)),
+        (16, (2, 6, 12, 1)),
+        (24, (4, 8, 20, 2)),
+        (32, (5, 11, 28, 3)),
+        (48, (8, 16, 44, 5)),
+        (64, (8, 16, 48, 5)),
+        (256, (8, 16, 48, 5)),
+    ],
 )
-def test_neo4j_sizing_formula(total: int, expected: tuple[int, int, int]) -> None:
+def test_neo4j_sizing_formula(total: int, expected: tuple[int, int, int, int]) -> None:
     sizing = helpers.neo4j_sizing(total)
-    assert (sizing.heap, sizing.pagecache, sizing.limit) == expected
+    assert (sizing.heap, sizing.pagecache, sizing.limit, sizing.transaction) == expected
     assert sizing.heap + sizing.pagecache < sizing.limit
     if total >= 16:
         assert sizing.limit <= total - 4
+        # The transaction cap lives inside the heap and only bounds anything below it.
+        assert sizing.transaction < sizing.heap
 
 
-def test_large_hosts_get_exactly_the_production_overlay_defaults() -> None:
+def test_large_hosts_get_the_overlay_defaults_with_a_transaction_cap_below_the_heap() -> None:
     overlay = (ROOT / "docker-compose.prod.yml").read_text()
-    for key, value in helpers.neo4j_sizing(64).env().items():
-        assert f"${{{key}:-{value}}}" in overlay
+    sizing = helpers.neo4j_sizing(64).env()
+    for key in ("NEO4J_HEAP_SIZE", "NEO4J_PAGECACHE_SIZE", "NEO4J_MEMORY_LIMIT"):
+        assert f"${{{key}:-{sizing[key]}}}" in overlay
+    # The overlay's own 8G default equals its 8g heap, so the formula's 5g replaces it.
+    assert "NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TRANSACTION_MEMORY_MAX:-8G}" in overlay
+    assert sizing["NEO4J_TRANSACTION_MEMORY_MAX"] == "5g"
+
+
+@pytest.mark.parametrize(("heap", "expected"), [(0.5, 1), (1, 1), (2, 1), (4.5, 3), (8, 5), (16, 11)])
+def test_transaction_cap_is_70_percent_of_the_heap_floor_1g(heap: float, expected: int) -> None:
+    assert helpers.transaction_max_gb(heap) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "gb"), [("2G", 2.0), ("4096m", 4.0), ("1048576k", 1.0), ("8589934592", 8.0), ("1.5g", 1.5), ("lots", None), ("", None)]
+)
+def test_neo4j_memory_values_are_read_in_gb(value: str, gb: float | None) -> None:
+    assert helpers.memory_gb(value) == gb
 
 
 def test_memory_rounds_up_to_what_the_machine_was_sold_as() -> None:
@@ -110,9 +136,15 @@ def test_template_heap_counts_as_unset_but_an_operator_choice_is_kept() -> None:
     assert template["NEO4J_HEAP_SIZE"] == "2G", "the template value this rule is about"
     sizing = helpers.neo4j_sizing(32)
     assert helpers.plan_sizing("NEO4J_HEAP_SIZE=2G\n", template, sizing) == sizing.env()
-    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=4g\nNEO4J_PAGECACHE_SIZE=\n", template, sizing) == {
+    # An operator's heap is kept, and the transaction cap follows it rather than the formula's 5g.
+    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=6144m\nNEO4J_PAGECACHE_SIZE=\n", template, sizing) == {
         "NEO4J_PAGECACHE_SIZE": "11g",
         "NEO4J_MEMORY_LIMIT": "28G",
+        "NEO4J_TRANSACTION_MEMORY_MAX": "4g",
+    }
+    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=big\n", template, sizing)["NEO4J_TRANSACTION_MEMORY_MAX"] == "3g"
+    assert helpers.plan_sizing("NEO4J_TRANSACTION_MEMORY_MAX=2g\n", template, sizing).keys() == set(helpers.SIZING_KEYS) - {
+        "NEO4J_TRANSACTION_MEMORY_MAX"
     }
     assert helpers.plan_sizing(f"{helpers.SIZING_MARKER}\nNEO4J_HEAP_SIZE=2G\n", template, sizing) == {}
 
@@ -125,6 +157,7 @@ def test_configure_writes_sizing_and_base_url_once(tmp_path: Path) -> None:
     assert values["NEO4J_HEAP_SIZE"] == "5g"
     assert values["NEO4J_PAGECACHE_SIZE"] == "11g"
     assert values["NEO4J_MEMORY_LIMIT"] == "28G"
+    assert values["NEO4J_TRANSACTION_MEMORY_MAX"] == "3g"
     assert values["APP_BASE_URL"] == "http://lab:8006"
     assert "Sized Neo4j" in messages[0]
 
@@ -564,7 +597,7 @@ def test_fresh_host_runs_both_phases_in_order(deploy: Deploy) -> None:
     ]
     values = deploy.env_values
     assert values["CATALOG_API_IMAGE"].startswith("ghcr.io/groovemap-music/catalog-api@sha256:")
-    assert (values["NEO4J_HEAP_SIZE"], values["NEO4J_PAGECACHE_SIZE"], values["NEO4J_MEMORY_LIMIT"]) == ("8g", "16g", "48G")
+    assert tuple(values[key] for key in helpers.SIZING_KEYS) == ("8g", "16g", "48G", "5g")
     assert values["APP_BASE_URL"].startswith("http://")
     assert values["COMPOSE_PROFILES"] == "musicbrainz"
     assert (deploy.root / "secrets" / "neo4j_password.txt").exists()
@@ -652,7 +685,7 @@ def test_dev_uses_the_base_stack_without_secrets_or_sizing(deploy: Deploy) -> No
     assert "gate --wait --interval 300" in deploy.calls
     assert not (deploy.root / "secrets").exists()
     assert deploy.env_values["NEO4J_HEAP_SIZE"] == "2G"
-    assert "NEO4J_MEMORY_LIMIT" not in deploy.env_values
+    assert not {"NEO4J_MEMORY_LIMIT", "NEO4J_TRANSACTION_MEMORY_MAX"} & deploy.env_values.keys()
     assert "user admin, password groovemap" in result.stdout
 
 
@@ -701,7 +734,7 @@ def test_deploy_stops_on_low_memory_unless_forced(deploy: Deploy) -> None:
     assert "needs at least 16 GB" in result.stdout
     assert not (deploy.root / ".env").exists()
     assert deploy.run("--force", "--no-wait", FAKE_DOCKER_INFO=small).returncode == 0
-    assert deploy.env_values["NEO4J_HEAP_SIZE"] == "1g"
+    assert tuple(deploy.env_values[key] for key in helpers.SIZING_KEYS) == ("1g", "3g", "5G", "1g")
 
 
 @pytest.mark.parametrize("args", [["--bogus"], ["--interval", "0"], ["--interval", "soon"], ["--admin-email"], ["-p", ""]])

@@ -10,7 +10,8 @@ Minimums, and where they come from:
 - Memory, production overlay: refuse below 16 GB, warn below 32 GB. Neo4j's share is sized from
   total memory (see `neo4j_sizing`), PostgreSQL takes 2 GB shared_buffers and plans on a 6 GB
   cache (docker-compose.prod.yml), and the rest of the stack and the OS need the remainder. From
-  64 GB the formula reproduces the overlay's own defaults (8g heap, 16g page cache, 48G limit).
+  64 GB the formula reproduces the overlay's heap, page cache and limit (8g, 16g, 48G); its
+  transaction cap comes out at 5g there, below the heap, where the overlay's 8G is not.
 - Memory, base stack (--dev): refuse below 8 GB, warn below 16 GB. docker-compose.yml fixes Neo4j
   at a 2 GiB heap and 1 GiB page cache, and the full import still runs.
 - Disk, fresh install, on the Docker data root: refuse below 100 GB, warn below 200 GB. The
@@ -63,8 +64,10 @@ COMPOSE_MIN_MAJOR = 2
 # docker-compose.prod.yml's defaults: heap + page cache = 24 GB inside a 48G container limit.
 PROD_NEO4J_GB = 24
 PROD_HEAP_GB = 8
+# Neo4j's transaction memory cap lives inside the heap, so it has to stay below it to bound anything.
+TRANSACTION_SHARE = 0.7
 
-SIZING_KEYS = ("NEO4J_HEAP_SIZE", "NEO4J_PAGECACHE_SIZE", "NEO4J_MEMORY_LIMIT")
+SIZING_KEYS = ("NEO4J_HEAP_SIZE", "NEO4J_PAGECACHE_SIZE", "NEO4J_MEMORY_LIMIT", "NEO4J_TRANSACTION_MEMORY_MAX")
 SIZING_MARKER = "# Neo4j sizing written by just deploy"
 PROFILE_MARKER = "# Enabled by just deploy once the Discogs import finished"
 BASE_URL_MARKER = "# Written by just deploy: the public Explore origin used in email links"
@@ -154,9 +157,15 @@ class Sizing:
     heap: int
     pagecache: int
     limit: int
+    transaction: int
 
     def env(self) -> dict[str, str]:
-        return {"NEO4J_HEAP_SIZE": f"{self.heap}g", "NEO4J_PAGECACHE_SIZE": f"{self.pagecache}g", "NEO4J_MEMORY_LIMIT": f"{self.limit}G"}
+        return {
+            "NEO4J_HEAP_SIZE": f"{self.heap}g",
+            "NEO4J_PAGECACHE_SIZE": f"{self.pagecache}g",
+            "NEO4J_MEMORY_LIMIT": f"{self.limit}G",
+            "NEO4J_TRANSACTION_MEMORY_MAX": f"{self.transaction}g",
+        }
 
 
 def nominal_gb(mem_bytes: int) -> int:
@@ -171,15 +180,38 @@ def neo4j_sizing(total_gb: int) -> Sizing:
     - A third of that is heap (at least 1, at most the overlay's 8), the rest page cache.
     - The container limit is twice heap + page cache (the overlay's 48G at the cap), but leaves
       4 GB of the host for everything else and always 1 GB above heap + page cache.
+    - The transaction memory cap is `transaction_max_gb(heap)`.
 
-    At 16 GB that is 2g / 6g / 12G, at 32 GB 5g / 11g / 28G, and from 64 GB the overlay's
-    defaults of 8g / 16g / 48G.
+    At 16 GB that is 2g / 6g / 12G / 1g, at 32 GB 5g / 11g / 28G / 3g, and from 64 GB the
+    overlay's 8g / 16g / 48G with a 5g transaction cap.
     """
     neo4j = max(2, min(PROD_NEO4J_GB, total_gb // 2))
     heap = max(1, min(PROD_HEAP_GB, neo4j // 3))
     pagecache = neo4j - heap
     limit = max(neo4j + 1, min(2 * neo4j, total_gb - 4))
-    return Sizing(heap, pagecache, limit)
+    return Sizing(heap, pagecache, limit, transaction_max_gb(heap))
+
+
+def transaction_max_gb(heap_gb: float) -> int:
+    """70% of the heap, rounded down to whole GB and at least 1 GB.
+
+    That leaves the rest of the heap for Neo4j itself, so a large transaction is refused instead
+    of exhausting the heap (the overlay exits the JVM on OutOfMemoryError). Only a heap of 1 GB
+    or less, below the production minimum, gets a cap as large as the heap.
+    """
+    return max(1, math.floor(heap_gb * TRANSACTION_SHARE))
+
+
+MEMORY_UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": GIB}
+MEMORY_VALUE = re.compile(r"^(?P<amount>\d+(?:\.\d+)?)(?P<unit>[kKmMgG]?)$")
+
+
+def memory_gb(value: str) -> float | None:
+    """A Neo4j memory setting ("2G", "4096m", "8589934592") in GB, or None if unreadable."""
+    match = MEMORY_VALUE.match(value.strip())
+    if not match:
+        return None
+    return float(match["amount"]) * MEMORY_UNITS[match["unit"].lower()] / GIB
 
 
 def plan_sizing(env_text: str, template_values: Mapping[str, str], sizing: Sizing) -> dict[str, str]:
@@ -190,12 +222,19 @@ def plan_sizing(env_text: str, template_values: Mapping[str, str], sizing: Sizin
     by `just env-init`, not a choice for this host, and left alone it would hold the production
     heap at 2 GB beside a 16 GB page cache. Once deploy has written its sizing (the marker comment
     is present) it never rewrites any of it, so an edit after the first run always sticks.
+
+    The transaction cap follows the heap that will actually run: when the operator chose the
+    heap, the cap is derived from their value rather than from the formula's.
     """
     if SIZING_MARKER in env_text:
         return {}
     current = parse_env(env_text)
     wanted = sizing.env()
-    return {key: wanted[key] for key in SIZING_KEYS if not current.get(key) or current[key] == template_values.get(key)}
+    unset = [key for key in SIZING_KEYS if not current.get(key) or current[key] == template_values.get(key)]
+    chosen_heap = memory_gb(current["NEO4J_HEAP_SIZE"]) if "NEO4J_HEAP_SIZE" not in unset else None
+    if chosen_heap is not None:
+        wanted["NEO4J_TRANSACTION_MEMORY_MAX"] = f"{transaction_max_gb(chosen_heap)}g"
+    return {key: wanted[key] for key in unset}
 
 
 def merge_profiles(value: str, profile: str = PROFILE) -> str:

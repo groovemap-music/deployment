@@ -99,7 +99,7 @@ The following groups are interpolated by the executable stack:
 | `RABBITMQ_DLQ_MAX_LENGTH`, `RABBITMQ_DLQ_MAX_LENGTH_BYTES`, `RABBITMQ_DLQ_OVERFLOW` | Catalog dead-letter queue size-cap policy (defaults `50000`, `536870912`, `drop-head`); see [the admin guide](admin-guide.md#dlq-size-cap-policy) |
 | `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
-| `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` | Production overlay sizing |
+| `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
@@ -150,8 +150,9 @@ source-level variable is an `.env` interpolation.
 
 ### Neo4j sizing written by `just deploy`
 
-`just deploy` writes `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE` and
-`NEO4J_MEMORY_LIMIT` into `.env` for the production overlay, sized from the
+`just deploy` writes `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`,
+`NEO4J_MEMORY_LIMIT` and `NEO4J_TRANSACTION_MEMORY_MAX` into `.env` for the
+production overlay, sized from the
 memory Docker reports (`docker info` MemTotal, rounded up to whole GB, so a
 16 GB machine counts as 16). For total memory T in GB:
 
@@ -159,24 +160,32 @@ memory Docker reports (`docker info` MemTotal, rounded up to whole GB, so a
 - heap = a third of that, at least 1 GB and at most 8 GB; page cache = the rest
 - limit = twice heap + page cache, but at most T − 4 GB, and always at least
   1 GB above heap + page cache
+- transaction memory cap = 70% of the heap, rounded down to whole GB, at least
+  1 GB
 
-| Memory | Heap | Page cache | Limit |
-| --- | --- | --- | --- |
-| 16 GB | `2g` | `6g` | `12G` |
-| 32 GB | `5g` | `11g` | `28G` |
-| 64 GB or more | `8g` | `16g` | `48G` (the overlay defaults) |
+| Memory | Heap | Page cache | Limit | Transaction cap |
+| --- | --- | --- | --- | --- |
+| 16 GB | `2g` | `6g` | `12G` | `1g` |
+| 32 GB | `5g` | `11g` | `28G` | `3g` |
+| 64 GB or more | `8g` | `16g` | `48G` | `5g` |
+
+From 64 GB the heap, page cache and limit are the overlay's own defaults. The
+transaction cap is not: the overlay's `NEO4J_TRANSACTION_MEMORY_MAX` default
+of 8G equals its 8g heap. Neo4j tracks transaction memory inside the heap, so a
+cap that is not below the heap bounds nothing, and a large transaction can
+exhaust the heap and stop the JVM (the overlay sets `ExitOnOutOfMemoryError`).
+Keeping the cap at 70% leaves the rest of the heap for Neo4j itself, so such a
+transaction fails on its own instead. Only a 1 GB heap, below the production
+minimum and reached only with `--force`, gets a cap as large as the heap.
 
 It writes a value only when nobody has chosen one: the variable is absent or
 empty, or it is still exactly what `.env.example` ships. The template's
 `NEO4J_HEAP_SIZE=2G` counts as unset, because left alone it would hold the
 production heap at 2 GB beside a 16 GB page cache. Deploy marks what it wrote
 with a comment and never rewrites any of it, so edit the values freely
-afterwards. The base stack (`just deploy --dev`) fixes Neo4j's memory in
-`docker-compose.yml`, so nothing is written there.
-
-The production overlay also fixes Neo4j's transaction memory cap at 8G. Below
-48 GB of memory the heap is smaller than that cap, so the cap no longer bounds
-transaction memory.
+afterwards. If you set the heap yourself and leave the transaction cap unset,
+deploy derives the cap from your heap. The base stack (`just deploy --dev`)
+fixes Neo4j's memory in `docker-compose.yml`, so nothing is written there.
 
 ### Identity ledger refresh
 
@@ -1311,6 +1320,7 @@ RESEND_SENDER_NAME=GrooveMap
 NEO4J_HEAP_SIZE=8g
 NEO4J_PAGECACHE_SIZE=16g
 NEO4J_MEMORY_LIMIT=48G
+NEO4J_TRANSACTION_MEMORY_MAX=8G
 ```
 
 Hosts, data paths, log levels, and consumer timings are literal Compose values,

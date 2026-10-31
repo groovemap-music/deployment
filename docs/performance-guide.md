@@ -109,8 +109,10 @@ duration, and restore behavior before promotion.
 The base stack uses a 1 GiB initial heap, 2 GiB maximum heap, 1 GiB page cache,
 and a 6 GiB transaction-memory cap. When `.env.example` is copied unchanged,
 the production overlay receives `NEO4J_HEAP_SIZE=2G`; otherwise its overlay
-default is 8 GiB. It defaults the page cache to 16 GiB and the container memory
-limit to 48 GiB through `NEO4J_PAGECACHE_SIZE` and `NEO4J_MEMORY_LIMIT`.
+default is 8 GiB. It defaults the page cache to 16 GiB, the container memory
+limit to 48 GiB and the transaction-memory cap to 8 GiB through
+`NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` and `NEO4J_TRANSACTION_MEMORY_MAX`;
+`just deploy` sizes all four from the host's memory, with the cap at 70% of the heap.
 
 The production overlay also raises checkpoint IOPS, expands the Bolt thread
 pool, logs queries over five seconds, and sets a ten-minute transaction timeout.
