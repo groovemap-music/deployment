@@ -275,11 +275,14 @@ values it drops, and the backup still has them.
 
 These describe current behavior. A follow-up is planned; no dates are promised.
 
-- **Console sign-in needs HTTPS.** The operations console's session cookie is Secure in the
-  production overlay (`SESSION_COOKIE_SECURE` is reset there). Over plain http on a LAN IP,
-  sign-in silently returns to the login form. Put a TLS reverse proxy in front of the console
-  ([details](configuration.md#console-session-cookie-and-https)). Do not work around it by
-  turning the opt-out on.
+- **Console sign-in needs HTTPS, or an explicit opt-in.** The operations console's session
+  cookie is Secure in the production overlay, so over plain http on a LAN IP sign-in would
+  silently return to the login form. `just deploy` now says so before it prints the console
+  URL and offers two ways out: a TLS reverse proxy (recommended; see
+  [the reverse-proxy guide](../skills/groovemap-homelab/references/reverse-proxy.md)), or, on
+  a trusted LAN only, `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env`, which `just deploy`
+  offers to set (default no) and applies by recreating only `dashboard`
+  ([details](configuration.md#console-session-cookie-and-https)).
 - **`just env-init --force` drops host-specific values.** Plain `just env-init` keeps them; see
   [Upgrading](#upgrading-an-existing-deployment).
 - **The disk check cannot measure everything.** Docker Desktop's VM disk, a remote `DOCKER_HOST`,

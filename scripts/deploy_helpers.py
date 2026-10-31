@@ -34,6 +34,7 @@ whole gigabytes before comparing.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import math
 import os
@@ -827,6 +828,108 @@ def short_hostname() -> str:
     return socket.gethostname().split(".")[0] or "localhost"
 
 
+# --- console sign-in without TLS ---------------------------------------------------------
+
+INSECURE_CONSOLE_VARIABLE = "GROOVEMAP_ALLOW_INSECURE_CONSOLE"
+INSECURE_CONSOLE_MARKER = "# Written by just deploy at your request: the console's session cookie is not Secure (plain-http LAN)"
+# Exit status of `console-http` when it changed .env and `dashboard` must be recreated to read it.
+CONSOLE_RECREATE = 10
+PROXY_DOCS = "skills/groovemap-homelab/references/reverse-proxy.md and docs/homelab.md"
+
+
+def is_plain_http_remote(url: str) -> bool:
+    """True for an http:// URL whose host is not this machine (localhost or a loopback address)."""
+    scheme, separator, rest = url.strip().partition("://")
+    if not separator or scheme.lower() != "http":
+        return False
+    host = rest.split("/", 1)[0].rsplit("@", 1)[-1]
+    host = host[1:].split("]", 1)[0] if host.startswith("[") else host.split(":", 1)[0]
+    if not host or host.lower() == "localhost" or host.lower().endswith(".localhost"):
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True
+
+
+def insecure_console_allowed(env_values: Mapping[str, str], environ: Mapping[str, str]) -> bool:
+    """The opt-in as docker-compose.prod.yml reads it: only the exact value `true` counts."""
+    return effective(INSECURE_CONSOLE_VARIABLE, env_values, environ) == "true"
+
+
+def console_needs_https(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str], hostname: str) -> tuple[str, str] | None:
+    """(console URL, APP_BASE_URL) when the console's Secure cookie will be dropped, else None.
+
+    Either the configured public origin (APP_BASE_URL) or the console's own published URL
+    being plain http on a non-loopback host triggers it, unless the opt-in is set. The console
+    URL is the one the endpoints block prints.
+    """
+    if mode != "prod" or insecure_console_allowed(env_values, environ):
+        return None
+    console = next(url for what, url, _ in endpoints(mode, env_values, environ, hostname) if what == "Operations console")
+    base_url = effective("APP_BASE_URL", env_values, environ)
+    if is_plain_http_remote(base_url) or is_plain_http_remote(console):
+        return console, base_url
+    return None
+
+
+def console_https_notice(console: str, base_url: str, command: str) -> str:
+    if is_plain_http_remote(base_url):
+        reason = f"GrooveMap is configured for plain http (APP_BASE_URL={base_url}), so the console at {console}"
+    else:
+        reason = f"The console at {console} is published over plain http, so it"
+    return "\n".join(
+        [
+            f"    {reason}",
+            "    is reached without TLS. Its session cookie is Secure, and a browser drops a Secure",
+            "    cookie on http away from localhost, so signing in will silently return to the login form.",
+            "",
+            "    Pick one:",
+            "      1. Recommended: put a TLS reverse proxy in front of the console and set APP_BASE_URL to",
+            f"         its https:// address. See {PROXY_DOCS}.",
+            f"      2. On a trusted LAN only: set {INSECURE_CONSOLE_VARIABLE}=true in .env, which turns",
+            f"         the Secure attribute off for the console. Then recreate it: {command}",
+            "         The session cookie then travels unencrypted, so anyone on the network path can read it.",
+        ]
+    )
+
+
+def console_http(
+    mode: str,
+    *,
+    env_path: Path,
+    environ: Mapping[str, str],
+    hostname: str,
+    recreate_command: str,
+    interactive: bool,
+    ask: Callable[[str], str] = input,
+) -> int:
+    """Explain the sign-in limitation; interactively offer the opt-in (default no).
+
+    Returns CONSOLE_RECREATE when .env was changed and `dashboard` has to be recreated, else 0.
+    """
+    env_values = read_env(env_path)
+    found = console_needs_https(mode, env_values, environ, hostname)
+    if found is None:
+        return 0
+    print("\n==> Console sign-in")
+    print(console_https_notice(*found, recreate_command))
+    if not interactive:
+        return 0
+    if INSECURE_CONSOLE_VARIABLE in environ:
+        print(
+            f"\n    {INSECURE_CONSOLE_VARIABLE} is set to {environ[INSECURE_CONSOLE_VARIABLE]!r} in your shell, which outranks .env; unset it to change this."
+        )
+        return 0
+    if ask(f"\n    Set {INSECURE_CONSOLE_VARIABLE}=true now and recreate the console? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("    Left as it is. The console's sign-in needs HTTPS.")
+        return 0
+    text = env_path.read_text() if env_path.exists() else ""
+    env_path.write_text(set_env_values(text, {INSECURE_CONSOLE_VARIABLE: "true"}, INSECURE_CONSOLE_MARKER))
+    print(f"    Set {INSECURE_CONSOLE_VARIABLE}=true in .env.")
+    return CONSOLE_RECREATE
+
+
 # --- command line ----------------------------------------------------------------------
 
 
@@ -850,6 +953,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     name.add_argument("--project-name")
     urls = commands.add_parser("endpoints", help="print the configured browser-facing endpoints")
     urls.add_argument("--mode", choices=("prod", "dev"), default="prod")
+    console = commands.add_parser("console-http", help="explain (and offer to fix) console sign-in on a plain-http host; exit 10 if .env changed")
+    console.add_argument("--mode", choices=("prod", "dev"), default="prod")
+    console.add_argument("--recreate-command", default="docker compose up -d --no-deps dashboard")
     override = commands.add_parser(
         "override-check", help=f"compare `docker compose config --format json` without and with {OVERRIDE_FILE}; exit 0 to go ahead, 3 to stop"
     )
@@ -895,6 +1001,15 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))
         return 0
+    if args.command == "console-http":
+        return console_http(
+            args.mode,
+            env_path=ENV_FILE,
+            environ=environ,
+            hostname=short_hostname(),
+            recreate_command=args.recreate_command,
+            interactive=sys.stdin.isatty() and sys.stdout.isatty(),
+        )
     if args.command == "override-check":
         try:
             findings = check_override(json.loads(args.before.read_text()), json.loads(args.after.read_text()))

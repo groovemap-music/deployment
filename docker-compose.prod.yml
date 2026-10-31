@@ -470,6 +470,14 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USERNAME_FILE: /run/secrets/postgres_username
       GRAFANA_TOKEN_FILE: /run/secrets/grafana_viewer_token
+    # Explicit opt-in for a trusted LAN without TLS: GROOVEMAP_ALLOW_INSECURE_CONSOLE=true
+    # loads config/console-insecure.true.env, which sets SESSION_COOKIE_SECURE=false. Any
+    # other value names a file that does not exist, which `required: false` skips, so the
+    # Secure default stands and the render is the same as without this entry. (An
+    # environment entry cannot be conditional: `${VAR:+false}` renders "" when unset.)
+    env_file:
+      - path: config/console-insecure.${GROOVEMAP_ALLOW_INSECURE_CONSOLE:-false}.env
+        required: false
     secrets:
       - neo4j_password
       - postgres_username
