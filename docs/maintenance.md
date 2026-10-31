@@ -99,13 +99,13 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader and graph enricher
+Matching consumer and schema images (Discogs SQL loader `v0.4.0` and graph enricher
 `v0.3.0`; MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
 | `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
@@ -254,6 +254,29 @@ Evidence:
   platform-health comparison against `v0.2.0` was not re-run.
 
 Rolling back is a pin change to the rollback digest above for the affected image alone.
+
+### Promotion of discogs-sql-loader v0.4.0 (2026-10-31)
+
+The digest was resolved from the released tag on GHCR and verified with `gh attestation verify
+oci://ghcr.io/groovemap-music/discogs-sql-loader@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` (exit 0).
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `discogs-sql-loader:v0.4.0` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` | `v0.3.0` — `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
+
+Why: `v0.3.0` never writes `public.loader_extraction_latch`, so the Discogs gate cannot complete.
+`v0.4.0` writes it.
+
+Compatibility: every relation `v0.4.0` requires is declared by `database-schema` `v0.5.0` and
+`v0.6.0`, so the pinned `v0.6.0` schema needs no change (evidence: the discogs-sql-loader release
+bead `gm-discogs-sql-loader-a8z0`).
+
+Evidence:
+
+- Linux smoke run: <URL>
+
+Rolling back is a pin change to the rollback digest above for this image alone.
 
 ### Identifier lookup verification (2026-09-21)
 
