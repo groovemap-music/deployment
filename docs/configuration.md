@@ -117,7 +117,14 @@ digest (`repo@sha256:...`) and it may not publish ports or join the `groovemap` 
 List a service that must break any of these (a backup sidecar that reads `postgres_data`,
 a forwarder into PostgreSQL) in `OVERRIDE_ALLOW_SERVICES` in `.env`
 (comma-separated names, for example `OVERRIDE_ALLOW_SERVICES=pg-forward,backup`).
-Existing services are checked against this denylist, not a key allowlist, because overrides
+Volumes are compared by what the engine sees, not by Compose key: a top-level volume
+declared with `name:` or `external: true` that resolves to a stack volume
+(`<project>_postgres_data`) counts as that stack volume, and a bind mount or a
+`driver_opts.device` that is, contains or lies inside the host directory another service's
+data was relocated to is stopped for every other service. The override may not change `name`,
+`external` or `driver` of the stack's own top-level volumes (`driver_opts`, the data's
+location, may change), and two services may not relocate their data into overlapping
+directories. Existing services are checked against this denylist, not a key allowlist, because overrides
 legitimately change labels, networks, environment, restart and volumes on web-tier services.
 The digest and no-`build` rules have no opt-in, and neither do the rules for existing
 services. Sensitive host paths are `/`, the Docker, containerd and podman sockets

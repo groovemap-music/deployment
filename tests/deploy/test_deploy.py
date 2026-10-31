@@ -554,7 +554,8 @@ def _stack_with_volumes() -> dict[str, Any]:
         postgres={"volumes": [{"type": "volume", "source": "postgres_data", "target": "/var/lib/postgresql/data"}]},
         explore={"volumes": [{"type": "volume", "source": "explore_cache", "target": "/cache"}]},
     )
-    stack["volumes"] = {"postgres_data": {}, "explore_cache": {}, "unused_data": {}}
+    stack["name"] = "groovemap"
+    stack["volumes"] = {key: {"name": f"groovemap_{key}"} for key in ("postgres_data", "explore_cache", "unused_data")}
     return stack
 
 
@@ -631,7 +632,7 @@ def test_another_services_data_volume_stops_but_the_services_own_may_move() -> N
     stolen = {"volumes": [{"type": "volume", "source": "postgres_data", "target": "/pg"}]}
     findings = helpers.check_override(_stack_with_volumes(), _stack_after("explore", stolen))
     assert [finding.level for finding in findings] == ["stop"]
-    assert "stack volume postgres_data (used by postgres) into explore" in findings[0].message
+    assert "stack volume groovemap_postgres_data (used by postgres) into explore" in findings[0].message
     unused = {"volumes": [{"type": "volume", "source": "unused_data", "target": "/u"}]}
     assert helpers.check_override(_stack_with_volumes(), _stack_after("explore", unused))[0].level == "stop"
     bind = {"volumes": [{"type": "bind", "source": "/mnt/tank/pg", "target": "/var/lib/postgresql/data"}]}
@@ -640,7 +641,11 @@ def test_another_services_data_volume_stops_but_the_services_own_may_move() -> N
 
 def test_relocating_a_services_own_volume_with_driver_opts_is_allowed_unless_the_path_is_sensitive() -> None:
     def relocate(device: str) -> dict[str, Any]:
-        return _stack_after("postgres", {}, {"postgres_data": {"driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": device}}})
+        return _stack_after(
+            "postgres",
+            {},
+            {"postgres_data": {"name": "groovemap_postgres_data", "driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": device}}},
+        )
 
     assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), relocate("/mnt/tank/groovemap/postgres"))] == ["ok"]
     findings = helpers.check_override(_stack_with_volumes(), relocate("/var/run/docker.sock"))
@@ -652,8 +657,120 @@ def test_a_new_service_may_not_reach_a_stack_volume_through_a_relocated_definiti
     relocated = {"postgres_data": {"driver_opts": {"type": "none", "o": "bind", "device": "/mnt/tank/pg"}}}
     mount = {"volumes": [{"type": "volume", "source": "postgres_data", "target": "/pg"}]}
     findings = helpers.check_override(_stack_with_volumes(), _stack_after("backup", {"image": PINNED, **mount}, relocated))
+    assert {finding.level for finding in findings} == {"stop"}
+    assert any("stack volume groovemap_postgres_data" in finding.message for finding in findings)
+
+
+PG_MOUNT = {"volumes": [{"type": "volume", "source": "x", "target": "/pg"}]}
+
+
+@pytest.mark.parametrize(
+    "alias",
+    [
+        {"name": "groovemap_postgres_data"},
+        {"external": True, "name": "groovemap_postgres_data"},
+        {"name": "groovemap_postgres_data", "driver": "local"},
+    ],
+)
+def test_a_volume_aliased_to_a_stack_volume_is_the_stack_volume(alias: dict[str, Any]) -> None:
+    after = _stack_after("backup", {"image": PINNED, **PG_MOUNT}, {"x": alias})
+    findings = helpers.check_override(_stack_with_volumes(), after)
     assert [finding.level for finding in findings] == ["stop"]
-    assert "stack volume postgres_data" in findings[0].message
+    assert "stack volume groovemap_postgres_data as x (used by postgres) into backup service" in findings[0].message
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, frozenset({"backup"}))] == ["ok"]
+
+
+def test_an_alias_made_by_the_default_project_name_is_caught() -> None:
+    before = _stack_with_volumes()
+    for volume in before["volumes"].values():
+        del volume["name"]
+    after = json.loads(json.dumps(before))
+    after["services"]["backup"] = {"image": PINNED, "volumes": [{"type": "volume", "source": "postgres_data", "target": "/pg"}]}
+    assert helpers.check_override(before, after)[0].level == "stop"
+    after["services"]["backup"]["volumes"][0]["source"] = "x"
+    after["volumes"]["x"] = {"name": "groovemap_postgres_data"}
+    assert "as x" in helpers.check_override(before, after)[0].message
+
+
+def test_an_existing_service_may_not_mount_an_alias_of_another_services_volume() -> None:
+    after = _stack_after("explore", PG_MOUNT, {"x": {"external": True, "name": "groovemap_postgres_data"}})
+    assert helpers.check_override(_stack_with_volumes(), after)[0].level == "stop"
+
+
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [({"name": "groovemap_neo4j_data"}, "name"), ({"external": True}, "external"), ({"driver": "nfs"}, "driver")],
+)
+def test_override_may_not_re_point_an_existing_top_level_volume(change: dict[str, Any], field: str) -> None:
+    findings = helpers.check_override(
+        _stack_with_volumes(), _stack_after("postgres", {}, {"postgres_data": {"name": "groovemap_postgres_data", **change}})
+    )
+    assert [finding.level for finding in findings] == ["stop"]
+    assert f"changes {field} of the volume postgres_data" in findings[0].message
+
+
+def test_driver_local_and_driver_opts_on_a_stack_volume_stay_allowed() -> None:
+    moved = {"name": "groovemap_postgres_data", "driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": "/mnt/tank/pg"}}
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), _stack_after("postgres", {}, {"postgres_data": moved}))] == [
+        "ok"
+    ]
+
+
+def _relocated_pg(**extra: Any) -> dict[str, Any]:
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/mnt/tank/pg"}}
+    after = _stack_after("postgres", {}, {"postgres_data": moved})
+    for service, change in extra.items():
+        after["services"].setdefault(service, {"image": PINNED}).update(change)
+    return after
+
+
+@pytest.mark.parametrize("path", ["/mnt/tank/pg", "/mnt/tank/pg/sub", "/mnt/tank", "/mnt/tank/pg/../pg"])
+def test_binding_the_host_path_of_another_services_relocated_data_stops(path: str) -> None:
+    for service in ("explore", "backup"):
+        bind = {"volumes": [{"type": "bind", "source": path, "target": "/d"}]}
+        findings = helpers.check_override(_stack_with_volumes(), _relocated_pg(**{service: bind}))
+        assert [finding.level for finding in findings] == ["stop"], (service, path)
+        assert "where the data of postgres lives (/mnt/tank/pg)" in findings[0].message
+
+
+def test_binding_a_relocated_postgres_bind_source_stops_for_others_and_is_fine_for_the_owner() -> None:
+    owner = {"volumes": [{"type": "volume", "source": "postgres_data", "target": "/var/lib/postgresql/data"}]}
+    relocated = _stack_with_volumes()
+    relocated["services"]["postgres"].update(owner)
+    after = json.loads(json.dumps(relocated))
+    after["services"]["postgres"]["volumes"] = [{"type": "bind", "source": "/mnt/tank/pg", "target": "/var/lib/postgresql/data"}]
+    after["services"]["explore"]["volumes"] = [{"type": "bind", "source": "/mnt/tank/pg", "target": "/x"}]
+    assert helpers.check_override(relocated, after)[0].level == "stop"
+    del after["services"]["explore"]["volumes"]
+    assert [finding.level for finding in helpers.check_override(relocated, after)] == ["ok"]
+
+
+def test_a_volume_backed_by_another_services_data_path_stops_but_a_distinct_path_passes() -> None:
+    stolen = {"x": {"driver_opts": {"type": "none", "o": "bind", "device": "/mnt/tank/pg/"}}}
+    after = _relocated_pg(backup={"image": PINNED, **PG_MOUNT})
+    after["volumes"].update(stolen)
+    findings = helpers.check_override(_stack_with_volumes(), after)
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "where the data of postgres lives" in findings[0].message
+    after["volumes"]["x"]["driver_opts"]["device"] = "/mnt/tank/other"
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after)] == ["ok"]
+
+
+def test_two_services_may_not_relocate_their_data_to_overlapping_paths() -> None:
+    def device(path: str) -> dict[str, Any]:
+        return {"driver_opts": {"type": "none", "o": "bind", "device": path}}
+
+    before = _stack_with_volumes()
+    before["services"]["explore"]["volumes"] = [{"type": "volume", "source": "explore_cache", "target": "/cache"}]
+    before["services"]["postgres"]["volumes"] = [{"type": "volume", "source": "postgres_data", "target": "/pg"}]
+    after = json.loads(json.dumps(before))
+    after["volumes"]["postgres_data"].update(device("/mnt/tank/data"))
+    after["volumes"]["explore_cache"].update(device("/mnt/tank/data/cache"))
+    findings = helpers.check_override(before, after)
+    assert {finding.level for finding in findings} == {"stop"}
+    assert any("overlapping host paths" in finding.message for finding in findings)
+    after["volumes"]["explore_cache"].update(device("/mnt/tank/cache"))
+    assert [finding.level for finding in helpers.check_override(before, after)] == ["ok"]
 
 
 @pytest.mark.parametrize(
