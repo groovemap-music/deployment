@@ -41,8 +41,10 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -201,6 +203,38 @@ def set_env_values(text: str, values: Mapping[str, str], comment: str) -> str:
         lines.append(comment)
         lines.extend(f"{key}={value}" for key, value in remaining.items())
     return "\n".join(lines) + "\n"
+
+
+# .env holds API keys and passwords, so a file this code creates is private; an existing one keeps its mode.
+ENV_MODE = 0o600
+
+
+def env_mode(path: Path) -> int:
+    """The mode a rewrite of `path` keeps: the existing file's, or ENV_MODE for a new file."""
+    return stat.S_IMODE(path.stat().st_mode) if path.exists() else ENV_MODE
+
+
+def write_env_text(path: Path, text: str) -> None:
+    """Replace `path` with `text` atomically: a same-directory temp file, its mode set explicitly (the umask does not apply), then os.replace."""
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, env_mode(path))
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        Path(temp).replace(path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def write_new_env_text(path: Path, text: str, mode: int) -> None:
+    """Create `path` exclusively with `text` and exactly `mode`, for a backup that must not overwrite anything."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, ENV_MODE)
+    with os.fdopen(fd, "w") as handle:
+        os.fchmod(handle.fileno(), mode)
+        handle.write(text)
 
 
 # --- sizing (pure) ---------------------------------------------------------------------
@@ -843,7 +877,7 @@ def configure(env_path: Path, template_path: Path, mem_bytes: int, hostname: str
         url = f"http://{url_host(address, hostname)}:{effective('EXPLORE_HOST_PORT', values, environ, '8006')}"
         text = set_env_values(text, {"APP_BASE_URL": url}, BASE_URL_MARKER)
         messages.append(f"Set APP_BASE_URL={url} (used in password-reset email links; change it in .env if you reach GrooveMap by another name)")
-    env_path.write_text(text)
+    write_env_text(env_path, text)
     return messages
 
 
@@ -990,7 +1024,7 @@ def console_http(
         print("    Left as it is. The console's sign-in needs HTTPS.")
         return 0
     text = env_path.read_text() if env_path.exists() else ""
-    env_path.write_text(set_env_values(text, {INSECURE_CONSOLE_VARIABLE: "true"}, INSECURE_CONSOLE_MARKER))
+    write_env_text(env_path, set_env_values(text, {INSECURE_CONSOLE_VARIABLE: "true"}, INSECURE_CONSOLE_MARKER))
     print(f"    Set {INSECURE_CONSOLE_VARIABLE}=true in .env.")
     return CONSOLE_RECREATE
 
@@ -1060,7 +1094,7 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         return 0 if has_profile(effective("COMPOSE_PROFILES", env_values, environ)) else 1
     if args.command == "enable-profile":
         merged = merge_profiles(env_values.get("COMPOSE_PROFILES", ""))
-        ENV_FILE.write_text(set_env_values(ENV_FILE.read_text(), {"COMPOSE_PROFILES": merged}, PROFILE_MARKER))
+        write_env_text(ENV_FILE, set_env_values(ENV_FILE.read_text(), {"COMPOSE_PROFILES": merged}, PROFILE_MARKER))
         print(f"    Set COMPOSE_PROFILES={merged} in .env, so every later `docker compose up` keeps MusicBrainz running.")
         return 0
     if args.command == "project-name":

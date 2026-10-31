@@ -270,6 +270,7 @@ Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOS
 `.env.<timestamp>.bak`, lists what it changed, and does nothing when `.env` is already current.
 `just env-init --force` instead regenerates `.env` from the template; it warns which of your
 values it drops, and the backup still has them.
+`.env` is created private (mode 0600); a rewrite and its backup keep the mode the file already has.
 
 ## Known limitations
 

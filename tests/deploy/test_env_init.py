@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -136,11 +137,12 @@ OPERATOR_ENV = (
 )
 
 
-def _upgrade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_text: str | None, *args: str) -> Path:
+def _upgrade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_text: str | None, *args: str, mode: int = 0o600) -> Path:
     (tmp_path / ".env.example").write_text(TEMPLATE_TEXT)
     target = tmp_path / ".env"
     if env_text is not None:
         target.write_text(env_text)
+        target.chmod(mode)
     monkeypatch.setattr(env_init, "TEMPLATE", tmp_path / ".env.example")
     monkeypatch.setattr(env_init, "TARGET", target)
     monkeypatch.setattr(env_init, "load_release_digests", lambda: {"CATALOG_API_IMAGE": "a" * 64})
@@ -220,4 +222,49 @@ def test_force_regenerates_from_the_template_and_warns_about_dropped_values(
 def test_a_missing_env_is_created_from_the_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = _upgrade(tmp_path, monkeypatch, None)
     assert target.read_text() == env_init.render_env(TEMPLATE_TEXT, {"CATALOG_API_IMAGE": "a" * 64})
+    assert _backups(tmp_path) == []
+
+
+# --- file modes: .env can hold secrets, so a new file is private and a rewrite keeps its mode ----
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_a_fresh_env_is_created_private_even_under_a_permissive_umask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _upgrade(tmp_path, monkeypatch, None)
+    assert _mode(target) == 0o600
+    assert not list(tmp_path.glob(".env.*.tmp"))
+
+
+@pytest.mark.usefixtures("permissive_umask")
+@pytest.mark.parametrize("mode", [0o600, 0o640])
+def test_refresh_keeps_the_env_mode_and_the_backup_gets_the_same_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: int) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV, mode=mode)
+    (backup,) = _backups(tmp_path)
+    assert _mode(target) == mode
+    assert _mode(backup) == mode
+    assert not list(tmp_path.glob(".env.*.tmp"))
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_force_keeps_the_env_mode_and_the_backup_gets_the_same_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV, "--force", mode=0o640)
+    (backup,) = _backups(tmp_path)
+    assert _mode(target) == 0o640
+    assert _mode(backup) == 0o640
+    assert not list(tmp_path.glob(".env.*.tmp"))
+
+
+@pytest.mark.usefixtures("permissive_umask")
+def test_no_op_leaves_the_env_mode_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV)
+    for backup in _backups(tmp_path):
+        backup.unlink()
+    capsys.readouterr()
+
+    assert env_init.main([]) == 0
+    assert _mode(target) == 0o600
     assert _backups(tmp_path) == []
