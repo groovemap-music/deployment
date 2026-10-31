@@ -1165,6 +1165,7 @@ COPIED = (
     "scripts/env-init.py",
     "scripts/check-images.py",
     "scripts/create-secrets.sh",
+    "scripts/recovery_manifest.py",
     ".env.example",
 )
 PROD = "-f docker-compose.yml -f docker-compose.prod.yml"

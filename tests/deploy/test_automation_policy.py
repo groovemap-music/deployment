@@ -125,6 +125,7 @@ def test_public_recipe_surface_remains_stable() -> None:
         "install-check",
         "license-check",
         "performance",
+        "recovery-manifest",
         "secret-scan",
         "secrets-bootstrap",
         "setup",

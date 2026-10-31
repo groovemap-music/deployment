@@ -20,7 +20,7 @@ MIN_PYTHON = "3.10"
 UV = shutil.which("uv")
 # Deploy-time entry points with a --help. env-init.py loads check-images.py (a validator that imports
 # yaml inside check_compose), so the probe below covers that import path instead.
-HELP_SCRIPTS = ("deploy_helpers.py", "discogs_import_status.py", "env-init.py")
+HELP_SCRIPTS = ("deploy_helpers.py", "discogs_import_status.py", "env-init.py", "recovery_manifest.py")
 
 # Loads each script by path (as env-init.py does) and exercises code that differs across versions.
 PROBE = """
