@@ -186,10 +186,11 @@ The [architecture guide](architecture.md) has the data flow.
 | `docker-compose.yml` | The base stack with local development credentials. Never deploy it alone as production |
 | `docker-compose.prod.yml` | Production overlay: Docker file secrets, hardening, Neo4j and PostgreSQL sizing, loopback binding for unauthenticated backends, Grafana without anonymous access |
 | `docker-compose.override.yml` | Yours, untracked, optional: host-specific settings. `.gitignore` already lists it |
+| `docker-compose.external-postgres.yml`, `docker-compose.external-valkey.yml` | Added by `just deploy` and the gate when `.env` selects an existing PostgreSQL or Valkey ([Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey)); never apply them by hand otherwise |
 
-Production is always `-f docker-compose.yml -f docker-compose.prod.yml`, and
-`-f docker-compose.override.yml` last when you have one. Compose reads the override by itself
-only when no `-f` is given, so name it explicitly.
+Production is always `-f docker-compose.yml -f docker-compose.prod.yml`, then any
+external-store overlay `.env` selects, and `-f docker-compose.override.yml` last when you have
+one. Compose reads the override by itself only when no `-f` is given, so name it explicitly.
 
 ### Profiles
 
@@ -197,6 +198,7 @@ only when no `-f` is given, so name it explicitly.
 | --- | --- | --- |
 | `musicbrainz` | `extractor-musicbrainz`, `brainzgraphinator`, `brainztableinator` | After the Discogs import; `just deploy` sets `COMPOSE_PROFILES=musicbrainz` in `.env` |
 | `jobs` | `embeddings` | Run on demand ([monthly embedding refresh](maintenance.md#monthly-embedding-refresh)) |
+| `local-stores` | `postgres`, `postgres-exporter`, `valkey`, `valkey-exporter` | Never enabled. Only an external-store overlay puts a store and its exporter here, so that store is left out without removing the service; the base files never use it |
 
 ### The override and its safety check
 
@@ -289,18 +291,138 @@ asks: "This homelab already has PostgreSQL and Valkey. Would you prefer GrooveMa
 compatible existing services, or run dedicated instances?" It recommends dedicated instances;
 discovery alone never authorizes reusing anything.
 
-**Reusing existing services is not deployable today** (`gm-deployment-e1uh`). The deploy gate
-and its probes read the stack's own `postgres` container; the local stores cannot be removed;
-`schema-init` needs `CREATE DATABASE`, `CREATE ROLE` and `CREATE EXTENSION`; and Valkey has no
-key prefix or DB-index setting yet. Reuse would also need a separate database and role, a
-session-mode PgBouncer (catalog-api holds a session-level advisory lock), and a Valkey with
-`noeviction` and AOF (a separate logical database is not a security boundary). `just deploy`
-refuses an override that rewires either store, with no opt-in
-([the override check](#the-override-and-its-safety-check)). The upstream work is tracked by
-`gm-deployment-e1uh`, `gm-python-libraries-3sm`, `gm-catalog-api-rchs`,
-`gm-analytics-engine-bah5` and `gm-database-schema-2aty`. Until you choose dedicated instances
-or it lands, the skill keeps the deployment stopped. Secrets stay in encrypted storage, and
-nothing is applied without your explicit approval. Details:
+GrooveMap supports an existing PostgreSQL, an existing Valkey, or both, through an
+**external-stores mode** (`gm-deployment-e1uh`). The Discogs-before-MusicBrainz gate stays
+authoritative in it: the gate and deploy's probes read the external database the loaders write
+to, an external store that cannot be reached or is wrong gives "cannot determine" or a refusal,
+and neither ever enables MusicBrainz.
+
+**Status: supported once the capability floors are met, which they are not yet.** `just deploy`
+refuses each external store (exit 3, nothing changed) until the reviewed release set pins images
+that support it, recorded as `EXTERNAL_STORE_FLOORS` beside `RELEASED_IMAGE_DIGESTS` in
+`scripts/check-images.py`:
+
+| Store | Needs | Upstream work | Today |
+| --- | --- | --- | --- |
+| PostgreSQL | database-schema with `POSTGRES_PREPROVISIONED` (verify the database, role and `pg_trgm` instead of creating them) | `gm-database-schema-2aty` | merged, not released or promoted |
+| Valkey | catalog-api and analytics-engine that apply `VALKEY_KEY_PREFIX` to every key and speak TLS (`VALKEY_TLS`) | `gm-python-libraries-3sm` and its TLS settings (merged), `gm-catalog-api-rchs`, `gm-analytics-engine-bah5`, `gm-catalog-api-vd7n`, `gm-analytics-engine-m0sz` | services still adopting both; nothing released |
+
+Promoting a release that supports a store replaces its `unreleased` floor with that version.
+Your `.env` must then run exactly those reviewed digests (`just env-init`).
+
+### What GrooveMap needs from each server
+
+PostgreSQL:
+
+- **PostgreSQL 18 or newer** (the schema uses `uuidv7()`).
+- **A database and a role of GrooveMap's own**, created by an administrator: the role owns the
+  database (or holds `CREATE` on it and on its `public` schema) and needs no `SUPERUSER`,
+  `CREATEDB` or `CREATEROLE`. Never another application's database, `postgres` or a template.
+- **`pg_trgm` installed in that database.** `vector` is optional (artist embeddings).
+- **At least 60 usable connections** for GrooveMap, on top of other applications, and no role or
+  database connection limit below that.
+- **No transaction pooling.** A PgBouncer must pool by session: catalog-api holds a
+  session-level advisory lock that transaction and statement pooling break silently.
+- **TLS with a certificate GrooveMap can verify.** Every client connects with
+  `EXTERNAL_POSTGRES_SSLMODE` (default `verify-full`: the certificate and the host name are
+  checked against the CA in `secrets/postgres_ca.crt`).
+
+The provisioning SQL, run once as an administrator (replace the names and password):
+
+```sql
+CREATE ROLE groovemap LOGIN PASSWORD '<password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE groovemap OWNER groovemap;
+\c groovemap
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS vector;   -- optional, superuser only
+```
+
+Valkey:
+
+- **Valkey 8.0 or newer** (or Redis 7.2 or newer); GrooveMap is tested with Valkey 9.1.
+- **Authentication on.** GrooveMap authenticates with a password only (the `default` user).
+- **`maxmemory-policy noeviction` and AOF persistence.** GrooveMap keeps security state that must
+  never be evicted. Never change a shared instance for GrooveMap; if it does not match, run a
+  dedicated one.
+- **TLS with a certificate GrooveMap can verify** (`EXTERNAL_VALKEY_TLS`, default on), signed by
+  the CA in `secrets/valkey_ca.crt`; the host name is checked too unless
+  `EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME=false`. Client certificates are not wired yet.
+- **A key prefix no other application uses** (`EXTERNAL_VALKEY_KEY_PREFIX`, such as
+  `groovemap:`). Every GrooveMap key lives under it. A prefix, like a separate logical database,
+  keeps cooperating applications apart; neither is a security boundary, since any client with
+  the password can read any key and `FLUSHALL` is instance-wide.
+
+### Procedure
+
+1. Provision the database, role and extensions above, and check the Valkey settings. These are
+   operator-run changes on services GrooveMap does not own.
+2. Write the credentials yourself, before deploying: the role's name in
+   `secrets/postgres_username.txt`, its password in `secrets/postgres_password.txt`, and the
+   Valkey password in `secrets/valkey_password.txt` (mode 0600; seed them from SOPS or your
+   secret store), plus the CA certificates in `secrets/postgres_ca.crt` and
+   `secrets/valkey_ca.crt`. `just deploy` stops if one is missing, because `create-secrets.sh`
+   would otherwise invent a value the server does not know.
+3. Set the mode and the servers in `.env` (all variables in
+   [configuration.md](configuration.md#external-postgresql-and-valkey)):
+
+   ```bash
+   GROOVEMAP_POSTGRES=external
+   EXTERNAL_POSTGRES_HOST=db.lan          # host.docker.internal for a server on this Docker host
+   EXTERNAL_POSTGRES_DATABASE=groovemap
+   GROOVEMAP_VALKEY=external
+   EXTERNAL_VALKEY_HOST=cache.lan
+   EXTERNAL_VALKEY_KEY_PREFIX=groovemap:
+   ```
+
+   Each store is independent: either one can stay local.
+4. Run `just deploy`. Before anything starts it checks the settings (TLS included), the
+   capability floors, the secrets, and that this project has no `postgres_data` volume; then it
+   writes `COMPOSE_FILE` to `.env` (below), adds the overlays and
+   runs each store's read-only check, `store-check-postgres` and `store-check-valkey`, which
+   verify the list above and say exactly what fails. Every later `docker compose up` runs the
+   checks again first, and the services wait for them instead of the local stores' health.
+   The staged first load then runs as usual, the gate reading the external database.
+
+The servers must be reachable from containers on the `groovemap` network: a LAN address, or
+`host.docker.internal` for a server on the Docker host itself (the overlays map it to the host
+gateway). A server bound only to the host's `127.0.0.1` is not. For a server in another Compose
+project, attach its network to the GrooveMap services and store checks in your override.
+
+**Cleartext is refused off this machine.** A server that is not loopback or
+`host.docker.internal` (this Docker host, which the overlays map to the host gateway) must be
+reached over TLS: `EXTERNAL_POSTGRES_SSLMODE=disable`, `allow` or `prefer`, or
+`EXTERNAL_VALKEY_TLS=false`, stops `just deploy`, and the store checks refuse it again on every
+`docker compose up`. Anyone on the network path could read the password and every query, key and
+value, and impersonate the server. To accept that on a network you trust, set
+`EXTERNAL_POSTGRES_ALLOW_PLAINTEXT=true` or `EXTERNAL_VALKEY_ALLOW_PLAINTEXT=true`; every run then
+says so with a `[warn]` line. A container name on a shared Docker network is not recognized as
+this machine, so it needs TLS or the opt-out too. `EXTERNAL_POSTGRES_SSLMODE=require` encrypts
+without checking who answers and is accepted with a warning.
+
+**Bare Compose uses the same files.** While a store is external, `just deploy` writes
+`COMPOSE_FILE` to `.env` (with the platform's path separator) listing exactly the files it uses:
+`docker-compose.yml`, `docker-compose.prod.yml`, the external overlays and
+`docker-compose.override.yml` when you have one. It rewrites it on every run, so a plain
+`docker compose up -d`, `ps`, `logs` or `exec` in the checkout addresses the real stack and can
+never start the local stores and point the services at them. Leave that line alone. If you set a
+`COMPOSE_FILE` yourself (in `.env` or the shell), `just deploy` refuses to continue in external
+mode instead of overwriting it; with both stores local it never writes one, and it removes its
+own when you switch back. The gate (`just discogs-import-status --prod`) and deploy's probes use
+the same files. Run Compose from the checkout, and with the same `-p` if you deploy with one.
+
+**Switching an existing deployment is a data migration**, not a setting. `just deploy` refuses
+an external PostgreSQL in a project that already has a `postgres_data` volume, because its data
+is there and the gate would read an empty server. Move the data first, or stay local.
+
+**What becomes yours.** Backups, upgrades, restarts, disk space and monitoring of an external
+store are its operator's responsibility. The disk check skips it, `postgres-exporter` and
+`valkey-exporter` do not run (their scrape jobs read as down on the infrastructure dashboard),
+and the maintenance scripts that exec into the local `postgres` (`reset-password.sh`,
+`provision-embedding-pipeline-login.sh`, `cleanup-implausible-years.sh`) do not apply; run
+their SQL against your server instead. An override may still never rewire `POSTGRES_*`,
+`VALKEY_*` or the store secrets: the supported mode is the only route
+([the override check](#the-override-and-its-safety-check)). Secrets stay in encrypted storage,
+and nothing is applied on a shared server without your explicit approval. Details:
 [shared-services.md](../skills/groovemap-homelab/references/shared-services.md).
 
 ## Known limitations
@@ -322,8 +444,9 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   measurement. See [Hardware and sizing](#hardware-and-sizing).
 - **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See
   [Later cycles](#later-cycles).
-- **Existing PostgreSQL and Valkey cannot be reused yet.** See
-  [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
+- **Existing PostgreSQL and Valkey are refused until the upstream releases are promoted.** The
+  external-stores mode is in place; `just deploy` refuses it until the capability floors are met.
+  See [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations
@@ -333,3 +456,5 @@ Backups are environment-specific and must be tested: see
 [Database resilience](database-resilience.md). Day-to-day operation is covered by
 [Administration](admin-guide.md), [Monitoring](monitoring.md) and
 [Troubleshooting](troubleshooting.md); routine updates by [Maintenance](maintenance.md).
+An external PostgreSQL or Valkey is backed up by its own operator, not by this stack
+([what becomes yours](#existing-postgresql-and-valkey)).

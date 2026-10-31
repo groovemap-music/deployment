@@ -38,10 +38,13 @@ It also stops, with no opt-in, if the override points a service at an external P
 Valkey: a change on any service to `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`,
 `POSTGRES_USERNAME`, `VALKEY_HOST`, `VALKEY_PORT` or their `_FILE` variants (set directly or through
 `env_file`, which Compose inlines into the render), or to the source of a `postgres_*` or
-`valkey_*` secret. The message reads "External PostgreSQL and Valkey are not supported yet" and
-cites `gm-deployment-e1uh` and `docs/homelab.md`: the deploy gate and the MusicBrainz latch probe
-read the stack's own `postgres` container, so a rewired service would leave the gate watching an
-unused database. `POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` (published host ports) are unaffected.
+`valkey_*` secret. The hint says an existing store is reached "only through the supported
+external-stores mode" (`GROOVEMAP_POSTGRES` / `GROOVEMAP_VALKEY=external` in `.env`; see
+[shared-services.md](shared-services.md)) and cites `gm-deployment-e1uh` and `docs/homelab.md`:
+the deploy gate and the MusicBrainz latch probe follow that mode, so a service rewired in the
+override would leave the gate watching a database nothing writes to. The mode's overlays sit in
+the render on both sides of the comparison, so they never trip this rule.
+`POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` (published host ports) are unaffected.
 
 It also stops if the override removes a service, or redefines a top-level network that a
 data-tier service uses (`name`, `external`, `driver`, `attachable`, `internal`, `driver_opts`):
