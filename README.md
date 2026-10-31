@@ -121,8 +121,12 @@ affected-record count, and rollback procedure. `just check` and CI never invoke 
   recipe; CI never starts it.
 - This repository is intentionally unversioned: deployable source repositories
   own artifact versions, while environments record their exact image digests.
-- CI performs source/Compose validation only. It neither starts the production
-  stack nor reads deployment secrets.
+- CI performs source/Compose validation, and starts only disposable smoke stacks:
+  the homelab-shape smoke (`just smoke-homelab`) rebuilds lux's installation on a
+  Linux runner with its own Compose projects, pinned images and generated
+  credentials, and removes everything on exit. CI never starts a live environment
+  or reads deployment secrets. See the
+  [deployment validation guide](docs/testing-guide.md#the-homelab-shape-smoke).
 
 Primary GrooveMap images are named after their source repositories. The stack
 retains shorter Compose service names such as `api`, `graphinator`, and

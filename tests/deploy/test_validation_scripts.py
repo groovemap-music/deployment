@@ -138,6 +138,7 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         f"{validation} -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.erasure-smoke.yml config --quiet",
+        "compose --project-name validation -f config/homelab-smoke/compose.yml config --quiet",
         f"{external} -f docker-compose.external-postgres.yml config --quiet",
         f"{external} -f docker-compose.external-valkey.yml config --quiet",
         f"{external} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml config --quiet",
