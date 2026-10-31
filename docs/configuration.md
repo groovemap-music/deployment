@@ -104,13 +104,33 @@ Valkey, VictoriaMetrics or VictoriaTraces, or their `networks`, `labels` or
 `extra_hosts` (a proxy network, Traefik TCP router labels or a hosts entry would
 expose or redirect the data tier). Reverse-proxy labels and networks on
 other services such as `explore`, `dashboard` and `grafana`, volume locations,
-restart policies and the `groovemap` network's subnet are fine. So are extra
-services of your own, if their image is pinned by digest (`repo@sha256:...`)
-and they neither publish ports nor join the `groovemap` network; list a
-service that must in `OVERRIDE_ALLOW_SERVICES` in `.env`
-(comma-separated names, for example `OVERRIDE_ALLOW_SERVICES=pg-forward`).
-The digest rule has no opt-in. A new service left on the project's default
-network cannot reach the stack and needs no opt-in. Move published ports with the
+restart policies and the `groovemap` network's subnet are fine. The check denies
+what it does not understand. An existing service may not gain `privileged`, `cap_add`,
+`devices`, `security_opt`, `device_cgroup_rules`, `sysctls`, `runtime`, `isolation`, `group_add`, `pid`, `ipc`, `uts`, `cgroup` or `volumes_from`, or change `network_mode` on any service, or a mount of
+the Docker socket, another sensitive host path or another service's data volume; it may
+still move its own data volume to a host path. An extra service of your own may set
+only `image`, `command`, `entrypoint`, `environment`, `env_file`, `labels`, `networks`,
+`restart`, `healthcheck`, `logging`, `user`, `working_dir`, `read_only`, `tmpfs`, `init`,
+`stop_grace_period`, `deploy.resources`, `container_name`, `depends_on` and `volumes`
+(new named volumes, tmpfs or non-sensitive host paths), its image must be pinned by
+digest (`repo@sha256:...`) and it may not publish ports or join the `groovemap` network.
+List a service that must break any of these (a backup sidecar that reads `postgres_data`,
+a forwarder into PostgreSQL) in `OVERRIDE_ALLOW_SERVICES` in `.env`
+(comma-separated names, for example `OVERRIDE_ALLOW_SERVICES=pg-forward,backup`).
+Existing services are checked against this denylist, not a key allowlist, because overrides
+legitimately change labels, networks, environment, restart and volumes on web-tier services.
+The digest and no-`build` rules have no opt-in, and neither do the rules for existing
+services. Sensitive host paths are `/`, the Docker, containerd and podman sockets
+(`/var/run/docker.sock`, `/run/docker.sock`, `/run/podman`, `/run/containerd`,
+`/run/user/<uid>/...`), `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/podman`,
+`/var/lib/containers`, `/proc`, `/sys`, `/dev`, `/etc`, `/root` and `/boot`, anything
+under them, and any parent that contains one (`/var/lib`, `/run`). The override may
+not redefine a network that a data-tier service uses (`name`, `external`, `driver`,
+`attachable`, `internal`, `driver_opts`), which would move the data tier without touching any
+service's `networks`; changing its `ipam` subnet is fine. A new service that omits `networks`
+joins the project's default network, a separate network from `groovemap`, so it needs no
+network opt-in; that says nothing about what the service reaches on the host or LAN, which
+the key and mount rules cover. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
 to address the same stack by hand.
