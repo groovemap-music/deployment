@@ -48,13 +48,10 @@ differs. Every constraint states its reason.
 - Compose commands are written for production, with both files:
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml`. For a non-production
   environment, drop `-f docker-compose.prod.yml`.
-- Every `docker compose` command parses the whole Compose file, including the `embeddings` job
-  (profile `jobs`, never started here), whose `SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` have no
-  default. When Compose answers `required variable SOURCE_DUMP_ID is missing a value` (observed
-  with Compose 5.6.1), put placeholders in the shell before the first command:
-  `export SOURCE_DUMP_ID=rollout SOURCE_DUMP_DATE=2000-01-01`. Nothing reads them in this
-  rollout. Do not put them in `.env`: [`.env.example`](../.env.example) keeps them out on purpose,
-  so that a real embedding run cannot reuse a stale dump id.
+- The `embeddings` job (profile `jobs`, never started here) needs `SOURCE_DUMP_ID` and
+  `SOURCE_DUMP_DATE` only when it runs; Compose renders and starts the stack without them, so do
+  not set placeholders. Keep them out of `.env` too ([`.env.example`](../.env.example) does, so
+  that a real embedding run cannot reuse a stale dump id).
 - **[approval]** marks a step that pushes, tags, publishes, or changes a running environment.
   Ask the human for explicit approval of that exact action and target before running it.
   Approval of one step does not cover another. The approval list in

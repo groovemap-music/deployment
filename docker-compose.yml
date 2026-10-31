@@ -515,15 +515,6 @@ services:
     # with the collector's own binary still proves the container is alive and
     # its configuration is loadable; :13133 is the operator-facing liveness
     # endpoint, reachable from any other container on the network.
-    healthcheck:
-      test: ["CMD", "/otelcol-contrib", "validate", "--config=file:/etc/otelcol-contrib/config.yaml"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    restart: unless-stopped
-    logging: *default-logging
-    security_opt:
     #
     # The probe's --config is byte-for-byte the command's --config, so it can
     # only ever validate the configuration the collector is running. Never point
@@ -533,6 +524,15 @@ services:
     # path, or switches BOTH to the same `env:VAR` source; it never edits one
     # side. (Compose 5.6.1 rejects `configs.content` for this read-only
     # container, so a generated file is mounted rather than inlined.)
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=file:/etc/otelcol-contrib/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
@@ -1187,8 +1187,13 @@ services:
   # insights service's image but overrides its entrypoint, so it never runs the
   # always-on FastAPI/scheduler process the base image otherwise starts.
   #
-  # SOURCE_DUMP_ID/SOURCE_DUMP_DATE have no default and change every month — the
-  # invoker supplies them, since it is the one that knows which dump just landed.
+  # SOURCE_DUMP_ID/SOURCE_DUMP_DATE change every month — the invoker supplies them, since
+  # it is the one that knows which dump just landed. They default to empty here, never to
+  # a stand-in dump: Compose interpolates a profile's services even when the profile is
+  # inactive, so a required-variable check (`:?`) would stop every `config`/`up` of the
+  # whole stack. Refusal to run without real values lives where the job is run:
+  # scripts/run-embeddings.sh (`just embeddings-run`) validates both first, and
+  # analytics-engine's EmbeddingPipelineConfig raises ValueError on an empty value.
   # The "jobs" profile keeps this out of `docker compose up`'s default service set;
   # `docker compose run` still reaches it regardless of which profiles are active.
   #
@@ -1211,8 +1216,8 @@ services:
       POSTGRES_DATABASE: groovemap
       POSTGRES_HOST: postgres
       PYTHONUNBUFFERED: "1"
-      SOURCE_DUMP_ID: "${SOURCE_DUMP_ID:?Set SOURCE_DUMP_ID to the dump this run embeds, e.g. discogs-2026-09}"
-      SOURCE_DUMP_DATE: "${SOURCE_DUMP_DATE:?Set SOURCE_DUMP_DATE to that dump's release date, YYYY-MM-DD}"
+      SOURCE_DUMP_ID: "${SOURCE_DUMP_ID:-}"
+      SOURCE_DUMP_DATE: "${SOURCE_DUMP_DATE:-}"
       EMBEDDING_PIPELINE_POSTGRES_USERNAME: "${EMBEDDING_PIPELINE_POSTGRES_USERNAME:-embedding_pipeline}"
       EMBEDDING_PIPELINE_POSTGRES_PASSWORD: "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD:-groovemap}"
     depends_on:
