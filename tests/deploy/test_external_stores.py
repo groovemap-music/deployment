@@ -1288,6 +1288,8 @@ def test_cleartext_postgres_to_a_server_off_this_machine_needs_the_opt_out(mode:
     assert _problems(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true") == []
     warnings = _warnings(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true")
     assert len(warnings) == 1 and "PostgreSQL at db.lan is reached in the clear" in warnings[0]
+    # Refused without the opt-out: no warning that claims the opt-out is set (the homelab smoke saw one).
+    assert _warnings(EXTERNAL_POSTGRES_SSLMODE=mode) == []
 
 
 def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> None:
@@ -1296,6 +1298,7 @@ def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> No
     assert "EXTERNAL_VALKEY_ALLOW_PLAINTEXT=true" in problems[0]
     assert _problems(EXTERNAL_VALKEY_TLS="false", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="yes") == []
     assert "Valkey at cache.lan is reached in the clear" in _warnings(EXTERNAL_VALKEY_TLS="0", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="true")[0]
+    assert _warnings(EXTERNAL_VALKEY_TLS="0") == []
 
 
 @pytest.mark.parametrize("host", ["host.docker.internal", "127.0.0.1", "localhost"])
@@ -1366,6 +1369,10 @@ def test_verify_full_reaches_every_postgresql_client(
         service = external_render["services"][name]
         assert service["environment"]["PGSSLMODE"] == "verify-full", name
         assert service["environment"]["PGSSLROOTCERT"] == "/run/secrets/postgres_ca", name
+        # Password authentication only: libpq must not look for a client certificate in an image HOME
+        # the host user (the services' UID) may not be able to enter.
+        assert service["environment"]["PGSSLCERTMODE"] == "disable", name
+        assert require_render["services"][name]["environment"]["PGSSLCERTMODE"] == "disable", name
         assert {"source": "postgres_ca", "target": "/run/secrets/postgres_ca"} in service["secrets"], name
         # `require` must not get a root file: libpq would then verify after all.
         assert require_render["services"][name]["environment"]["PGSSLMODE"] == "require"

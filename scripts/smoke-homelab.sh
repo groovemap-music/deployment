@@ -269,6 +269,8 @@ say "Negative cases that must stop deploy before any container starts"
 expect_refusal plaintext-sslmode \
   "EXTERNAL_POSTGRES_SSLMODE=disable sends credentials and data to homelab-postgres in the clear" \
   EXTERNAL_POSTGRES_SSLMODE=disable
+! grep -qF "EXTERNAL_POSTGRES_ALLOW_PLAINTEXT=true):" "$EVIDENCE/deploy-plaintext-sslmode.log" ||
+  fail "plaintext-sslmode: deploy warns as if EXTERNAL_POSTGRES_ALLOW_PLAINTEXT were set"
 
 write_override --omit store-check-postgres
 expect_refusal store-check-off-network \

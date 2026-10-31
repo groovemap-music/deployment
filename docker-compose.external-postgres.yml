@@ -21,6 +21,11 @@
 #   pointing at secrets/postgres_ca.crt. No service sets sslmode itself, so nothing overrides it.
 #   `just deploy` refuses a cleartext mode to a server off this machine unless
 #   EXTERNAL_POSTGRES_ALLOW_PLAINTEXT=true.
+# - GrooveMap authenticates with the role's password only, so every client sets PGSSLCERTMODE=disable
+#   (libpq 16+, which psycopg 3.3's binary wheels bundle). Otherwise libpq looks for a client certificate
+#   at $HOME/.postgresql/postgresql.crt, and the services run as the host user (UID/GID in .env), not
+#   the image's own: an image HOME that user cannot enter fails the connection with "could not open
+#   certificate file ... Permission denied" (found by the homelab smoke on a runner with UID 1001).
 #
 # Without the production overlay the secrets above do not exist, so this overlay only renders
 # on top of docker-compose.yml + docker-compose.prod.yml.
@@ -36,6 +41,7 @@ x-external-postgres-env: &external-postgres-env
   POSTGRES_PORT: "${EXTERNAL_POSTGRES_PORT:-5432}"
   POSTGRES_DATABASE: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
   PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+  PGSSLCERTMODE: disable
 
 # PGSSLROOTCERT only in verify-ca and verify-full: libpq would also verify in `require` if the root
 # file were set, and in the cleartext modes secrets/postgres_ca.crt is an empty placeholder. Any
@@ -77,6 +83,7 @@ services:
       PGAPPNAME: groovemap-store-check
       PGCONNECT_TIMEOUT: "10"
       PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+      PGSSLCERTMODE: disable
       GROOVEMAP_ALLOW_PLAINTEXT: "${EXTERNAL_POSTGRES_ALLOW_PLAINTEXT:-false}"
       POSTGRES_DB: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
       POSTGRES_USER_FILE: /run/secrets/postgres_username

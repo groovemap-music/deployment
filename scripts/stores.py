@@ -280,6 +280,9 @@ def transport_warnings(stores: Stores, env_values: Mapping[str, str], environ: M
         host = _effective(f"EXTERNAL_{store.upper()}_HOST", env_values, environ)
         name = "PostgreSQL" if store == "postgres" else "Valkey"
         if not encrypts(store, env_values, environ) and not is_local_host(host):
+            # Without the opt-out this is a stop (transport_problems), which says so itself.
+            if not strict_flag(ALLOW_PLAINTEXT[store], env_values, environ, default=False):
+                continue
             what = "PostgreSQL role's" if store == "postgres" else "Valkey"
             warnings.append(
                 f"{name} at {host} is reached in the clear ({ALLOW_PLAINTEXT[store]}=true): {PLAINTEXT_RISK.format(host=host, what=what)}"
