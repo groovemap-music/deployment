@@ -848,7 +848,7 @@ def test_maintenance_guide_records_the_images_the_identifier_probes_need() -> No
 
 def test_recipe_exists_renders_and_stays_out_of_the_credential_free_gate() -> None:
     justfile = (REPO_ROOT / "Justfile").read_text()
-    assert "smoke-media:\n    bash scripts/smoke-media.sh" in justfile
+    assert "smoke-media: _require-uv\n    bash scripts/smoke-media.sh" in justfile
     gate = next(line for line in justfile.splitlines() if line.startswith("check:"))
     assert gate == "check: source-check typecheck test", "the credential-free gate must not start containers"
 

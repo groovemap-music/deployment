@@ -11,7 +11,7 @@ description: >-
 license: MIT
 compatibility: >-
   Needs a shell on the Docker host, git, Docker Engine with Compose v2, and python3 3.10 or
-  newer. just and uv are optional (the checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
+  newer. just is optional and uv is not needed: operator recipes fall back to python3 (the checkout's .mise.toml pins both for maintainers). GrooveMap's images are linux/amd64 only.
 metadata:
   repository: https://github.com/groovemap-music/deployment
 ---

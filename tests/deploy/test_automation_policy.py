@@ -25,7 +25,8 @@ def dry_run(*recipes: str) -> list[str]:
         capture_output=True,
         text=True,
     )
-    return result.stderr.splitlines()
+    # The maintainer-only uv guard (_require-uv) is not part of the validation graph under test.
+    return [line for line in result.stderr.splitlines() if not line.startswith("command -v uv ")]
 
 
 def test_ci_uses_immutable_public_automation() -> None:

@@ -54,9 +54,13 @@ workflow.
 
 - Docker Engine with Docker Compose v2. Deploy stops if Compose is older than v2.
 - git and python3 3.10 or newer. The deploy helpers use only the Python standard library, so
-  the distro's `python3` is enough. mise, `just` and `uv` are optional maintainer tooling; with
-  `uv` installed, the script uses it instead of `python3`. Set `DEPLOY_PYTHON` to pick another
-  interpreter.
+  the distro's `python3` is enough. `just` is an optional convenience: every operator recipe
+  (`just deploy`, `env-init`, `discogs-import-status`, `embeddings-*`) also runs without `uv`, on
+  `python3`. With `uv` installed they use it instead. Set `DEPLOY_PYTHON` to pick another
+  interpreter. Only maintainer recipes (`check`, `test`, `typecheck`, `audit`, `smoke-*`) need
+  `uv`, and they stop with a message saying so. `discogs-import-status` exits 0 when the import is
+  complete, 3 while it is still running (normal progress, not a failure: use `--wait` or run it
+  again later) and 2 when it cannot tell; `just` passes these codes through unchanged.
 - A host that meets [the sizing minimums](#hardware-and-sizing).
 - Free host ports for the services you publish (see [Ports and bind addresses](#ports-and-bind-addresses)).
   Deploy refuses to start if a configured port is taken by something other than this stack.

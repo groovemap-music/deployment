@@ -118,7 +118,7 @@ def test_force_keeps_the_previous_env_as_a_timestamped_backup(tmp_path: Path) ->
 
 def test_just_recipe_runs_the_generator_with_forwarded_arguments() -> None:
     justfile = (ROOT / "Justfile").read_text()
-    assert "env-init *args:\n    uv run python scripts/env-init.py {{args}}" in justfile
+    assert "env-init *args:\n    {{operator_python}} scripts/env-init.py {{args}}" in justfile
 
 
 # --- upgrading an existing .env in place -------------------------------------------------
