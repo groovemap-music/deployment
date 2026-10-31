@@ -32,7 +32,7 @@ from typing import Any
 
 import yaml
 
-from tests.deploy.test_docker_compose_prod import _load_compose
+from tests.deploy.test_docker_compose_prod import _load_compose, default_port
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -250,7 +250,7 @@ class TestRabbitMqPrometheusPlugin:
     def test_prometheus_port_is_published_on_loopback_only(self) -> None:
         """Host-side operator tools read /metrics/detailed; nothing public may."""
         for name, compose in (("base", _base_compose()), ("prod", _prod_compose())):
-            ports = [str(port) for port in compose["services"]["rabbitmq"]["ports"] if "15692" in str(port)]
+            ports = [default_port(port) for port in compose["services"]["rabbitmq"]["ports"] if "15692" in str(port)]
             assert ports == ["127.0.0.1:15692:15692"], f"{name}: 15692 must be bound to loopback only, got {ports}"
 
 

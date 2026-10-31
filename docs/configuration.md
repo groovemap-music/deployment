@@ -105,6 +105,39 @@ The following groups are interpolated by the executable stack:
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
 | `SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT`, `SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM`, `SMOKE_RELEASED_FIXTURE_SUBNET` | Isolated released-fixture-smoke settings only |
 
+### Host ports and bind addresses
+
+Every published host port is an interpolation input whose default is the stock
+mapping, so an unset variable renders the same Compose configuration as before.
+Only the host side moves; container ports and in-network addresses are fixed.
+If you move a port that a browser or link uses, update `APP_BASE_URL`,
+`GRAFANA_URL` and `TRACES_URL` to match.
+
+| Variable | Default | Publishes |
+| --- | --- | --- |
+| `GRAFANA_HOST_PORT` | `3000` | Grafana |
+| `API_HOST_PORT`, `API_HEALTH_HOST_PORT` | `8004`, `8005` | Catalog API, API health |
+| `DASHBOARD_HOST_PORT` | `8003` | Operations console |
+| `EXPLORE_HOST_PORT`, `EXPLORE_HEALTH_HOST_PORT` | `8006`, `8007` | Graph Explorer, Explorer health |
+| `POSTGRES_HOST_PORT` | `5433` | PostgreSQL (container port 5432) |
+| `NEO4J_HTTP_HOST_PORT`, `NEO4J_BOLT_HOST_PORT` | `7474`, `7687` | Neo4j browser, Bolt |
+| `RABBITMQ_AMQP_HOST_PORT`, `RABBITMQ_MANAGEMENT_HOST_PORT` | `5672`, `15672` | RabbitMQ AMQP, management UI |
+| `RABBITMQ_METRICS_HOST_PORT` | `15692` | RabbitMQ Prometheus metrics (loopback) |
+| `VALKEY_HOST_PORT` | `6379` | Valkey |
+| `VICTORIA_METRICS_HOST_PORT` | `8428` | VictoriaMetrics |
+| `VICTORIA_TRACES_HOST_PORT` | `10428` | VictoriaTraces |
+
+| Bind address | Default | Applies to |
+| --- | --- | --- |
+| `WEB_BIND_ADDRESS` | unset (all interfaces) | Grafana, API, dashboard, Explore |
+| `DATA_BIND_ADDRESS` | unset (all interfaces) | PostgreSQL, Neo4j, RabbitMQ AMQP and management; Valkey, VictoriaMetrics and VictoriaTraces in the base file |
+| `INTERNAL_BIND_ADDRESS` | `127.0.0.1` | RabbitMQ metrics in both files; Valkey, VictoriaMetrics and VictoriaTraces in the production overlay |
+
+Set `WEB_BIND_ADDRESS` or `DATA_BIND_ADDRESS` to an IP (for example
+`127.0.0.1`) to stop publishing on every interface. The production overlay
+still publishes PostgreSQL, Neo4j and RabbitMQ on all interfaces by default;
+set `DATA_BIND_ADDRESS` to narrow that.
+
 `ENCRYPTION_MASTER_KEY` and `RESEND_API_KEY` are not interpolated: the base file
 carries them only as commented-out entries, and the production overlay delivers
 them as the `encryption_master_key` and `resend_api_key` file secrets.
