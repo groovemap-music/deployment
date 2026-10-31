@@ -15,10 +15,17 @@ rebound to loopback only, and every service that talks to valkey
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def default_port(mapping: object) -> str:
+    """Resolve a port mapping as Compose does with every variable unset."""
+    text = re.sub(r"\$\{[A-Z0-9_]+:\+\$\{[A-Z0-9_]+\}:\}", "", str(mapping))
+    return re.sub(r"\$\{[A-Z0-9_]+:-([^{}]*)\}", r"\1", text)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -70,7 +77,7 @@ class TestBaseValkeyIsUnauthenticatedByDefault:
     def test_base_valkey_publishes_to_all_interfaces(self) -> None:
         valkey = _base_compose()["services"]["valkey"]
         ports = valkey["ports"]
-        assert any(str(p) == "6379:6379" for p in ports)
+        assert [default_port(p) for p in ports] == ["6379:6379"]
 
 
 class TestBaseValkeyService:
@@ -150,8 +157,7 @@ class TestProdValkeyService:
     def test_valkey_port_rebound_to_loopback(self) -> None:
         valkey = _prod_compose()["services"]["valkey"]
         ports = valkey["ports"]
-        assert ports == ["127.0.0.1:6379:6379"]
-        assert not any(str(p) == "6379:6379" for p in ports)
+        assert [default_port(p) for p in ports] == ["127.0.0.1:6379:6379"]
 
     def test_valkey_healthcheck_authenticates(self) -> None:
         valkey = _prod_compose()["services"]["valkey"]

@@ -8,6 +8,8 @@ from urllib.parse import unquote
 
 import yaml
 
+from tests.deploy.test_docker_compose_prod import default_port
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -137,7 +139,7 @@ def test_image_guide_matches_every_compose_image_identity() -> None:
 def test_quick_start_lists_only_the_published_application_and_backend_ports() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     quick_start = (ROOT / "docs" / "quick-start.md").read_text()
-    published = {str(port).split(":")[-2] for service in compose["services"].values() for port in service.get("ports", [])}
+    published = {default_port(port).split(":")[-2] for service in compose["services"].values() for port in service.get("ports", [])}
     for port in published:
         assert f"localhost:{port}" in quick_start, f"docs/quick-start.md does not list published port {port}"
 

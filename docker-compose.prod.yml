@@ -85,7 +85,7 @@ services:
     # tools reach /metrics/detailed, nothing on public interfaces does.
     # Compose merges this with the identical base entry.
     ports:
-      - "127.0.0.1:15692:15692"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_METRICS_HOST_PORT:-15692}:15692"
     volumes:
       - ./scripts/rabbitmq-entrypoint.sh:/scripts/rabbitmq-entrypoint.sh:ro
     secrets:
@@ -256,7 +256,7 @@ services:
     # public interfaces. `!override` fully replaces (not merges) the base
     # file's "6379:6379" (0.0.0.0) publish.
     ports: !override
-      - "127.0.0.1:6379:6379"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VALKEY_HOST_PORT:-6379}:6379"
     secrets:
       - valkey_password
     # Base healthcheck ("valkey-cli ping" with no auth) would fail once
@@ -308,14 +308,14 @@ services:
   victoria-metrics:
     restart: always
     ports: !override
-      - "127.0.0.1:8428:8428"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VICTORIA_METRICS_HOST_PORT:-8428}:8428"
 
   # Same reasoning for the trace store: 10428 accepts unauthenticated span
   # ingest as well as queries, so it never faces the host's public interfaces.
   victoria-traces:
     restart: always
     ports: !override
-      - "127.0.0.1:10428:10428"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VICTORIA_TRACES_HOST_PORT:-10428}:10428"
 
   otel-collector:
     restart: always

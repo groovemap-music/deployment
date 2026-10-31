@@ -73,12 +73,12 @@ services:
         -rabbitmq_management_agent disable_metrics_collector true
         -rabbitmq_prometheus return_per_object_metrics true
     ports:
-      - "5672:5672"      # AMQP port
-      - "15672:15672"    # Management UI
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${RABBITMQ_AMQP_HOST_PORT:-5672}:5672"      # AMQP port
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"    # Management UI
       # 15692 (rabbitmq_prometheus) is published on loopback only so host-side
       # operator tools can read /metrics/detailed the way they reach 15672.
       # otel-collector still scrapes it over the internal network.
-      - "127.0.0.1:15692:15692"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_METRICS_HOST_PORT:-15692}:15692"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
@@ -153,7 +153,7 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USER: groovemap
     ports:
-      - "5433:5432"  # Changed from 5432 to avoid conflict
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${POSTGRES_HOST_PORT:-5433}:5432"  # Changed from 5432 to avoid conflict
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -199,8 +199,8 @@ services:
       NEO4J_server_memory_heap_max__size: 2G
       NEO4J_server_memory_pagecache_size: 1G
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${NEO4J_HTTP_HOST_PORT:-7474}:7474"
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${NEO4J_BOLT_HOST_PORT:-7687}:7687"
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -228,7 +228,7 @@ services:
     hostname: valkey
     command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
     ports:
-      - "6379:6379"
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${VALKEY_HOST_PORT:-6379}:6379"
     volumes:
       - valkey_data:/data
     networks:
@@ -421,7 +421,7 @@ services:
       - "-retentionPeriod=90d"
       - "-httpListenAddr=:8428"
     ports:
-      - "8428:8428"    # vmui, the Prometheus query API, and remote write (loopback-only in prod)
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${VICTORIA_METRICS_HOST_PORT:-8428}:8428"    # vmui, the Prometheus query API, and remote write (loopback-only in prod)
     volumes:
       - victoria_metrics_data:/victoria-metrics-data
     networks:
@@ -455,7 +455,7 @@ services:
       - "-retentionPeriod=7d"
       - "-httpListenAddr=:10428"
     ports:
-      - "10428:10428"    # OTLP trace ingest and the Tempo query API (loopback-only in prod)
+      - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${VICTORIA_TRACES_HOST_PORT:-10428}:10428"    # OTLP trace ingest and the Tempo query API (loopback-only in prod)
     volumes:
       - victoria_traces_data:/victoria-traces-data
     networks:
@@ -539,7 +539,7 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports:
-      - "3000:3000"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${GRAFANA_HOST_PORT:-3000}:3000"
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -656,8 +656,8 @@ services:
       # .env.example and docs/configuration.md#identity-ledger-refresh).
       IDENTITY_LEDGER_REFRESH_ENABLED: "true"
     ports:
-      - "8004:8004"
-      - "8005:8005"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HOST_PORT:-8004}:8004"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HEALTH_HOST_PORT:-8005}:8005"
     volumes:
       - api_logs:/logs
       - discogs_data:/discogs-data:ro
@@ -1030,7 +1030,7 @@ services:
       SESSION_COOKIE_SECURE: "false"
       UV_CACHE_DIR: "/tmp/.cache/uv"
     ports:
-      - "8003:8003"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${DASHBOARD_HOST_PORT:-8003}:8003"
     depends_on:
       <<: *otel-depends-on
       schema-init:
@@ -1086,8 +1086,8 @@ services:
     networks:
       - groovemap
     ports:
-      - "8006:8006"
-      - "8007:8007"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${EXPLORE_HOST_PORT:-8006}:8006"
+      - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${EXPLORE_HEALTH_HOST_PORT:-8007}:8007"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=5)"]
       interval: 30s
