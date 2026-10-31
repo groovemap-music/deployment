@@ -952,6 +952,50 @@ def published_ports(ports_column: str) -> set[int]:
     return {int(port) for port in PUBLISHED.findall(ports_column)}
 
 
+# --- is there already a MusicBrainz deployment? ---------------------------------------
+
+# Run inside the postgres container; the same user lookup as scripts/discogs_import_status.py
+# (PSQL_SHELL there; tests keep the two equal). The query is `$1`.
+PSQL_SHELL = (
+    'u="${POSTGRES_USER:-}"; '
+    'if [ -z "$u" ] && [ -n "${POSTGRES_USER_FILE:-}" ]; then u="$(cat "$POSTGRES_USER_FILE")"; fi; '
+    'if [ -z "$u" ]; then echo "no PostgreSQL user: neither POSTGRES_USER nor POSTGRES_USER_FILE is set" >&2; exit 2; fi; '
+    'exec psql -X -U "$u" -d "${POSTGRES_DB:-groovemap}" -v ON_ERROR_STOP=1 -tAq -c "$1"'
+)
+MUSICBRAINZ_LATCH_SQL = "SELECT EXISTS (SELECT 1 FROM public.loader_extraction_latch WHERE loader = 'musicbrainz')"
+
+
+def musicbrainz_exclusive_volumes(config: Mapping[str, Any] | None) -> set[str] | None:
+    """Compose volume keys that only the MusicBrainz profile mounts, from `config --format json --profile '*'`.
+
+    Phase 1 already creates every volume a non-MusicBrainz service mounts (the API mounts
+    musicbrainz_data read-only), so only a volume with no other mounting service says MusicBrainz
+    ever ran. None when the render cannot tell (no services): the caller must not guess.
+    """
+    services = (config or {}).get("services")
+    if not isinstance(services, dict) or not services:
+        return None
+    exclusive: set[str] = set()
+    shared: set[str] = set()
+    for service in services.values():
+        only_musicbrainz = set(service.get("profiles") or []) == {PROFILE}
+        for mount in _mounts(service):
+            source = str(mount.get("source") or "")
+            if mount.get("type", "volume") == "volume" and source:
+                (exclusive if only_musicbrainz else shared).add(source)
+    return exclusive - shared
+
+
+def musicbrainz_latch(compose_argv: Sequence[str], runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> bool:
+    """True when loader_extraction_latch has a row for loader 'musicbrainz'. Any failure counts as no evidence."""
+    argv = [*compose_argv, "exec", "-T", "postgres", "sh", "-c", PSQL_SHELL, "sh", MUSICBRAINZ_LATCH_SQL]
+    try:
+        completed = runner(argv, capture_output=True, text=True, timeout=60, check=False, cwd=ROOT)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and completed.stdout.strip() == "t"
+
+
 # --- talking to Docker (impure) --------------------------------------------------------
 
 
@@ -1393,6 +1437,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     sizing.add_argument("--mode", choices=("prod", "dev"), default="prod")
     commands.add_parser("profile-enabled", help=f"exit 0 if COMPOSE_PROFILES (shell or .env) includes {PROFILE}, else 1")
     commands.add_parser("enable-profile", help=f"add {PROFILE} to COMPOSE_PROFILES in .env")
+    evidence = commands.add_parser(
+        "musicbrainz-volumes", help="print the Compose volumes only the musicbrainz profile mounts; exit 1 if the render cannot tell"
+    )
+    evidence.add_argument("rendered", type=Path, help="`docker compose --profile '*' config --format json`")
+    latch = commands.add_parser(
+        "musicbrainz-latch", help="exit 0 if loader_extraction_latch has a musicbrainz row; give the compose command after --"
+    )
+    latch.add_argument("compose", nargs=argparse.REMAINDER)
     name = commands.add_parser("project-name", help="print the Compose project name")
     name.add_argument("--project-name")
     urls = commands.add_parser("endpoints", help="print the configured browser-facing endpoints")
@@ -1442,6 +1494,19 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         write_env_text(ENV_FILE, set_env_values(ENV_FILE.read_text(), {"COMPOSE_PROFILES": merged}, PROFILE_MARKER))
         print(f"    Set COMPOSE_PROFILES={merged} in .env, so every later `docker compose up` keeps MusicBrainz running.")
         return 0
+    if args.command == "musicbrainz-volumes":
+        try:
+            volumes = musicbrainz_exclusive_volumes(json.loads(args.rendered.read_text()))
+        except (OSError, json.JSONDecodeError):
+            volumes = None
+        if volumes is None:
+            return 1
+        for key in sorted(volumes):
+            print(key)
+        return 0
+    if args.command == "musicbrainz-latch":
+        compose_argv = [word for word in args.compose if word != "--"]
+        return 0 if compose_argv and musicbrainz_latch(compose_argv) else 1
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))
         return 0
