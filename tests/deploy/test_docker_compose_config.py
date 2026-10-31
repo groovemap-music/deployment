@@ -137,3 +137,11 @@ class TestBatchProcessingDeploymentContract:
             environment = services[name]["environment"]
             assert int(environment["POSTGRES_BATCH_SIZE"]) >= 500
             assert float(environment["POSTGRES_BATCH_FLUSH_INTERVAL"]) <= 2.0
+
+
+def test_musicbrainz_path_is_profile_gated_and_undepended_on() -> None:
+    services = _load_compose(Path(__file__).resolve().parents[2] / "docker-compose.yml")["services"]
+    gated = {"extractor-musicbrainz", "brainzgraphinator", "brainztableinator"}
+    assert {name for name, service in services.items() if "musicbrainz" in service.get("profiles", [])} == gated
+    for name, service in services.items():
+        assert gated.isdisjoint(service.get("depends_on", {})), f"{name} depends on a profile-gated service"

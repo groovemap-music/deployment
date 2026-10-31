@@ -1,0 +1,19 @@
+---
+# Example docker-compose.override.yml: move the stack's network off 172.20.0.0/16 when another
+# network or the LAN already uses it, and keep containers you stopped by hand stopped across
+# reboots. The production overlay sets `restart: always`; `unless-stopped` is per service.
+# Pick a /16 (or smaller) that `docker network inspect` and `ip route` show as free.
+# A subnet change applies when the network is created. On a running stack the network has to
+# be recreated: stop the stack with `down` (never `down -v`, which deletes the data) and start
+# it again with `just deploy`.
+networks:
+  groovemap:
+    ipam: !override
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  grafana:
+    restart: unless-stopped
+  dashboard:
+    restart: unless-stopped

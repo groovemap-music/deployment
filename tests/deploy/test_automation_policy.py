@@ -115,9 +115,12 @@ def test_public_recipe_surface_remains_stable() -> None:
         "config-prod",
         "coverage",
         "default",
+        "deploy",
+        "discogs-import-status",
         "down",
         "embeddings-provision-login",
         "embeddings-run",
+        "env-init",
         "install-check",
         "license-check",
         "performance",
@@ -164,6 +167,7 @@ def test_live_network_and_stateful_recipes_stay_outside_check() -> None:
         "bash scripts/smoke-released-fixture.sh",
         "bash scripts/smoke-infra.sh",
         "bash scripts/smoke-released-stack.sh",
+        'uv run python scripts/discogs_import_status.py "$@"',
         "docker compose down",
     }
     assert expanded_check.isdisjoint(outside_check)

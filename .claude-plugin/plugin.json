@@ -1,0 +1,12 @@
+{
+  "name": "groovemap-homelab",
+  "description": "Integrate GrooveMap into an existing homelab: your agent reads the Docker host, proposes a plan, writes only docker-compose.override.yml and .env values, and leaves image digests, secrets and the staged first load to the repository's just recipes.",
+  "author": {
+    "name": "GrooveMap",
+    "url": "https://github.com/groovemap-music"
+  },
+  "homepage": "https://github.com/groovemap-music/deployment",
+  "repository": "https://github.com/groovemap-music/deployment",
+  "license": "MIT",
+  "keywords": ["groovemap", "homelab", "self-hosting", "docker-compose", "reverse-proxy"]
+}

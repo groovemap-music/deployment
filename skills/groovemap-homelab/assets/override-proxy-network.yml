@@ -1,0 +1,22 @@
+---
+# Example docker-compose.override.yml: a reverse proxy that runs in Docker and reaches its
+# backends by container name over a shared network (Caddy, nginx, Nginx Proxy Manager, SWAG,
+# cloudflared). Point the proxy at groovemap-explore:8006, groovemap-dashboard:8003 and
+# groovemap-grafana:3000 (references/reverse-proxy.md).
+# Replace proxy_network with the proxy's network as `docker network ls` names it.
+# Set WEB_BIND_ADDRESS=127.0.0.1 and APP_BASE_URL in .env.
+services:
+  explore:
+    networks:
+      proxy: {}
+  dashboard:
+    networks:
+      proxy: {}
+  grafana:
+    networks:
+      proxy: {}
+
+networks:
+  proxy:
+    external: true
+    name: proxy_network

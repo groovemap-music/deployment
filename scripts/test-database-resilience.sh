@@ -72,7 +72,7 @@ monitor_logs() {
   local duration=$2
 
   echo -e "\n${BLUE}📋 Monitoring ${service} logs for ${duration} seconds...${NC}"
-  timeout "$duration" docker compose logs -f "$service" 2>&1 | grep -E "(Circuit breaker|Retrying|connection|Connection|Failed|failed|established|resilient)" || true
+  timeout "$duration" docker compose --profile musicbrainz logs -f "$service" 2>&1 | grep -E "(Circuit breaker|Retrying|connection|Connection|Failed|failed|established|resilient)" || true
 }
 
 echo -e "\n${BLUE}🏥 Initial Health Check${NC}"
@@ -154,4 +154,4 @@ echo ""
 echo "For more detailed analysis, check individual service logs:"
 echo "  docker compose logs graphinator | grep -i circuit"
 echo "  docker compose logs tableinator | grep -i retry"
-echo "  docker compose logs extractor-discogs extractor-musicbrainz | grep -i connection"
+echo "  docker compose --profile musicbrainz logs extractor-discogs extractor-musicbrainz | grep -i connection"

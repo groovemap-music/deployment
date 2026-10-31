@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from tests.deploy.test_docker_compose_prod import _load_compose
+from tests.deploy.test_docker_compose_prod import _load_compose, default_port
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -130,7 +130,7 @@ class TestBackendServicesExist:
 
     def test_grafana_is_published_on_3000(self) -> None:
         ports = _base_compose()["services"]["grafana"]["ports"]
-        assert any(str(port).endswith("3000:3000") or str(port) == "3000:3000" for port in ports)
+        assert [default_port(port) for port in ports] == ["3000:3000"]
 
 
 class TestConfigFilesAreMountedReadOnly:
@@ -259,7 +259,7 @@ class TestVictoriaMetricsServer:
     def test_it_listens_on_8428(self) -> None:
         service = _base_compose()["services"]["victoria-metrics"]
         assert "-httpListenAddr=:8428" in service["command"]
-        assert "8428:8428" in [str(port) for port in service["ports"]]
+        assert "8428:8428" in [default_port(port) for port in service["ports"]]
 
     def test_the_healthcheck_probes_the_health_endpoint(self) -> None:
         """127.0.0.1, not localhost: the server binds IPv4 only and busybox
@@ -287,7 +287,7 @@ class TestVictoriaTracesServer:
     def test_it_listens_on_10428(self) -> None:
         service = _base_compose()["services"]["victoria-traces"]
         assert "-httpListenAddr=:10428" in service["command"]
-        assert "10428:10428" in [str(port) for port in service["ports"]]
+        assert "10428:10428" in [default_port(port) for port in service["ports"]]
 
     def test_the_healthcheck_runs_the_servers_own_binary(self) -> None:
         """The image is distroless — no shell, no wget, no curl — so the probe
@@ -335,14 +335,14 @@ class TestProdOverlayHardening:
 
     def test_neither_victoria_server_is_published_publicly_in_prod(self) -> None:
         services = _prod_compose()["services"]
-        assert services["victoria-metrics"]["ports"] == ["127.0.0.1:8428:8428"]
-        assert services["victoria-traces"]["ports"] == ["127.0.0.1:10428:10428"]
+        assert [default_port(p) for p in services["victoria-metrics"]["ports"]] == ["127.0.0.1:8428:8428"]
+        assert [default_port(p) for p in services["victoria-traces"]["ports"]] == ["127.0.0.1:10428:10428"]
 
     def test_the_loopback_binds_replace_rather_than_extend_the_base_publish(self) -> None:
         """Without !override compose MERGES port lists, and 0.0.0.0:8428 would
         survive alongside the loopback bind — the opposite of the intent."""
         overlay = (REPO_ROOT / "docker-compose.prod.yml").read_text()
-        for port in ("127.0.0.1:8428:8428", "127.0.0.1:10428:10428"):
+        for port in (":${VICTORIA_METRICS_HOST_PORT:-8428}:8428", ":${VICTORIA_TRACES_HOST_PORT:-10428}:10428"):
             index = overlay.index(port)
             assert "ports: !override" in overlay[index - 200 : index], port
 

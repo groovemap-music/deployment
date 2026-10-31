@@ -85,7 +85,7 @@ services:
     # tools reach /metrics/detailed, nothing on public interfaces does.
     # Compose merges this with the identical base entry.
     ports:
-      - "127.0.0.1:15692:15692"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_METRICS_HOST_PORT:-15692}:15692"
     volumes:
       - ./scripts/rabbitmq-entrypoint.sh:/scripts/rabbitmq-entrypoint.sh:ro
     secrets:
@@ -200,8 +200,9 @@ services:
       start_period: 60s
     environment:
       JAVA_TOOL_OPTIONS: '--enable-native-access=ALL-UNNAMED'
-      NEO4J_dbms_memory_transaction_total_max: 8G
-      # --- Memory: heap 8G + page cache 16G = ~24G (fits 25GB store in cache) ---
+      NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TRANSACTION_MEMORY_MAX:-8G}
+      # --- Memory: heap 8G + page cache 16G = ~24G (fits 25GB store in cache); the transaction
+      # cap must stay below the heap or it bounds nothing (`just deploy` sizes all four) ---
       NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_SIZE:-8g}
       NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_SIZE:-8g}
       NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE_SIZE:-16g}
@@ -256,7 +257,7 @@ services:
     # public interfaces. `!override` fully replaces (not merges) the base
     # file's "6379:6379" (0.0.0.0) publish.
     ports: !override
-      - "127.0.0.1:6379:6379"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VALKEY_HOST_PORT:-6379}:6379"
     secrets:
       - valkey_password
     # Base healthcheck ("valkey-cli ping" with no auth) would fail once
@@ -308,14 +309,14 @@ services:
   victoria-metrics:
     restart: always
     ports: !override
-      - "127.0.0.1:8428:8428"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VICTORIA_METRICS_HOST_PORT:-8428}:8428"
 
   # Same reasoning for the trace store: 10428 accepts unauthenticated span
   # ingest as well as queries, so it never faces the host's public interfaces.
   victoria-traces:
     restart: always
     ports: !override
-      - "127.0.0.1:10428:10428"
+      - "${INTERNAL_BIND_ADDRESS:-127.0.0.1}:${VICTORIA_TRACES_HOST_PORT:-10428}:10428"
 
   otel-collector:
     restart: always

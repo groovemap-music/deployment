@@ -10,6 +10,36 @@ and untracked.
 Current source is licensed under the [MIT License](LICENSE). Historical license
 states remain in retained Git history.
 
+## Run GrooveMap in your homelab
+
+GrooveMap is a self-hosted music knowledge graph built from the Discogs and MusicBrainz
+datasets. On a Docker host with about 16 GB of memory and 100 GB of free disk (200 GB
+recommended):
+
+```bash
+git clone https://github.com/groovemap-music/deployment.git
+cd deployment
+mise install
+just deploy
+```
+
+`just deploy` checks the host, creates `.env` and `secrets/`, starts the stack, waits for the
+Discogs import (hours to about two days), then starts MusicBrainz and prints your URLs. It is
+safe to interrupt and re-run. The images are `linux/amd64` only, and the operations console
+needs HTTPS in front of it to sign in.
+
+Prefer to have an AI agent fit GrooveMap into your reverse proxy, storage and ports? In
+Claude Code, run `/plugin marketplace add groovemap-music/deployment` and then
+`/plugin install groovemap-homelab@groovemap`. Other
+[agentskills.io](https://agentskills.io)-compatible agents can use `skills/groovemap-homelab`.
+
+Read the [homelab guide](docs/homelab.md) for sizing, ports, reverse proxies, upgrades and
+known limitations. Already running GrooveMap? See
+[Upgrading an existing deployment](docs/homelab.md#upgrading-an-existing-deployment): MusicBrainz
+is now behind a Compose profile.
+
+The rest of this README is for maintainers of this repository.
+
 ## Setup and validation
 
 ```bash

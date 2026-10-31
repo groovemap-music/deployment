@@ -74,7 +74,9 @@ See [Production Secrets](#production-secrets) below and [Docker Security](docker
 
 ### 4. Docker Compose Override
 
-Override non-secret settings in `docker-compose.yml` or `docker-compose.override.yml`:
+Put host-specific, non-secret settings in an untracked
+`docker-compose.override.yml` (`.gitignore` already lists it) rather than
+editing the tracked Compose files:
 
 ```yaml
 services:
@@ -83,6 +85,27 @@ services:
       - LOG_LEVEL=DEBUG
       - SESSION_CACHE_SECONDS=10
 ```
+
+Compose reads `docker-compose.override.yml` by itself only when no `-f` is
+given, so a plain `docker compose up` merges it into the base stack, but the
+production stack has to name it last:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml config
+```
+
+`just deploy` does this for you: when the file exists, it adds it to every
+Compose call and to the import gate. First it renders the stack with and
+without the override (`config --format json`, every profile included) and stops
+with exit code 3 if the override changes what only `.env` or deploy may
+change on a stack service: `image`, `build`, `platform`, `container_name` or
+`profiles`, or the `ports` or `network_mode` of PostgreSQL, Neo4j, RabbitMQ,
+Valkey, VictoriaMetrics or VictoriaTraces. Reverse-proxy labels and networks,
+volume locations, restart policies, the `groovemap` network's subnet and extra
+services of your own are fine. Move published ports with the
+[host port and bind address variables](#host-ports-and-bind-addresses) in
+`.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
+to address the same stack by hand.
 
 ## Core Settings
 
@@ -99,11 +122,44 @@ The following groups are interpolated by the executable stack:
 | `RABBITMQ_DLQ_MAX_LENGTH`, `RABBITMQ_DLQ_MAX_LENGTH_BYTES`, `RABBITMQ_DLQ_OVERFLOW` | Catalog dead-letter queue size-cap policy (defaults `50000`, `536870912`, `drop-head`); see [the admin guide](admin-guide.md#dlq-size-cap-policy) |
 | `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
-| `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT` | Production overlay sizing |
+| `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
 | `SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT`, `SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM`, `SMOKE_RELEASED_FIXTURE_SUBNET` | Isolated released-fixture-smoke settings only |
+
+### Host ports and bind addresses
+
+Every published host port is an interpolation input whose default is the stock
+mapping, so an unset variable renders the same Compose configuration as before.
+Only the host side moves; container ports and in-network addresses are fixed.
+If you move a port that a browser or link uses, update `APP_BASE_URL`,
+`GRAFANA_URL` and `TRACES_URL` to match.
+
+| Variable | Default | Publishes |
+| --- | --- | --- |
+| `GRAFANA_HOST_PORT` | `3000` | Grafana |
+| `API_HOST_PORT`, `API_HEALTH_HOST_PORT` | `8004`, `8005` | Catalog API, API health |
+| `DASHBOARD_HOST_PORT` | `8003` | Operations console |
+| `EXPLORE_HOST_PORT`, `EXPLORE_HEALTH_HOST_PORT` | `8006`, `8007` | Graph Explorer, Explorer health |
+| `POSTGRES_HOST_PORT` | `5433` | PostgreSQL (container port 5432) |
+| `NEO4J_HTTP_HOST_PORT`, `NEO4J_BOLT_HOST_PORT` | `7474`, `7687` | Neo4j browser, Bolt |
+| `RABBITMQ_AMQP_HOST_PORT`, `RABBITMQ_MANAGEMENT_HOST_PORT` | `5672`, `15672` | RabbitMQ AMQP, management UI |
+| `RABBITMQ_METRICS_HOST_PORT` | `15692` | RabbitMQ Prometheus metrics (loopback) |
+| `VALKEY_HOST_PORT` | `6379` | Valkey |
+| `VICTORIA_METRICS_HOST_PORT` | `8428` | VictoriaMetrics |
+| `VICTORIA_TRACES_HOST_PORT` | `10428` | VictoriaTraces |
+
+| Bind address | Default | Applies to |
+| --- | --- | --- |
+| `WEB_BIND_ADDRESS` | unset (all interfaces) | Grafana, API, dashboard, Explore |
+| `DATA_BIND_ADDRESS` | unset (all interfaces) | PostgreSQL, Neo4j, RabbitMQ AMQP and management; Valkey, VictoriaMetrics and VictoriaTraces in the base file |
+| `INTERNAL_BIND_ADDRESS` | `127.0.0.1` | RabbitMQ metrics in both files; Valkey, VictoriaMetrics and VictoriaTraces in the production overlay |
+
+Set `WEB_BIND_ADDRESS` or `DATA_BIND_ADDRESS` to an IP (for example
+`127.0.0.1`) to stop publishing on every interface. The production overlay
+still publishes PostgreSQL, Neo4j and RabbitMQ on all interfaces by default;
+set `DATA_BIND_ADDRESS` to narrow that.
 
 `ENCRYPTION_MASTER_KEY` and `RESEND_API_KEY` are not interpolated: the base file
 carries them only as commented-out entries, and the production overlay delivers
@@ -114,6 +170,45 @@ them as the `encryption_master_key` and `resend_api_key` file secrets.
 configuration. The sections below describe service runtime contracts; change a
 literal Compose value with a reviewed override file, not by assuming every
 source-level variable is an `.env` interpolation.
+
+### Neo4j sizing written by `just deploy`
+
+`just deploy` writes `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`,
+`NEO4J_MEMORY_LIMIT` and `NEO4J_TRANSACTION_MEMORY_MAX` into `.env` for the
+production overlay, sized from the
+memory Docker reports (`docker info` MemTotal, rounded up to whole GB, so a
+16 GB machine counts as 16). For total memory T in GB:
+
+- heap + page cache = half of T, at most 24 GB (the overlay's 8g + 16g)
+- heap = a third of that, at least 1 GB and at most 8 GB; page cache = the rest
+- limit = twice heap + page cache, but at most T − 4 GB, and always at least
+  1 GB above heap + page cache
+- transaction memory cap = 70% of the heap, rounded down to whole GB, at least
+  1 GB
+
+| Memory | Heap | Page cache | Limit | Transaction cap |
+| --- | --- | --- | --- | --- |
+| 16 GB | `2g` | `6g` | `12G` | `1g` |
+| 32 GB | `5g` | `11g` | `28G` | `3g` |
+| 64 GB or more | `8g` | `16g` | `48G` | `5g` |
+
+From 64 GB the heap, page cache and limit are the overlay's own defaults. The
+transaction cap is not: the overlay's `NEO4J_TRANSACTION_MEMORY_MAX` default
+of 8G equals its 8g heap. Neo4j tracks transaction memory inside the heap, so a
+cap that is not below the heap bounds nothing, and a large transaction can
+exhaust the heap and stop the JVM (the overlay sets `ExitOnOutOfMemoryError`).
+Keeping the cap at 70% leaves the rest of the heap for Neo4j itself, so such a
+transaction fails on its own instead. Only a 1 GB heap, below the production
+minimum and reached only with `--force`, gets a cap as large as the heap.
+
+It writes a value only when nobody has chosen one: the variable is absent or
+empty, or it is still exactly what `.env.example` ships. The template's
+`NEO4J_HEAP_SIZE=2G` counts as unset, because left alone it would hold the
+production heap at 2 GB beside a 16 GB page cache. Deploy marks what it wrote
+with a comment and never rewrites any of it, so edit the values freely
+afterwards. If you set the heap yourself and leave the transaction cap unset,
+deploy derives the cap from your heap. The base stack (`just deploy --dev`)
+fixes Neo4j's memory in `docker-compose.yml`, so nothing is written there.
 
 ### Identity ledger refresh
 
@@ -1248,6 +1343,7 @@ RESEND_SENDER_NAME=GrooveMap
 NEO4J_HEAP_SIZE=8g
 NEO4J_PAGECACHE_SIZE=16g
 NEO4J_MEMORY_LIMIT=48G
+NEO4J_TRANSACTION_MEMORY_MAX=8G
 ```
 
 Hosts, data paths, log levels, and consumer timings are literal Compose values,

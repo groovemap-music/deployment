@@ -56,6 +56,20 @@ config-prod:
 secrets-bootstrap:
     bash scripts/create-secrets.sh
 
+# The one-command install for a homelab: checks the host, writes .env and secrets/, sizes Neo4j
+# for this machine, starts the stack without MusicBrainz, waits for the Discogs import, then
+# enables the musicbrainz profile. Idempotent: re-run to resume or to bring the stack up to date.
+# Starts containers, so it is operator-run only and never part of `check`. `just deploy --help`.
+[positional-arguments]
+deploy *args:
+    bash scripts/deploy.sh "$@"
+
+# Writes .env from .env.example, filling every image digest from the reviewed release set in
+# scripts/check-images.py. Refuses to replace an existing .env unless --force is given, which
+# keeps the old file as a timestamped backup.
+env-init *args:
+    uv run python scripts/env-init.py {{args}}
+
 # One-time (per stack), idempotent: grants the embedding pipeline's login
 # membership in database-schema's embedding_pipeline role. Run once that role
 # exists (PostgreSQL 19 + pgvector — see docs/maintenance.md#monthly-embedding-refresh),
@@ -100,6 +114,14 @@ smoke-infra:
 # repository-owned image. Runs only a disposable, non-published stack.
 smoke-released:
     bash scripts/smoke-released-stack.sh
+
+# Read-only. Reports whether the Discogs import has finished from the durable completion
+# signals in PostgreSQL, Neo4j, and RabbitMQ: exit 0 complete, 3 in progress, 2 cannot
+# determine. --prod addresses the production overlay; --wait [--interval N] polls.
+# See docs/maintenance.md#post-import-identity-maintenance.
+[positional-arguments]
+discogs-import-status *args:
+    uv run python scripts/discogs_import_status.py "$@"
 
 down:
     docker compose down
