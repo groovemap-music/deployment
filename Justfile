@@ -107,5 +107,13 @@ smoke-infra:
 smoke-released:
     bash scripts/smoke-released-stack.sh
 
+# Read-only. Reports whether the Discogs import has finished from the durable completion
+# signals in PostgreSQL, Neo4j, and RabbitMQ: exit 0 complete, 3 in progress, 2 cannot
+# determine. --prod addresses the production overlay; --wait [--interval N] polls.
+# See docs/maintenance.md#post-import-identity-maintenance.
+[positional-arguments]
+discogs-import-status *args:
+    uv run python scripts/discogs_import_status.py "$@"
+
 down:
     docker compose down

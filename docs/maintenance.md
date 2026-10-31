@@ -217,12 +217,37 @@ these follow.
 "Extraction finished" is not "import finished": the extractor publishes to RabbitMQ
 asynchronously, so the Discogs consumers (`graphinator`, `tableinator`) have to drain too. The
 admin panel's extraction history only records admin-*triggered* runs, so it does not cover this
-automatic first run — use the RabbitMQ management UI at <http://localhost:15672> (see
-[Queue monitoring](monitoring.md#queue-monitoring)) or the admin panel's Queue Trends tab
-instead, and confirm the Discogs consumer queues
-(`groovemap-discogs-graphinator-*` and `groovemap-discogs-tableinator-*`) are at zero ready and
-zero unacknowledged messages with their consumers still attached, not merely idle because
-nothing is running. Only then deploy the MusicBrainz ingestion path:
+automatic first run. Ask the stack instead (read-only; it only runs queries through
+`docker compose exec`, so the host needs no database clients):
+
+```bash
+just discogs-import-status --prod                # one report; exit 0 complete, 3 in progress, 2 cannot determine
+just discogs-import-status --prod --wait         # poll every 30s (--interval N) until complete
+```
+
+Drop `--prod` for a local stack; `-f FILE` (repeatable), `--env-file`, and `-p/--project-name`
+pass through to Compose, `--timeout N` bounds `--wait`, and `--json` prints the final report
+for a script. Interrupting `--wait` changes nothing, so it is safe to re-run. It reports
+complete only when all of these hold for the newest Discogs dump version:
+
+- PostgreSQL `loader_extraction_latch` (`loader = 'discogs'`) has all four `signals`
+  (`artists`, `labels`, `masters`, `releases`) **and** `refreshed_at` set. `discogs-sql-loader`
+  stamps `refreshed_at` in the transaction that commits its derived-relation pass, so four
+  signals without it means that pass is still running or retrying (the report shows the
+  `loader_derived_refresh_job` state and last error when there is one).
+- Neo4j's `(:ExtractionCompletion {version})` for that same version has all four signals, and
+  the graph has not started a newer version than PostgreSQL has.
+- The eight `groovemap-discogs-graphinator-*` and `groovemap-discogs-tableinator-*` queues are
+  at zero ready and zero unacknowledged messages. Attached consumers are *not* required: both
+  consumers cancel their consumers `CONSUMER_CANCEL_DELAY` (300s) after finishing and re-check
+  hourly, so a finished import normally shows none. A backlog with no consumer attached is
+  called out. Messages in the `.dlq` queues are printed as warnings; they do not gate.
+
+A previous dump's complete rows never count for the current one. A stopped service, a missing
+relation or queue, or output the script cannot read is exit 2, never 0. The RabbitMQ
+management UI at <http://localhost:15672> (see [Queue monitoring](monitoring.md#queue-monitoring))
+and the admin panel's Queue Trends tab show the same queues by hand. Once it reports complete,
+deploy the MusicBrainz ingestion path:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile musicbrainz up -d --wait
@@ -230,14 +255,19 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile musicb
 
 To keep the path enabled on later `up` runs, set `COMPOSE_PROFILES=musicbrainz` in `.env`.
 
+The graph enricher's post-import maintenance (stub cleanup and aggregate stats) runs detached
+after its fourth signal and records no durable completion marker, so the gate cannot see it;
+look for `Post-import maintenance complete` in the `graphinator` logs if that matters for the
+step you are about to take.
+
 **Later cycles.** `extractor-discogs` and `extractor-musicbrainz` each then run on their own
 periodic schedule (`PERIODIC_CHECK_DAYS`: 5 days and 3 days) with the same no-ordering
 behavior, so nothing in the stack today keeps a later Discogs cycle ahead of the MusicBrainz
 one it should precede — that is a known gap, not something this procedure enforces. What
 follows instead heals the resulting drift after the fact: run the re-attachment job below once
 the Discogs import for a cycle has completed and its consumer queues have drained, using the
-same RabbitMQ signal as above (or, for an admin-triggered re-run, the extraction history row
-reaching `completed`).
+same `just discogs-import-status` check as above (or, for an admin-triggered re-run, the
+extraction history row reaching `completed`).
 
 The re-attachment job itself is owned by `catalog-api`
 ([ADR 0014 section 8](https://github.com/groovemap-music/design/blob/main/docs/adr/0014-cross-catalog-edition-candidates.md#8-split-linked-items-catalog-re-attachment-outside-the-matcher),
