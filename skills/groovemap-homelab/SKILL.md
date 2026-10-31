@@ -66,8 +66,11 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
 
 **Existing deployments keep MusicBrainz.** After the first load, `just deploy` writes
 `COMPOSE_PROFILES=musicbrainz` to `.env`, so every later `docker compose up` keeps the
-MusicBrainz services. If a host already has GrooveMap's MusicBrainz containers or volumes,
-`just deploy` turns the profile back on without waiting. Never remove `musicbrainz` from
+MusicBrainz services. `just deploy` turns the profile back on without waiting only when MusicBrainz itself left
+evidence: a MusicBrainz container, a volume that only `musicbrainz`-profile services mount
+(computed from the rendered config; `musicbrainz_data` does not count, because the API mounts
+it and phase 1 creates it), or a `loader_extraction_latch` row with `loader = 'musicbrainz'`.
+If that cannot be read it does not guess; it goes through the Discogs gate. Never remove `musicbrainz` from
 `COMPOSE_PROFILES` on a running deployment.
 
 ## Workflow

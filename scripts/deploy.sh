@@ -33,7 +33,6 @@ MIN_PYTHON="3.10"
 DEFAULT_INTERVAL=300
 OVERRIDE=docker-compose.override.yml
 MUSICBRAINZ_SERVICES=(extractor-musicbrainz brainzgraphinator brainztableinator)
-MUSICBRAINZ_VOLUMES=(musicbrainz_data extractor_musicbrainz_logs brainzgraphinator_logs brainztableinator_logs)
 
 usage() {
   cat <<EOF
@@ -227,20 +226,25 @@ if [[ -f "$OVERRIDE" ]]; then
   fi
 fi
 
+# One render of the whole stack (every profile, override included) serves the disk check and the
+# search for MusicBrainz-only volumes below. If Compose cannot render, both fall back safely.
+RENDERED="$(mktemp)"
+trap 'rm -f "$RENDERED"' EXIT
+render_ok=0
+"${compose[@]}" --profile '*' config --format json >"$RENDERED" && render_ok=1
+
 # Free space is judged on the disk behind each data volume, so it waits for the render that
 # includes the override (and .env, which Compose needs to render at all). If Compose cannot
 # render, every volume is assumed to be on Docker's data root.
 disk_check() {
-  local rendered args=() status=0
-  rendered="$(mktemp)"
+  local args=() status=0
   ((force)) && args+=(--force)
-  if "${compose[@]}" --profile '*' config --format json >"$rendered"; then
-    helper disk-check "$rendered" ${args[@]+"${args[@]}"} || status=$?
+  if ((render_ok)); then
+    helper disk-check "$RENDERED" ${args[@]+"${args[@]}"} || status=$?
   else
     echo "deploy: docker compose could not render the stack; assuming the data is on Docker's data root" >&2
     helper disk-check ${args[@]+"${args[@]}"} || status=$?
   fi
-  rm -f "$rendered"
   return "$status"
 }
 
@@ -256,28 +260,36 @@ fi
 
 # --- 3. where are we? ------------------------------------------------------------------
 
+stack_running() { [[ -n "$(docker ps -q --filter 'name=^groovemap-postgres$')" ]]; }
+
+# Evidence that MusicBrainz already ran here is MusicBrainz-exclusive only: its containers, a volume
+# no other service mounts, or a loader_extraction_latch row for it. Phase 1 itself creates
+# musicbrainz_data (the API mounts it read-only), so that volume proves nothing. When the evidence
+# cannot be read, this says no and the Discogs gate decides.
 musicbrainz_present() {
-  local filters=() service volume name volumes
+  local filters=() service name volumes exclusive key
   for service in "${MUSICBRAINZ_SERVICES[@]}"; do
     filters+=(--filter "name=^groovemap-${service}$")
   done
   [[ -n "$(docker ps -a -q "${filters[@]}")" ]] && return 0
-  name="$(helper project-name ${project:+--project-name "$project"})"
-  volumes="$(docker volume ls --filter "label=com.docker.compose.project=$name" --format '{{.Label "com.docker.compose.volume"}}')"
-  for volume in "${MUSICBRAINZ_VOLUMES[@]}"; do
-    grep -qx "$volume" <<<"$volumes" && return 0
-  done
+  if ((render_ok)) && exclusive="$(helper musicbrainz-volumes "$RENDERED")" && [[ -n "$exclusive" ]]; then
+    name="$(helper project-name ${project:+--project-name "$project"})"
+    volumes="$(docker volume ls --filter "label=com.docker.compose.project=$name" --format '{{.Label "com.docker.compose.volume"}}')"
+    while IFS= read -r key; do
+      grep -qx "$key" <<<"$volumes" && return 0
+    done <<<"$exclusive"
+  fi
+  stack_running && helper musicbrainz-latch -- "${compose[@]}" && return 0
   return 1
 }
 
-stack_running() { [[ -n "$(docker ps -q --filter 'name=^groovemap-postgres$')" ]]; }
 
 if helper profile-enabled; then
   phase=reconcile
   reason="MusicBrainz is already enabled in .env (COMPOSE_PROFILES), so this run only brings the stack up to date."
 elif musicbrainz_present; then
   phase=enable
-  reason="This host already has GrooveMap's MusicBrainz containers or volumes, so MusicBrainz stays on."
+  reason="This host already ran MusicBrainz (its containers, MusicBrainz-only volumes or its loader latch row), so MusicBrainz stays on."
 elif stack_running && "${gate[@]}" >/dev/null 2>&1; then
   phase=enable
   reason="The Discogs import has already finished, so MusicBrainz goes next."
