@@ -1116,11 +1116,14 @@ itself sees. Only an explicit `SESSION_COOKIE_SECURE=false` turns Secure off.
   Compose render. With the opt-in the session cookie crosses the network unencrypted, so anyone
   on the path can read it: use it only where you trust every device on the network.
 - **What `just deploy` does:** after the stack is up and before it prints the endpoints, a
-  production run whose `APP_BASE_URL` is plain `http://` on a host other than localhost (or
-  that has no `APP_BASE_URL` and publishes the console on a non-loopback address) explains
-  this and the two options. On a terminal it offers to set the opt-in and recreate only
-  `dashboard`, defaulting to no; otherwise it only prints the guidance. It is silent for
-  `https://` URLs, with the opt-in set, and for `--dev`.
+  production run explains this and the two options when `APP_BASE_URL` (the TLS heuristic) or
+  the console's own published URL (the one in the endpoints block, `DASHBOARD_HOST_PORT`) is
+  plain `http://` on a host other than localhost. It names the console URL, for example
+  "GrooveMap is configured for plain http (APP_BASE_URL=http://nas:8006), so the console at
+  http://nas:8003 is reached without TLS". With a TLS proxy, set `https://` in `APP_BASE_URL`
+  and bind the raw ports to `127.0.0.1` (`WEB_BIND_ADDRESS`) and it stays quiet. On a terminal
+  it offers to set the opt-in and recreate only `dashboard`, defaulting to no; otherwise it only
+  prints the guidance. It is also silent with the opt-in set and for `--dev`.
 
 The TLS endpoint in front of the production console must:
 

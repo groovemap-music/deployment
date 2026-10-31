@@ -857,24 +857,32 @@ def insecure_console_allowed(env_values: Mapping[str, str], environ: Mapping[str
     return effective(INSECURE_CONSOLE_VARIABLE, env_values, environ) == "true"
 
 
-def console_needs_https(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str], hostname: str) -> str | None:
-    """The plain-http origin the console will be reached on when its Secure cookie will be dropped, else None."""
+def console_needs_https(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str], hostname: str) -> tuple[str, str] | None:
+    """(console URL, APP_BASE_URL) when the console's Secure cookie will be dropped, else None.
+
+    Either the configured public origin (APP_BASE_URL) or the console's own published URL
+    being plain http on a non-loopback host triggers it, unless the opt-in is set. The console
+    URL is the one the endpoints block prints.
+    """
     if mode != "prod" or insecure_console_allowed(env_values, environ):
         return None
-    base_url = effective("APP_BASE_URL", env_values, environ)
-    if base_url:
-        return base_url if is_plain_http_remote(base_url) else None
-    # No public origin configured: the console is on its own published port, over http.
     console = next(url for what, url, _ in endpoints(mode, env_values, environ, hostname) if what == "Operations console")
-    return console if is_plain_http_remote(console) else None
+    base_url = effective("APP_BASE_URL", env_values, environ)
+    if is_plain_http_remote(base_url) or is_plain_http_remote(console):
+        return console, base_url
+    return None
 
 
-def console_https_notice(origin: str, command: str) -> str:
+def console_https_notice(console: str, base_url: str, command: str) -> str:
+    if is_plain_http_remote(base_url):
+        reason = f"GrooveMap is configured for plain http (APP_BASE_URL={base_url}), so the console at {console}"
+    else:
+        reason = f"The console at {console} is published over plain http, so it"
     return "\n".join(
         [
-            f"    The console is reached over plain http ({origin}). Its session cookie is Secure, and a",
-            "    browser drops a Secure cookie on http away from localhost, so signing in to the",
-            "    console will silently return to the login form.",
+            f"    {reason}",
+            "    is reached without TLS. Its session cookie is Secure, and a browser drops a Secure",
+            "    cookie on http away from localhost, so signing in will silently return to the login form.",
             "",
             "    Pick one:",
             "      1. Recommended: put a TLS reverse proxy in front of the console and set APP_BASE_URL to",
@@ -901,11 +909,11 @@ def console_http(
     Returns CONSOLE_RECREATE when .env was changed and `dashboard` has to be recreated, else 0.
     """
     env_values = read_env(env_path)
-    origin = console_needs_https(mode, env_values, environ, hostname)
-    if origin is None:
+    found = console_needs_https(mode, env_values, environ, hostname)
+    if found is None:
         return 0
     print("\n==> Console sign-in")
-    print(console_https_notice(origin, recreate_command))
+    print(console_https_notice(*found, recreate_command))
     if not interactive:
         return 0
     if INSECURE_CONSOLE_VARIABLE in environ:

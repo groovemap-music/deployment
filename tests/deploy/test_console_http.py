@@ -92,19 +92,29 @@ def test_plain_http_on_a_remote_host(url: str, expected: bool) -> None:
 
 def test_the_notice_applies_to_production_over_plain_http_until_opted_in() -> None:
     needs = helpers.console_needs_https
+    loopback = {"WEB_BIND_ADDRESS": "127.0.0.1"}
     lan = {"APP_BASE_URL": "http://nas:8006"}
-    assert needs("prod", lan, {}, "nas") == "http://nas:8006"
+    assert needs("prod", lan, {}, "nas") == ("http://nas:8003", "http://nas:8006")
     assert needs("dev", lan, {}, "nas") is None
-    assert needs("prod", {"APP_BASE_URL": "https://groovemap.example.com"}, {}, "nas") is None
-    assert needs("prod", {"APP_BASE_URL": "http://localhost:8006"}, {}, "nas") is None
     assert needs("prod", lan | {OPT_IN: "true"}, {}, "nas") is None
-    assert needs("prod", lan | {OPT_IN: "yes"}, {}, "nas") == "http://nas:8006"
+    assert needs("prod", lan | {OPT_IN: "yes"}, {}, "nas") == ("http://nas:8003", "http://nas:8006")
     assert needs("prod", lan, {OPT_IN: "true"}, "nas") is None
+    # A TLS proxy with the raw ports kept on loopback is fine; a loopback-only stack too.
+    assert needs("prod", loopback | {"APP_BASE_URL": "https://groovemap.example.com"}, {}, "nas") is None
+    assert needs("prod", loopback | {"APP_BASE_URL": "http://localhost:8006"}, {}, "nas") is None
+    assert needs("prod", loopback, {}, "nas") is None
 
 
-def test_without_a_base_url_the_console_port_itself_is_judged() -> None:
-    assert helpers.console_needs_https("prod", {}, {}, "nas") == "http://nas:8003"
-    assert helpers.console_needs_https("prod", {"WEB_BIND_ADDRESS": "127.0.0.1"}, {}, "nas") is None
+def test_either_the_base_url_or_the_published_console_triggers_it() -> None:
+    needs = helpers.console_needs_https
+    # The public origin is plain http even though the console port is on loopback.
+    assert needs("prod", {"WEB_BIND_ADDRESS": "127.0.0.1", "APP_BASE_URL": "http://nas:8006"}, {}, "nas") == (
+        "http://127.0.0.1:8003",
+        "http://nas:8006",
+    )
+    # The console port is on the LAN even though APP_BASE_URL is https (or unset).
+    assert needs("prod", {"APP_BASE_URL": "https://groovemap.example.com"}, {}, "nas") == ("http://nas:8003", "https://groovemap.example.com")
+    assert needs("prod", {}, {}, "nas") == ("http://nas:8003", "")
 
 
 # --- the offer -------------------------------------------------------------------------
@@ -138,7 +148,7 @@ def test_the_notice_names_both_options_and_the_proxy_docs(tmp_path: Path, capsys
     out = capsys.readouterr().out
     assert status == 0
     assert env == "APP_BASE_URL=http://nas:8006\n"
-    assert "http://nas:8006" in out
+    assert "configured for plain http (APP_BASE_URL=http://nas:8006), so the console at http://nas:8003" in out
     assert "Recommended" in out
     assert "skills/groovemap-homelab/references/reverse-proxy.md" in out
     assert "docs/homelab.md" in out
@@ -167,7 +177,7 @@ def test_a_shell_value_outranks_env_so_nothing_is_written(tmp_path: Path) -> Non
 
 
 def test_nothing_is_said_when_the_console_is_fine(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert _console_http(tmp_path, "y", "APP_BASE_URL=https://groovemap.example.com\n")[0] == 0
+    assert _console_http(tmp_path, "y", "WEB_BIND_ADDRESS=127.0.0.1\nAPP_BASE_URL=https://groovemap.example.com\n")[0] == 0
     assert _console_http(tmp_path, "y", f"APP_BASE_URL=http://nas:8006\n{OPT_IN}=true\n")[0] == 0
     assert capsys.readouterr().out == ""
 
@@ -187,13 +197,15 @@ def test_deploy_explains_before_printing_the_endpoints_and_changes_nothing(deplo
     out = result.stdout
     assert out.index("Console sign-in") < out.index("Your GrooveMap")
     assert "reverse-proxy.md" in out
+    assert "so the console at http://" in out
+    assert ":8006" not in out.split("Console sign-in")[1].split("Your GrooveMap")[0].replace("APP_BASE_URL=http://nas:8006", "")
     assert OPT_IN not in deploy.env_values
     assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
 
 
 def test_deploy_is_quiet_with_https_the_opt_in_or_the_dev_stack(deploy: Deploy) -> None:
     for text, args in (
-        ("APP_BASE_URL=https://groovemap.example.com\n", ("--no-wait",)),
+        ("WEB_BIND_ADDRESS=127.0.0.1\nAPP_BASE_URL=https://groovemap.example.com\n", ("--no-wait",)),
         (f"APP_BASE_URL=http://nas:8006\n{OPT_IN}=true\n", ("--no-wait",)),
         ("APP_BASE_URL=http://nas:8006\n", ("--no-wait", "--dev")),
     ):
