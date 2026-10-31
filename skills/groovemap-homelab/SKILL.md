@@ -322,8 +322,9 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    `EXPLORE_HEALTH_HOST_PORT` or `API_HEALTH_HOST_PORT` moved them. Check each proxied URL
    with `curl -sSI`. Fix proxy errors now, while the import runs.
 2. **URLs:** give the user their URLs: the proxied hostnames when a proxy is used, otherwise
-   the endpoints `just deploy` printed. Grafana's admin password is in
-   `secrets/grafana_admin_password.txt`. Tell the user where it is, but don't print it.
+   the endpoints `just deploy` printed. With local monitoring Grafana's admin password is in
+   `secrets/grafana_admin_password.txt`; tell the user where it is, but don't print it. With
+   shared monitoring there is no local Grafana and no such file: they sign in to their own Grafana.
 3. **First admin:** the console signs in admins created with `catalog-admin-setup`, which asks
    for a password on a terminal. Ask the user to run it in their own terminal on the host:
    `docker exec -it groovemap-api catalog-admin-setup --email you@example.com`. Sign-in

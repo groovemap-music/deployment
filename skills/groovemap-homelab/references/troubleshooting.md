@@ -47,6 +47,30 @@ days to rebuild.
   (`schema-init` must complete before the loaders and the API), so look at the first service
   that failed.
 
+## Existing stores, shared monitoring and one-shots
+
+- **`store-check-postgres` or `store-check-valkey` cannot resolve the store host:** that check
+  container is not on the network the store lives on. The message names the store, host, service
+  and networks. Attach every client of the store, the check included, as in
+  `assets/override-external-store-network.yml` ([override.md](override.md#attaching-to-an-existing-stores-network)).
+  A refusal by the server itself (authentication, TLS, version, pooling) is not a network problem.
+- **A service crash-loops with `permission denied` on `/run/secrets/...`:** it is not running as
+  the owner of the 0600 secret files. Do not loosen file modes or add a `user:` in the override;
+  find which secret was written by another account (`ls -ln secrets/`) and fix its owner.
+- **`up --wait` fails on a service that exited 0:** a one-shot (such as `rabbitmq-dlq-policy-init`)
+  without a dependent using `service_completed_successfully`. The repository's Compose files have
+  them; an override must not remove them.
+- **The console shows UNREACHABLE for shared monitoring services or the PostgreSQL exporter:** check
+  the `SHARED_*` values and `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` in `.env` and that `dashboard`
+  and `otel-collector` are attached to the monitoring network
+  (`assets/override-shared-monitoring-network.yml`).
+- **An operator recipe says `uv: command not found`:** it should not; operator recipes run on
+  python3 3.10 or newer. Update the checkout. Only maintainer recipes (`just check`) need `uv`.
+- **The gate stays in progress after every queue drained:** the images must be the reviewed
+  digests (`just env-init`); discogs-sql-loader before v0.4.0 never wrote the completion latch.
+- **`just status`** (read-only) shows per service state, the gate, the recorded decisions and any
+  image that is not the reviewed digest.
+
 ## Through the proxy
 
 - **502, 504 or "Bad gateway" from Traefik:** `traefik.docker.network` is missing or names the

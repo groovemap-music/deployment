@@ -98,7 +98,7 @@ flowchart LR
 ## Lux regressions: failure to regression test
 
 The operator's lux installation (deployment `6af13ec`, mixed stores, shared monitoring) hit eight
-failures that mocks and render checks had missed; the Linux smoke then found a ninth and tenth (rows 9 and 10). Each now has a fix, unit and render tests that
+failures that mocks and render checks had missed; the Linux smoke then found a tenth (row 10). Each now has a fix, unit and render tests that
 run in `just check`, and a disposable Linux Docker smoke scenario with a negative case, so a
 regression fails in CI rather than on a homelab host. The smoke column is filled from the Linux
 smoke's final report; entries marked `TODO(smoke)` are pending. See
