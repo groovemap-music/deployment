@@ -81,6 +81,13 @@ for `linux/amd64` only; on an arm64 host they run under emulation, much more
 slowly, and deploy asks before going ahead (Linux needs amd64 binfmt emulation
 registered first).
 
+To see where an install stands without changing anything, run `just status` (or
+`python3 scripts/status.py`): services, the Discogs gate, the store and monitoring decisions
+recorded in `.env`, and the reviewed image releases. It exits 0 when it could determine the state
+and 2 when it could not. To reuse an existing PostgreSQL or Valkey, or an existing Grafana and
+VictoriaMetrics, see [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)
+and [Shared monitoring](homelab.md#shared-monitoring).
+
 `just deploy` starts containers, so `just check` and CI never run it. The steps
 below are the manual path it automates.
 

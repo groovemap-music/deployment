@@ -1031,7 +1031,7 @@ DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — HKDF master encryption key (derives OAuth + TOTP encryption keys)
 # Required for TOTP 2FA. Without it, OAuth tokens are stored unencrypted and 2FA is disabled.
-# Generate with: uv run python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+# Generate with: python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # In production, supply via ENCRYPTION_MASTER_KEY_FILE (Docker secret)
 ENCRYPTION_MASTER_KEY="your-master-key-here"
 

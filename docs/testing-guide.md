@@ -95,6 +95,33 @@ flowchart LR
 | Database schema behavior and initializer image | [`database-schema`](https://github.com/groovemap-music/database-schema) |
 | Shared CI behavior | [`.github`](https://github.com/groovemap-music/.github) |
 
+## Lux regressions: failure to regression test
+
+The operator's lux installation (deployment `6af13ec`, mixed stores, shared monitoring) hit eight
+failures that mocks and render checks had missed. Each now has a fix, unit and render tests that
+run in `just check`, and a disposable Linux Docker smoke scenario with a negative case, so a
+regression fails in CI rather than on a homelab host. The smoke column is filled from the Linux
+smoke's final report; entries marked `TODO(smoke)` are pending. See
+[Lux upgrade](homelab.md#lux-upgrade-from-6af13ec160fe7d) for the operator's view.
+
+| # | Failure on lux | Fix | Unit and render tests | Linux smoke scenario and negative case |
+| --- | --- | --- | --- | --- |
+| 1 | `store-check-postgres` could not resolve the shared database host: the override attached the app clients but not the one-shot checks | The network example attaches every store client and check; a failing check names the store, host, service and networks | `test_external_stores.py::test_the_network_example_attaches_exactly_the_clients_of_each_store`, `::test_the_override_check_accepts_the_network_example_and_every_client_joins_both_networks`, `::test_the_failure_message_names_the_store_host_service_and_networks`, `::test_a_check_container_missing_the_stores_network_fails_closed_and_says_how_to_fix_it`, `::test_only_a_resolve_or_connect_failure_gets_the_network_hint` | TODO(smoke): scenario; negative case |
+| 2 | Compose refused `configs.content` for the read-only collector; the healthcheck must validate the config the command loads | The collector reads its config through the env provider; command and healthcheck use the same source | `test_compose_one_shots_and_collector.py::test_collector_healthcheck_validates_exactly_the_config_the_command_loads`, `test_shared_monitoring.py::test_the_pinned_collector_validates_the_local_and_shared_configs`, `::test_the_pinned_collector_healthcheck_fails_an_invalid_shared_endpoint` | TODO(smoke): scenario; negative case |
+| 3 | The derived Valkey exporter password was written as UID 1000 mode 0600; the exporter runs as UID 59000 and crash-looped | Every secret-reading service runs as the owner of the 0600 secrets (`${UID}:${GID}`), including Grafana and the exporters | `test_secret_identities.py::test_every_secret_reading_service_is_inventoried_and_can_read_the_secrets`, `::test_no_secret_is_remapped_or_made_readable_to_others` | TODO(smoke): scenario; negative case |
+| 4 | `up --wait` failed because `rabbitmq-dlq-policy-init` exited 0 with no `service_completed_successfully` dependent | The catalog queue services depend on the initializer completing successfully | `test_compose_one_shots_and_collector.py::test_catalog_queue_services_wait_for_the_dlq_policy_to_complete`, `::test_every_one_shot_has_a_completed_successfully_dependent` | TODO(smoke): scenario; negative case |
+| 5 | The console hardcoded `postgres-exporter:9187`; shared monitoring was undocumented and untested; Viewer-token guidance used an unused local admin password | Shared monitoring is an overlay (`GROOVEMAP_MONITORING=shared`) with configurable console targets and `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | `test_shared_monitoring.py::test_shared_monitoring_points_the_console_at_the_shared_services`, `::test_an_external_postgres_exporter_is_shared_or_disabled_never_unreachable`, `::test_no_active_service_depends_on_an_omitted_one`, `::test_the_endpoints_point_at_the_shared_grafana_and_never_at_a_local_admin_password`, `::test_shared_monitoring_guidance_never_suggests_a_local_grafana_admin_password` | TODO(smoke): scenario; negative case |
+| 6 | No `uv` on the host: `just discogs-import-status --prod -f docker-compose.override.yml` failed; exit codes 0/3/2 must survive | Operator recipes run through `scripts/operator-python.sh`: uv when present, else `python3` 3.10 or newer | `test_operator_recipes_without_uv.py::test_import_status_exit_codes_pass_through_without_uv`, `::test_every_operator_recipe_uses_the_runner`, `::test_runner_rejects_an_interpreter_older_than_3_10`, `test_python310_compat.py` | TODO(smoke): scenario; negative case |
+| 7 | Production rendering required `SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` with the embeddings job inactive | The values are required only by the job's wrapper, not by rendering | `test_compose_one_shots_and_collector.py::test_the_stack_renders_without_inactive_job_inputs`, `::test_the_embeddings_wrapper_refuses_to_run_without_real_values` | TODO(smoke): scenario; negative case |
+| 8 | Reusing PostgreSQL did not add the database to the backup allowlist; generated secrets had no recovery path | Preflight and docs check backup coverage; `just recovery-manifest` lists what to encrypt; bootstrap refuses to regenerate a secret that existed | `test_recovery_manifest.py::test_manifest_lists_what_to_capture_and_prints_no_secret_value`, `::test_verify_rejects_a_removed_secret`, `::test_deploy_refuses_a_bootstrap_that_would_regenerate_a_secret`, `::test_deploy_keeps_restored_secrets` | TODO(smoke): scenario; negative case |
+| + | Explore theme release (`graph-explorer` v0.3.0) and the console's configurable targets | Reviewed digests promoted; the console reads its probe targets from the environment | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_status.py::test_reviewed_images_show_their_release_and_oci_labels`, `test_shared_monitoring.py::test_the_local_stack_sets_no_console_target_mode` | TODO(smoke): scenario; negative case |
+
+Operator-facing summaries (`just status`, preflight, the decisions recorded in `.env`) are covered
+by `test_status.py` and `test_deploy.py::test_preflight_reports_the_decisions_recorded_in_env`;
+`test_external_stores.py` covers the display and the validated store settings agreeing on one
+source (`::test_an_empty_shell_variable_falls_through_to_env_for_the_display_and_for_read_stores`,
+`::test_an_invalid_mode_is_refused_not_displayed`).
+
 ## Validation-only image references
 
 `config/validation.env` contains syntactically valid, non-published dummy

@@ -1768,3 +1768,25 @@ def test_a_refusal_by_the_server_itself_gets_no_network_hint(external: ExternalD
     assert result.returncode == 3
     assert "refused the external store" in result.stderr
     assert "did not resolve" not in result.stderr
+
+
+# --- recorded decisions share one source with read_stores ------------------------------------
+
+
+def test_an_empty_shell_variable_falls_through_to_env_for_the_display_and_for_read_stores() -> None:
+    env_values = {"GROOVEMAP_POSTGRES": "external"}
+    environ = {"GROOVEMAP_POSTGRES": " "}
+    assert stores.read_stores(env_values, environ).postgres == "external"
+    assert ("PostgreSQL", "external", ".env") in stores.recorded_decisions(env_values, environ)
+
+
+def test_a_shell_value_wins_over_env_in_both() -> None:
+    env_values = {"GROOVEMAP_VALKEY": "local"}
+    environ = {"GROOVEMAP_VALKEY": "external"}
+    assert stores.read_stores(env_values, environ).valkey == "external"
+    assert ("Valkey", "external", "the shell") in stores.recorded_decisions(env_values, environ)
+
+
+def test_an_invalid_mode_is_refused_not_displayed() -> None:
+    with pytest.raises(stores.StoreConfigError, match="GROOVEMAP_MONITORING"):
+        stores.recorded_decisions({"GROOVEMAP_MONITORING": "sometimes"}, {})

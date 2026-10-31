@@ -385,8 +385,8 @@ def main(
     runner = runner or subprocess.run
     environ = os.environ if environ is None else environ
     env_values = stores.read_env(env_path or (Path(args.env_file) if args.env_file else ROOT / ".env"))
-    decisions = stores.recorded_decisions(env_values, environ)
     try:
+        decisions = stores.recorded_decisions(env_values, environ)
         configured = stores.read_stores(env_values, environ)
     except stores.StoreConfigError as error:
         print(f"cannot determine: {error}", file=sys.stderr)

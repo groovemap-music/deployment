@@ -541,6 +541,66 @@ by a private CA. Use an internal network both stacks share.
 the local services start again, deploy removes its `COMPOSE_FILE`, and
 `just secrets-bootstrap` creates the local Grafana admin password if it is missing.
 
+## Lux upgrade from 6af13ec/160fe7d
+
+A host that installed GrooveMap at deployment `6af13ec` (or `160fe7d`) with mixed stores (an
+external PostgreSQL with TLS, a dedicated Valkey) and shared monitoring carried local
+workarounds for eight failures. Every fix is now in the repository, with a regression test and a
+Linux smoke for each ([failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test)).
+Nothing below is destructive: no volume is removed, no store is touched, and secrets are never
+regenerated.
+
+**Local mitigations that are now unnecessary.** Remove them from the override, `.env` and your
+Ansible role once the new checkout passes the verification below:
+
+- **The store-check network attach.** The example override
+  (`skills/groovemap-homelab/assets/override-external-store-network.yml`) now attaches
+  `store-check-postgres` and `store-check-valkey` along with the app clients. Take the example's
+  service list; a check that cannot resolve the store now names the store, host, service and
+  networks.
+- **The collector environment workaround.** The collector reads its configuration through the
+  environment provider, and its command and healthcheck validate that same configuration. Drop any
+  `configs.content` or healthcheck override.
+- **A `uv` install.** Operator recipes (`deploy`, `env-init`, `discogs-import-status`,
+  `status`, `recovery-manifest`, the embeddings steps) run on `python3` 3.10 or newer when `uv` is
+  absent; exit codes 0, 3 and 2 pass through unchanged. `uv` is for maintainers.
+- **`SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` values.** Rendering and `up` no longer need them; only
+  `just embeddings-run` does.
+- **Exporter and secret ownership workarounds.** Every service that reads a 0600 secret runs as the
+  owner of `secrets/`, so a `chown`/`chmod` of the derived Valkey exporter password or a `user:`
+  override on an exporter is no longer needed.
+- **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
+  depend on `rabbitmq-dlq-policy-init` completing successfully.
+
+**New `.env` keys** (all optional; see [Configuration](configuration.md)):
+
+| Key | Purpose |
+| --- | --- |
+| `GROOVEMAP_MONITORING` | `local` (default) or `shared`; see [Shared monitoring](#shared-monitoring) |
+| `SHARED_VICTORIA_METRICS_URL`, `SHARED_VICTORIA_TRACES_URL` | Required with `shared`: where the collector writes |
+| `SHARED_GRAFANA_URL`, `SHARED_NODE_EXPORTER_ADDRESS`, `SHARED_CADVISOR_ADDRESS` | The console's and collector's view of the shared services |
+| `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | `host:port` of the exporter that watches an external PostgreSQL |
+
+`just env-init` appends any of these your `.env` lacks, under a comment, and keeps every other line.
+
+**Verify.**
+
+1. `git pull`, then `just env-init` to refresh the reviewed digests.
+2. `just deploy`. Preflight reports each recorded store and monitoring decision and stops, before
+   changing anything, on a setting it cannot honour.
+3. `just status` (read-only; exit 0, or 2 when Docker or a setting cannot be read) lists the
+   decisions recorded in `.env`, the services that are shared or external rather than missing, the
+   reviewed image digests and the Discogs gate. Exit 3 from `just discogs-import-status` means
+   the import is still in progress, not an error.
+4. `just discogs-import-status --prod` (the gate) keeps reading the external database and never
+   enables MusicBrainz early.
+5. `just recovery-manifest`, then keep the listed files in an encrypted bundle, and check the
+   [shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist).
+
+A `grafana_data` volume created earlier needs the one-time re-own in
+[Grafana now runs as your user](#grafana-now-runs-as-your-user); old `*_logs` volumes are left
+alone (they stay until you remove them yourself; a separate change moves logs to tmpfs).
+
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.
@@ -570,6 +630,9 @@ These describe current behavior. A follow-up is planned; no dates are promised.
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations
+
+For the regressions found installing on a real host and the tests that now prevent each, see the
+[failure-to-regression-test table](testing-guide.md#lux-regressions-failure-to-regression-test).
 
 Backups are environment-specific and must be tested: see
 [Backups and restore drills](maintenance.md#backups-and-restore-drills) and

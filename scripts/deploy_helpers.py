@@ -1318,9 +1318,13 @@ def check_volumes(
 
 def decision_findings(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[Finding]:
     """The reuse decisions already recorded in .env (or the shell), reported so nobody is asked them again."""
+    try:
+        decisions = stores.recorded_decisions(env_values, environ)
+    except stores.StoreConfigError:
+        return []  # the store findings stop on the same setting, with the fix
     return [
         Finding("ok", f"Decision {name}: {value} ({where})" + ("; recorded, not asked again" if where != "default" else ""))
-        for name, value, where in stores.recorded_decisions(env_values, environ)
+        for name, value, where in decisions
     ]
 
 
