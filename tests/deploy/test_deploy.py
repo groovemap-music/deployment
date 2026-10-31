@@ -962,6 +962,9 @@ def test_port_probe_sees_a_listener_and_a_free_port() -> None:
 
 def test_published_ports_are_read_from_docker_ps() -> None:
     assert helpers.published_ports("groovemap-postgres\t0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp, 127.0.0.1:15692->15692/tcp") == {5433, 15692}
+    # Docker prints consecutive ports as a range; the homelab smoke's resume found them missed.
+    assert helpers.published_ports("groovemap-api\t127.0.0.1:8004-8005->8004-8005/tcp") == {8004, 8005}
+    assert helpers.published_ports("groovemap-explore\t0.0.0.0:8006-8007->8006-8007/tcp, [::]:8006-8007->8006-8007/tcp") == {8006, 8007}
 
 
 def test_amd64_emulation_detection(tmp_path: Path) -> None:
