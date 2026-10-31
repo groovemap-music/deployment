@@ -100,9 +100,17 @@ without the override (`config --format json`, every profile included) and stops
 with exit code 3 if the override changes what only `.env` or deploy may
 change on a stack service: `image`, `build`, `platform`, `container_name` or
 `profiles`, or the `ports` or `network_mode` of PostgreSQL, Neo4j, RabbitMQ,
-Valkey, VictoriaMetrics or VictoriaTraces. Reverse-proxy labels and networks,
-volume locations, restart policies, the `groovemap` network's subnet and extra
-services of your own are fine. Move published ports with the
+Valkey, VictoriaMetrics or VictoriaTraces, or their `networks`, `labels` or
+`extra_hosts` (a proxy network, Traefik TCP router labels or a hosts entry would
+expose or redirect the data tier). Reverse-proxy labels and networks on
+other services such as `explore`, `dashboard` and `grafana`, volume locations,
+restart policies and the `groovemap` network's subnet are fine. So are extra
+services of your own, if their image is pinned by digest (`repo@sha256:...`)
+and they neither publish ports nor join the `groovemap` network; list a
+service that must in `OVERRIDE_ALLOW_SERVICES` in `.env`
+(comma-separated names, for example `OVERRIDE_ALLOW_SERVICES=pg-forward`).
+The digest rule has no opt-in. A new service left on the project's default
+network cannot reach the stack and needs no opt-in. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
 to address the same stack by hand.
