@@ -1,0 +1,189 @@
+---
+# External PostgreSQL overlay: GrooveMap uses an existing PostgreSQL server instead of running
+# its own. Never apply it by hand: `just deploy` adds it, after docker-compose.prod.yml and
+# before docker-compose.override.yml, when .env sets GROOVEMAP_POSTGRES=external, and only once
+# the capability floor in scripts/check-images.py is met. scripts/discogs_import_status.py adds
+# it the same way, so the Discogs-before-MusicBrainz gate reads the database the loaders write.
+# See docs/homelab.md#existing-postgresql-and-valkey.
+#
+# - postgres and postgres-exporter move into the `local-stores` profile, which nothing enables,
+#   so they are omitted rather than removed (the override check forbids removing a service).
+# - store-check-postgres, a one-shot from the same pinned image, verifies the server before
+#   any service connects (scripts/store-check-postgres.sh). Every service that used the local
+#   postgres waits for it instead of postgres's health.
+# - The services connect to EXTERNAL_POSTGRES_HOST with the role and password in
+#   secrets/postgres_username.txt and secrets/postgres_password.txt, which the operator writes
+#   (create-secrets.sh never invents them in this mode). schema-init runs in database-schema's
+#   pre-provisioned mode: it verifies the database, role and pg_trgm and never creates them.
+# - Every PostgreSQL client (the services, the store check, and the gate's and latch probe's psql,
+#   which run in store-check-postgres) uses TLS through libpq's own environment: PGSSLMODE from
+#   EXTERNAL_POSTGRES_SSLMODE (default verify-full), and, in the two verify modes, PGSSLROOTCERT
+#   pointing at secrets/postgres_ca.crt. No service sets sslmode itself, so nothing overrides it.
+#   `just deploy` refuses a cleartext mode to a server off this machine unless
+#   EXTERNAL_POSTGRES_ALLOW_PLAINTEXT=true.
+#
+# Without the production overlay the secrets above do not exist, so this overlay only renders
+# on top of docker-compose.yml + docker-compose.prod.yml.
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-external-postgres-env: &external-postgres-env
+  POSTGRES_HOST: "${EXTERNAL_POSTGRES_HOST:?Set EXTERNAL_POSTGRES_HOST to the external PostgreSQL host}"
+  POSTGRES_PORT: "${EXTERNAL_POSTGRES_PORT:-5432}"
+  POSTGRES_DATABASE: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
+  PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+
+# PGSSLROOTCERT only in verify-ca and verify-full: libpq would also verify in `require` if the root
+# file were set, and in the cleartext modes secrets/postgres_ca.crt is an empty placeholder. Any
+# other mode names a file that does not exist, which `required: false` skips (the same pattern as
+# the console's opt-in in docker-compose.prod.yml).
+x-postgres-ca-env-file: &postgres-ca-env-file
+  - path: config/postgres-tls.${EXTERNAL_POSTGRES_SSLMODE:-verify-full}.env
+    required: false
+
+secrets:
+  postgres_ca:
+    file: ./secrets/postgres_ca.crt
+
+x-store-check-postgres: &store-check-postgres
+  store-check-postgres:
+    condition: service_completed_successfully
+
+services:
+  postgres:
+    profiles:
+      - local-stores
+
+  postgres-exporter:
+    profiles:
+      - local-stores
+
+  # Read-only: SELECT and SHOW inside the configured database, nothing else. The image is the
+  # stack's own pinned postgres (tests keep the two equal); its psql reads the password from the
+  # secret file into PGPASSWORD, so no credential reaches a command line.
+  store-check-postgres:
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    container_name: groovemap-store-check-postgres
+    hostname: store-check-postgres
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["sh", "/scripts/store-check-postgres.sh"]
+    environment:
+      PGHOST: "${EXTERNAL_POSTGRES_HOST:?Set EXTERNAL_POSTGRES_HOST to the external PostgreSQL host}"
+      PGPORT: "${EXTERNAL_POSTGRES_PORT:-5432}"
+      PGAPPNAME: groovemap-store-check
+      PGCONNECT_TIMEOUT: "10"
+      PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+      GROOVEMAP_ALLOW_PLAINTEXT: "${EXTERNAL_POSTGRES_ALLOW_PLAINTEXT:-false}"
+      POSTGRES_DB: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
+      POSTGRES_USER_FILE: /run/secrets/postgres_username
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    env_file: *postgres-ca-env-file
+    volumes:
+      - ./scripts/store-check-postgres.sh:/scripts/store-check-postgres.sh:ro
+    secrets:
+      - postgres_username
+      - postgres_password
+      - postgres_ca
+    networks:
+      - groovemap
+    # A server on this Docker host but outside Docker is reachable as host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  schema-init:
+    environment:
+      <<: *external-postgres-env
+      POSTGRES_PREPROVISIONED: "true"
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  api:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  tableinator:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  brainztableinator:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  dashboard:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  insights:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
+  embeddings:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres

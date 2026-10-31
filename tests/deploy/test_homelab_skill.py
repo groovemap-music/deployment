@@ -190,6 +190,8 @@ EXTERNAL_STORES_BEADS = (
     "gm-catalog-api-rchs",
     "gm-analytics-engine-bah5",
     "gm-database-schema-2aty",
+    "gm-catalog-api-vd7n",
+    "gm-analytics-engine-m0sz",
 )
 SHARED_SERVICES = SKILL_DIR / "references" / "shared-services.md"
 HOMELAB_DOC = ROOT / "docs" / "homelab.md"
@@ -207,14 +209,18 @@ def test_skill_asks_the_reuse_question_verbatim() -> None:
     assert "Discovery is never authorization" in _flat(body)
 
 
-def test_skill_recommends_dedicated_while_reuse_is_not_deployable() -> None:
+def test_skill_recommends_dedicated_until_the_capability_floor_is_met() -> None:
     _, body = _frontmatter()
     flat = _flat(body)
     for dimension in ("compatibility", "isolation", "capacity", "operational impact"):
         assert dimension in flat, dimension
-    assert "Reuse is not deployable today" in flat
+    assert "Reuse is refused until the capability floors are met" in flat
+    assert "EXTERNAL_STORE_FLOORS" in flat
     assert "Keep the deployment stopped" in flat
     assert "dedicated is the recommendation" in flat
+    # Once a floor is met the operator provisions and writes the secrets; the agent sets only .env.
+    assert "you never run a write on a shared server and never see or print a credential" in flat
+    assert "`GROOVEMAP_*` and `EXTERNAL_*` values in `.env`" in flat
 
 
 def test_discovery_is_read_only_and_never_shows_credentials() -> None:
@@ -240,17 +246,22 @@ def test_discovery_is_read_only_and_never_shows_credentials() -> None:
 
 def test_shared_services_states_the_status_and_every_requirement() -> None:
     page = _flat(SHARED_SERVICES.read_text())
-    assert "not deployable" in page
-    for blocker in (
+    assert "supported once the capability floors are met" in page
+    assert "refuses it today" in page
+    for answer in (
         "docker compose exec postgres",
-        "cannot be removed",
+        "store-check-postgres",
+        "local-stores",
+        "POSTGRES_PREPROVISIONED=true",
         "CREATE DATABASE",
         "CREATE ROLE",
         "CREATE EXTENSION",
-        "no key prefix and no DB-index",
-        "External PostgreSQL and Valkey are not supported yet",
+        "VALKEY_KEY_PREFIX",
+        "only through the supported external-stores mode",
+        "EXTERNAL_STORE_FLOORS",
+        "unreleased",
     ):
-        assert blocker in page, blocker
+        assert answer in page, answer
     for requirement in (
         "PostgreSQL 18",
         "dedicated role",
@@ -282,11 +293,59 @@ def test_external_store_beads_are_named_consistently() -> None:
 def test_docs_state_the_reuse_status_and_the_unchanged_approval_rules() -> None:
     homelab = _flat(HOMELAB_DOC.read_text())
     assert REUSE_QUESTION in homelab
-    assert "not deployable today" in homelab
-    assert "a separate logical database is not a security boundary" in homelab
-    assert "session-mode PgBouncer" in homelab
+    assert "Status: supported once the capability floors are met, which they are not yet." in homelab.replace("**", "")
+    assert "neither is a security boundary" in homelab
+    assert "A PgBouncer must pool by session" in homelab
     assert "explicit approval" in homelab
-    assert "refuses an override that rewires either store, with no opt-in" in homelab
+    assert "An override may still never rewire" in homelab
     configuration = _flat(CONFIGURATION_DOC.read_text())
     assert "homelab.md#existing-postgresql-and-valkey" in configuration
-    assert "Reuse would also need PgBouncer in session mode only" in configuration
+    assert "Reuse needs PgBouncer in session mode only" in configuration
+
+
+def test_docs_give_the_external_stores_procedure_and_what_still_blocks_it() -> None:
+    homelab = _flat(HOMELAB_DOC.read_text())
+    configuration = _flat(CONFIGURATION_DOC.read_text())
+    shared = _flat(SHARED_SERVICES.read_text())
+    for page in (homelab, configuration, shared):
+        for name in (
+            "GROOVEMAP_POSTGRES",
+            "GROOVEMAP_VALKEY",
+            "EXTERNAL_POSTGRES_HOST",
+            "EXTERNAL_VALKEY_KEY_PREFIX",
+            "secrets/postgres_password.txt",
+        ):
+            assert name in page, name
+    for page in (homelab, shared):
+        assert "gm-database-schema-2aty" in page
+        assert "merged, not released or promoted" in page
+    for setting in ("noeviction", "AOF", "PostgreSQL 18", "pg_trgm", "60 usable connections", "session"):
+        assert setting in homelab, setting
+    assert "store-check-postgres" in configuration and "store-check-valkey" in configuration
+    assert "is a data migration" in homelab
+    assert "postgres-exporter" in homelab  # what the operator takes over
+    maintenance = _flat((ROOT / "docs" / "maintenance.md").read_text())
+    assert "belong to its operator" in maintenance
+
+
+def test_docs_cover_transport_security_and_bare_compose_in_external_mode() -> None:
+    homelab = _flat(HOMELAB_DOC.read_text())
+    configuration = _flat(CONFIGURATION_DOC.read_text())
+    shared = _flat(SHARED_SERVICES.read_text())
+    _, skill = _frontmatter()
+    for page in (homelab, configuration, shared):
+        for name in (
+            "EXTERNAL_POSTGRES_ALLOW_PLAINTEXT",
+            "EXTERNAL_VALKEY_ALLOW_PLAINTEXT",
+            "secrets/postgres_ca.crt",
+            "secrets/valkey_ca.crt",
+            "COMPOSE_FILE",
+        ):
+            assert name in page, name
+    for page in (homelab, configuration):
+        assert "EXTERNAL_POSTGRES_SSLMODE" in page and "verify-full" in page and "EXTERNAL_VALKEY_TLS" in page
+    assert "Cleartext is refused off this machine." in homelab.replace("**", "")
+    assert "Bare Compose uses the same files." in homelab.replace("**", "")
+    assert "Anyone on the network path could read the password" in homelab
+    assert "`COMPOSE_FILE` in `.env`" in _flat(skill) and "Never edit or remove that line" in _flat(skill)
+    assert "Never set an `EXTERNAL_*_ALLOW_PLAINTEXT` opt-out on your own" in _flat(skill)

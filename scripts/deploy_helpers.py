@@ -34,6 +34,7 @@ whole gigabytes before comparing.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import ipaddress
 import json
 import math
@@ -58,6 +59,23 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT / ".env"
 TEMPLATE = ROOT / ".env.example"
+SECRETS_DIR = ROOT / "secrets"
+
+
+def load_script(name: str, filename: str) -> Any:
+    """Import a sibling script by path, as env-init.py does: these run without the repository on sys.path."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# The store-access layer shared with scripts/discogs_import_status.py: store modes, overlays, psql routing.
+stores = load_script("groovemap_stores", "stores.py")
 
 GIB = 1024**3
 PROFILE = "musicbrainz"
@@ -127,9 +145,10 @@ STORE_CONNECTION = re.compile(r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABAS
 STORE_SECRET = re.compile(r"^(?:postgres|valkey)_")
 EXTERNAL_STORES_EPIC = "gm-deployment-e1uh"
 EXTERNAL_STORES_HINT = (
-    "External PostgreSQL and Valkey are not supported yet: the deploy gate and its probes read this stack's own postgres container, "
-    "so pointing a service elsewhere would leave the Discogs-before-MusicBrainz gate reading an unused database. "
-    f"Remove it and use the stack's dedicated stores. See {EXTERNAL_STORES_EPIC} and docs/homelab.md. This rule has no opt-in."
+    "An existing PostgreSQL or Valkey is reached only through the supported external-stores mode (GROOVEMAP_POSTGRES=external or "
+    "GROOVEMAP_VALKEY=external in .env, which adds docker-compose.external-*.yml), never through the override: the deploy gate and "
+    "its probes follow that mode, so a service rewired here would leave the Discogs-before-MusicBrainz gate reading a database "
+    f"nothing writes to. Remove it. See docs/homelab.md, Existing PostgreSQL and Valkey ({EXTERNAL_STORES_EPIC}). This rule has no opt-in."
 )
 # Services the override adds need a sha256 digest, and may publish ports or join groovemap only
 # when named in this variable (in .env or the shell), comma-separated.
@@ -191,31 +210,10 @@ DOCKER_ROOT_SHARE = DataVolume("images and the small volumes", "", "", 8, 8)
 # --- .env reading and writing ----------------------------------------------------------
 
 
-ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=(?P<value>.*)$")
-
-
-def _unquote(raw: str) -> str:
-    value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    # Compose's dotenv reader drops an unquoted inline comment that follows whitespace.
-    return re.split(r"\s+#", value, maxsplit=1)[0].strip()
-
-
-def parse_env(text: str) -> dict[str, str]:
-    """Read KEY=VALUE assignments the way Compose's .env reader does, ignoring comments."""
-    values = {}
-    for line in text.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        match = ASSIGNMENT.match(line)
-        if match:
-            values[match["key"]] = _unquote(match["value"])
-    return values
-
-
-def read_env(path: Path) -> dict[str, str]:
-    return parse_env(path.read_text()) if path.exists() else {}
+# The one .env reader, shared with scripts/discogs_import_status.py through scripts/stores.py.
+ASSIGNMENT: re.Pattern[str] = stores.ASSIGNMENT
+parse_env: Callable[[str], dict[str, str]] = stores.parse_env
+read_env: Callable[[Path], dict[str, str]] = stores.read_env
 
 
 def effective(key: str, env_values: Mapping[str, str], environ: Mapping[str, str], default: str = "") -> str:
@@ -492,10 +490,17 @@ class Port:
     port: int
 
 
-def configured_ports(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[Port]:
-    """The host ports this stack will publish, on the addresses it will bind."""
+# The published port of each store; an external store's container never starts, so it publishes nothing.
+STORE_PORTS = {"postgres": "POSTGRES_HOST_PORT", "valkey": "VALKEY_HOST_PORT"}
+
+
+def configured_ports(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str], skip: Iterable[str] = ()) -> list[Port]:
+    """The host ports this stack will publish, on the addresses it will bind, except the variables in `skip`."""
     ports = []
+    skipped = set(skip)
     for variable, default, prod_group, dev_group, label in PORTS:
+        if variable in skipped:
+            continue
         bind_variable, bind_default = BIND_ADDRESSES[prod_group if mode == "prod" else dev_group]
         value = effective(variable, env_values, environ, str(default))
         try:
@@ -504,6 +509,15 @@ def configured_ports(mode: str, env_values: Mapping[str, str], environ: Mapping[
             port = -1
         ports.append(Port(variable, label, effective(bind_variable, env_values, environ, bind_default), port))
     return ports
+
+
+def external_store_ports(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[str]:
+    """The *_HOST_PORT variables of the stores that are external (none when the store settings are unreadable)."""
+    try:
+        configured = stores.read_stores(env_values, environ)
+    except stores.StoreConfigError:
+        return []
+    return [STORE_PORTS[store] for store in configured.external]
 
 
 def check_ports(ports: Iterable[Port], own: set[int], in_use: Callable[[str, int], bool]) -> list[Finding]:
@@ -999,14 +1013,8 @@ def published_ports(ports_column: str) -> set[int]:
 
 # --- is there already a MusicBrainz deployment? ---------------------------------------
 
-# Run inside the postgres container; the same user lookup as scripts/discogs_import_status.py
-# (PSQL_SHELL there; tests keep the two equal). The query is `$1`.
-PSQL_SHELL = (
-    'u="${POSTGRES_USER:-}"; '
-    'if [ -z "$u" ] && [ -n "${POSTGRES_USER_FILE:-}" ]; then u="$(cat "$POSTGRES_USER_FILE")"; fi; '
-    'if [ -z "$u" ]; then echo "no PostgreSQL user: neither POSTGRES_USER nor POSTGRES_USER_FILE is set" >&2; exit 2; fi; '
-    'exec psql -X -U "$u" -d "${POSTGRES_DB:-groovemap}" -v ON_ERROR_STOP=1 -tAq -c "$1"'
-)
+# The store-access layer's psql shell (scripts/stores.py), the one scripts/discogs_import_status.py uses too.
+PSQL_SHELL: str = stores.PSQL_SHELL
 MUSICBRAINZ_LATCH_SQL = "SELECT EXISTS (SELECT 1 FROM public.loader_extraction_latch WHERE loader = 'musicbrainz')"
 
 
@@ -1031,9 +1039,15 @@ def musicbrainz_exclusive_volumes(config: Mapping[str, Any] | None) -> set[str] 
     return exclusive - shared
 
 
-def musicbrainz_latch(compose_argv: Sequence[str], runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> bool:
-    """True when loader_extraction_latch has a row for loader 'musicbrainz'. Any failure counts as no evidence."""
-    argv = [*compose_argv, "exec", "-T", "postgres", "sh", "-c", PSQL_SHELL, "sh", MUSICBRAINZ_LATCH_SQL]
+def musicbrainz_latch(
+    compose_argv: Sequence[str], runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run, configured: Any = None
+) -> bool:
+    """True when loader_extraction_latch has a row for loader 'musicbrainz'. Any failure counts as no evidence.
+
+    The query goes wherever the stack's PostgreSQL lives (`stores.psql_argv`): the local container,
+    or the external server through the store-check-postgres one-shot.
+    """
+    argv = stores.psql_argv(compose_argv, MUSICBRAINZ_LATCH_SQL, configured or stores.Stores())
     try:
         completed = runner(argv, capture_output=True, text=True, timeout=60, check=False, cwd=ROOT)
     except (OSError, subprocess.TimeoutExpired):
@@ -1113,8 +1127,11 @@ def resolve_locations(config: Mapping[str, Any] | None, root_dir: str, local: bo
     services = (config or {}).get("services") or {}
     top_level = (config or {}).get("volumes") or {}
     locations = []
+    skipped = external_store_volumes(config)
     for volume in DATA_VOLUMES:
         mount: Mapping[str, Any] = {"type": "volume", "source": volume.name}
+        if volume in skipped:
+            continue
         if config is not None:
             mounts = (services.get(volume.service) or {}).get("volumes") or []
             found = next((entry for entry in mounts if isinstance(entry, dict) and entry.get("target") == volume.target), None)
@@ -1123,6 +1140,12 @@ def resolve_locations(config: Mapping[str, Any] | None, root_dir: str, local: bo
             mount = found
         locations.append(_locate(volume, mount, top_level.get(mount.get("source")) or {}, root_dir, local, desktop))
     return locations
+
+
+def external_store_volumes(config: Mapping[str, Any] | None) -> list[DataVolume]:
+    """Data volumes of a store this stack does not run: its service sits in the local-stores profile (an external-store overlay)."""
+    services = (config or {}).get("services") or {}
+    return [volume for volume in DATA_VOLUMES if stores.LOCAL_STORES_PROFILE in ((services.get(volume.service) or {}).get("profiles") or [])]
 
 
 def _locate(volume: DataVolume, mount: Mapping[str, Any], definition: Mapping[str, Any], root_dir: str, local: bool, desktop: bool) -> Location:
@@ -1192,6 +1215,191 @@ def check_volumes(
     return findings
 
 
+# --- external stores (scripts/stores.py) ------------------------------------------------
+
+STORE_NAMES = {"postgres": "PostgreSQL", "valkey": "Valkey"}
+STORES_DOCS = "docs/homelab.md, Existing PostgreSQL and Valkey"
+
+
+def load_image_policy() -> Any:
+    """scripts/check-images.py: the reviewed release set and the external-store capability floors."""
+    return load_script("check_images", "check-images.py")
+
+
+def describe_store(store: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> str:
+    if store == "postgres":
+        host = effective("EXTERNAL_POSTGRES_HOST", env_values, environ)
+        return f"{host}:{effective('EXTERNAL_POSTGRES_PORT', env_values, environ, '5432')}/{effective('EXTERNAL_POSTGRES_DATABASE', env_values, environ, 'groovemap')}"
+    host = effective("EXTERNAL_VALKEY_HOST", env_values, environ)
+    port = effective("EXTERNAL_VALKEY_PORT", env_values, environ, "6379")
+    return f"{host}:{port} database {effective('EXTERNAL_VALKEY_DB', env_values, environ, '0')}, keys under {effective('EXTERNAL_VALKEY_KEY_PREFIX', env_values, environ)}"
+
+
+def store_findings(
+    mode: str,
+    *,
+    env_values: Mapping[str, str],
+    environ: Mapping[str, str],
+    secrets_dir: Path,
+    image_policy: Any,
+    local_volumes: Callable[[], Iterable[str]],
+) -> list[Finding]:
+    """What the store settings mean for this run. Any stop means nothing may start.
+
+    An external store needs the production overlay, usable settings (TLS to a server off this
+    machine, or its explicit ALLOW_PLAINTEXT opt-out), its credentials already in secrets/
+    (written by the operator, never invented), the CA when it verifies its server, the capability
+    floor of the images, a COMPOSE_FILE that deploy owns, and, for PostgreSQL, no local
+    postgres_data volume in this project: that would be a dedicated-store deployment whose data
+    has not moved, and its gate would then read an empty database.
+    """
+    try:
+        configured = stores.read_stores(env_values, environ)
+    except stores.StoreConfigError as error:
+        return [Finding("stop", str(error), f"Set it to local or external in .env ({STORES_DOCS}).")]
+    findings = [
+        Finding("ok", f"{STORE_NAMES[store]}: the stack's own {store} container") for store in stores.STORES if store not in configured.external
+    ]
+    if not configured.external:
+        return findings
+    if mode != "prod":
+        return [
+            *findings,
+            Finding(
+                "stop",
+                "External stores need the production overlay: their credentials are its Docker secrets",
+                "Run without --dev, or set GROOVEMAP_POSTGRES and GROOVEMAP_VALKEY back to local.",
+            ),
+        ]
+    for problem in stores.setting_problems(configured, env_values, environ):
+        findings.append(Finding("stop", problem, f"Fix it in .env ({STORES_DOCS})."))
+    for store in configured.external:
+        name = STORE_NAMES[store]
+        for problem in stores.floor_problems(
+            store,
+            image_policy.EXTERNAL_STORE_FLOORS,
+            image_policy.RELEASED_IMAGE_VERSIONS,
+            image_policy.RELEASED_IMAGE_DIGESTS,
+            image_policy.IMAGE_OWNERS,
+            env_values,
+            environ,
+        ):
+            findings.append(
+                Finding(
+                    "stop",
+                    f"External {name} is refused: {problem}",
+                    f"Use the stack's own {store} ({stores.MODE_VARIABLES[store]}=local) until the reviewed release set supports it "
+                    f"(EXTERNAL_STORE_FLOORS in scripts/check-images.py; {STORES_DOCS}).",
+                )
+            )
+        for secret in stores.EXTERNAL_SECRETS[store]:
+            path = secrets_dir / secret
+            if not path.is_file() or not path.read_text().strip():
+                findings.append(
+                    Finding(
+                        "stop",
+                        f"External {name} needs secrets/{secret}, written by you before deploying",
+                        f"Write the GrooveMap credential for the existing {name} there (from SOPS or your secret store). "
+                        "create-secrets.sh would otherwise invent one the server does not know.",
+                    )
+                )
+        ca = secrets_dir / stores.CA_SECRETS[store]
+        if stores.verifies(store, env_values, environ) and (not ca.is_file() or not ca.read_text().strip()):
+            findings.append(
+                Finding(
+                    "stop",
+                    f"External {name} verifies its server's certificate and needs secrets/{stores.CA_SECRETS[store]}",
+                    f"Write the PEM certificate of the CA that signed the {name} server's certificate there.",
+                )
+            )
+    findings += [Finding("warn", warning) for warning in stores.transport_warnings(configured, env_values, environ)]
+    variable = stores.COMPOSE_FILE_VARIABLE
+    if variable in environ:
+        findings.append(
+            Finding(
+                "stop",
+                f"{variable} is set in your shell; with an external store, just deploy keeps it in .env so bare docker compose uses its files",
+                f"Unset {variable} in the shell and re-run.",
+            )
+        )
+    elif env_values.get(variable) and not compose_file_managed():
+        findings.append(
+            Finding(
+                "stop",
+                f"{variable} in .env was not written by just deploy; with an external store deploy must own it, or a bare docker compose "
+                "could start the local stores and point the services at them",
+                f"Remove {variable} from .env (an override belongs in docker-compose.override.yml, which deploy adds to it) and re-run.",
+            )
+        )
+    if "postgres" in configured.external and "postgres_data" in set(local_volumes()):
+        findings.append(
+            Finding(
+                "stop",
+                "This project already has a postgres_data volume: it ran the stack's own PostgreSQL, so its data is there, not on the external server",
+                "Switching an existing deployment to an external PostgreSQL is a data migration this deploy does not do. Move the data first, "
+                "or keep GROOVEMAP_POSTGRES=local.",
+            )
+        )
+    if not any(finding.level == "stop" for finding in findings):
+        findings += [
+            Finding("ok", f"{STORE_NAMES[store]}: external, {describe_store(store, env_values, environ)} (verified next by store-check-{store})")
+            for store in configured.external
+        ]
+    return findings
+
+
+def compose_file_managed(env_path: Path | None = None) -> bool:
+    """True when COMPOSE_FILE in .env carries deploy's marker, so deploy may rewrite or remove it."""
+    path = env_path or ENV_FILE
+    return path.exists() and stores.COMPOSE_FILE_MARKER in path.read_text()
+
+
+def leave_ca_placeholders(env_values: Mapping[str, str], environ: Mapping[str, str], secrets_dir: Path) -> list[str]:
+    """An external store that does not verify its server still has its CA file mounted: leave an empty one that nothing reads."""
+    configured = stores.read_stores(env_values, environ)
+    written = []
+    for store in configured.external:
+        path = secrets_dir / stores.CA_SECRETS[store]
+        if not stores.verifies(store, env_values, environ) and not path.exists():
+            secrets_dir.mkdir(mode=0o700, exist_ok=True)
+            write_new_env_text(path, "", ENV_MODE)
+            written.append(f"secrets/{stores.CA_SECRETS[store]}")
+    return written
+
+
+def sync_compose_file(env_path: Path, files: Sequence[str], external: bool, separator: str = os.pathsep) -> str:
+    """Keep COMPOSE_FILE in .env equal to deploy's files while a store is external, and absent otherwise.
+
+    Returns what changed ("" when nothing did). With both stores local only a COMPOSE_FILE deploy
+    wrote (its marker) is removed; store_findings stops before this on one the operator set while
+    a store is external.
+    """
+    text = env_path.read_text() if env_path.exists() else ""
+    managed = stores.COMPOSE_FILE_MARKER in text
+    current = parse_env(text).get(stores.COMPOSE_FILE_VARIABLE)
+    value = separator.join(files)
+    if (external and managed and current == value) or (not external and not managed):
+        return ""
+    kept = [
+        line
+        for line in text.splitlines()
+        if line != stores.COMPOSE_FILE_MARKER and not ((match := ASSIGNMENT.match(line)) and match["key"] == stores.COMPOSE_FILE_VARIABLE)
+    ]
+    text = "\n".join(kept).rstrip("\n") + "\n" if kept else ""
+    if not external:
+        write_env_text(env_path, text)
+        return "Removed COMPOSE_FILE from .env: both stores are local again, so a bare docker compose uses its defaults."
+    write_env_text(env_path, set_env_values(text, {stores.COMPOSE_FILE_VARIABLE: value}, stores.COMPOSE_FILE_MARKER))
+    return f"Set COMPOSE_FILE={value} in .env, so a bare docker compose uses the same files as just deploy."
+
+
+def project_volumes(docker: Docker, project: str) -> list[str]:
+    """The Compose volume keys (postgres_data, ...) the engine holds for this project."""
+    return docker.lines(
+        "volume", "ls", "--filter", f"label=com.docker.compose.project={project}", "--format", '{{.Label "com.docker.compose.volume"}}'
+    )
+
+
 # --- commands --------------------------------------------------------------------------
 
 
@@ -1235,7 +1443,7 @@ def preflight(
     if local:
         # A re-run finds the stack's own containers holding its ports; those are not conflicts.
         own = {port for line in docker.groovemap_containers(all_states=False) for port in published_ports(line)}
-        findings += check_ports(configured_ports(mode, env_values, environ), own, in_use)
+        findings += check_ports(configured_ports(mode, env_values, environ, external_store_ports(env_values, environ)), own, in_use)
     else:
         findings.append(Finding("warn", "The Docker engine is remote (DOCKER_HOST), so its ports were not checked from here"))
     for finding in findings:
@@ -1278,6 +1486,10 @@ def disk_check(
     existing = bool(docker.groovemap_containers(all_states=True))
     probe = probe or (lambda path: probe_path(path, walk_up=path != root_dir))
     findings = check_volumes(resolve_locations(config, root_dir, local, desktop), root_dir, local, desktop, existing, probe)
+    findings += [
+        Finding("ok", f"{volume.name} is not checked: {volume.service} is external, so its disk is the operator's responsibility")
+        for volume in external_store_volumes(config)
+    ]
     for finding in findings:
         show(finding)
     stops = [finding for finding in findings if finding.level == "stop"]
@@ -1490,6 +1702,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "musicbrainz-latch", help="exit 0 if loader_extraction_latch has a musicbrainz row; give the compose command after --"
     )
     latch.add_argument("compose", nargs=argparse.REMAINDER)
+    store_check = commands.add_parser(
+        "stores", help="check the GROOVEMAP_POSTGRES / GROOVEMAP_VALKEY settings; exit 0 to go ahead, 3 to stop before anything changes"
+    )
+    store_check.add_argument("--mode", choices=("prod", "dev"), default="prod")
+    store_check.add_argument("--project-name")
+    commands.add_parser(
+        "store-files", help="print each external store's overlay (added after the production overlay) and its store-check service, one per line"
+    )
+    commands.add_parser("stack-container", help="print the container whose presence says the stack has been started")
+    compose_file = commands.add_parser(
+        "compose-file", help="with an external store, keep COMPOSE_FILE in .env equal to the given files; otherwise remove deploy's"
+    )
+    compose_file.add_argument("files", nargs="+", help="the Compose files deploy uses, in order")
     name = commands.add_parser("project-name", help="print the Compose project name")
     name.add_argument("--project-name")
     urls = commands.add_parser("endpoints", help="print the configured browser-facing endpoints")
@@ -1551,7 +1776,50 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         return 0
     if args.command == "musicbrainz-latch":
         compose_argv = [word for word in args.compose if word != "--"]
-        return 0 if compose_argv and musicbrainz_latch(compose_argv) else 1
+        try:
+            configured = stores.read_stores(env_values, environ)
+        except stores.StoreConfigError:
+            return 1
+        return 0 if compose_argv and musicbrainz_latch(compose_argv, configured=configured) else 1
+    if args.command == "stores":
+        project = project_name(args.project_name, env_values, environ)
+        findings = store_findings(
+            args.mode,
+            env_values=env_values,
+            environ=environ,
+            secrets_dir=SECRETS_DIR,
+            image_policy=load_image_policy(),
+            local_volumes=lambda: project_volumes(docker, project),
+        )
+        for finding in findings:
+            show(finding)
+        if any(finding.level == "stop" for finding in findings):
+            print("\nStopping before anything changes: fix the store settings marked [stop] and re-run.")
+            return 3
+        for placeholder in leave_ca_placeholders(env_values, environ, SECRETS_DIR):
+            print(f"    Left an empty {placeholder}: the overlay mounts it, and nothing reads it while that store does not verify its server.")
+        return 0
+    if args.command == "compose-file":
+        try:
+            configured = stores.read_stores(env_values, environ)
+        except stores.StoreConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 3
+        change = sync_compose_file(ENV_FILE, args.files, bool(configured.external))
+        if change:
+            print(f"    {change}")
+        return 0
+    if args.command in ("store-files", "stack-container"):
+        try:
+            configured = stores.read_stores(env_values, environ)
+        except stores.StoreConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 3
+        if args.command == "stack-container":
+            print(configured.stack_container)
+        for store in configured.external if args.command == "store-files" else ():
+            print(f"{stores.OVERLAYS[store]} {stores.STORE_CHECK_SERVICES[store]}")
+        return 0
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))
         return 0

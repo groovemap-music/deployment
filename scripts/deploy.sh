@@ -12,14 +12,19 @@
 # policies) go in an untracked docker-compose.override.yml. When it exists, every Compose call
 # and the gate add it last, after it passes the override check.
 #
+# PostgreSQL and Valkey are the stack's own containers unless .env sets GROOVEMAP_POSTGRES or
+# GROOVEMAP_VALKEY to external. Then every Compose call adds that store's overlay
+# (docker-compose.external-*.yml) after the production overlay, the gate adds it the same way,
+# and its read-only store-check one-shot must pass before anything starts.
+#
 # The decisions (preflight minimums, Neo4j sizing, the override check, .env edits, endpoints)
 # live in scripts/deploy_helpers.py, which runs on the distro's own python3 (stdlib only). This starts containers, so it is operator-run only and never part
 # of `just check`.
 #
 # Exit codes: 0 done (or phase 1 started with --no-wait), 1 a step failed, 2 bad arguments,
-# 3 preflight stopped before changing anything, or the override check stopped before any
-# container started, 130 interrupted while waiting (the import keeps running in Docker; re-run
-# to resume).
+# 3 preflight, the store settings or an external store's check stopped before changing anything,
+# or the override check stopped before any container started, 130 interrupted while waiting (the
+# import keeps running in Docker; re-run to resume).
 
 set -euo pipefail
 
@@ -54,7 +59,7 @@ Options:
   --force               go ahead even below the memory and disk minimums
   -h, --help            show this help
 
-Exit codes: 0 done, 1 a step failed, 2 bad arguments, 3 stopped by the host or override
+Exit codes: 0 done, 1 a step failed, 2 bad arguments, 3 stopped by the host, store or override
 checks, 130 interrupted while waiting (the import keeps running; re-run to resume).
 EOF
 }
@@ -135,21 +140,6 @@ resume_command() {
   printf '%s' "${quoted% }"
 }
 
-compose=(docker compose)
-gate=("${PYTHON[@]}" scripts/discogs_import_status.py)
-[[ -n "$project" ]] && compose+=(--project-name "$project") && gate+=(--project-name "$project")
-compose+=(-f docker-compose.yml)
-if [[ "$mode" == prod ]]; then
-  compose+=(-f docker-compose.prod.yml)
-  gate+=(--prod)
-fi
-# Compose reads docker-compose.override.yml by itself only when no -f is given, so name it, last.
-stack_without_override=("${compose[@]}")
-if [[ -f "$OVERRIDE" ]]; then
-  compose+=(-f "$OVERRIDE")
-  gate+=(-f "$OVERRIDE")
-fi
-
 status_command() {
   local command=("${PYTHON[@]}" scripts/discogs_import_status.py)
   [[ "$INVOKED_AS" == "just deploy" ]] && command=(just discogs-import-status)
@@ -187,6 +177,27 @@ else
   note "No .env yet: creating one from .env.example with the reviewed image digests."
   "${PYTHON[@]}" scripts/env-init.py | indent
 fi
+# Where PostgreSQL and Valkey live. Checked before secrets/ is filled: an external store's
+# credentials are the operator's, and create-secrets.sh must not invent them.
+store_args=(--mode "$mode")
+[[ -n "$project" ]] && store_args+=(--project-name "$project")
+status=0
+helper stores "${store_args[@]}" || status=$?
+if ((status == 3)); then
+  exit 3
+elif ((status != 0)); then
+  echo "deploy: the store settings check failed unexpectedly (exit $status)" >&2
+  exit 1
+fi
+store_files=()
+store_checks=()
+while read -r file service; do
+  [[ -n "$file" ]] || continue
+  store_files+=("$file")
+  store_checks+=("$service")
+done < <(helper store-files)
+stack_container="$(helper stack-container)"
+
 if [[ "$mode" == prod ]]; then
   note "Creating any missing secrets in secrets/ (existing ones are never replaced):"
   bash scripts/create-secrets.sh | indent
@@ -195,6 +206,37 @@ else
   note "The development stack uses the fixed local credentials and sizes in docker-compose.yml;"
   note "no secrets or sizing to write."
 fi
+
+# The files every Compose call names, in order. The external-store overlays come right after the
+# production overlay; the gate reads the same GROOVEMAP_* settings and adds them itself.
+files=(docker-compose.yml)
+gate=("${PYTHON[@]}" scripts/discogs_import_status.py)
+[[ -n "$project" ]] && gate+=(--project-name "$project")
+if [[ "$mode" == prod ]]; then
+  files+=(docker-compose.prod.yml)
+  gate+=(--prod)
+fi
+files+=(${store_files[@]+"${store_files[@]}"})
+compose_with() {
+  compose=(docker compose)
+  [[ -n "$project" ]] && compose+=(--project-name "$project")
+  local file
+  for file in "$@"; do
+    compose+=(-f "$file")
+  done
+}
+compose_with "${files[@]}"
+# Compose reads docker-compose.override.yml by itself only when no -f is given, so name it, last.
+stack_without_override=("${compose[@]}")
+if [[ -f "$OVERRIDE" ]]; then
+  files+=("$OVERRIDE")
+  compose_with "${files[@]}"
+  gate+=(-f "$OVERRIDE")
+fi
+# With an external store a bare `docker compose` must use these files too, or it would start the
+# local stores and point the services at them: keep COMPOSE_FILE in .env equal to them. With both
+# stores local this removes only a COMPOSE_FILE deploy wrote.
+helper compose-file "${files[@]}"
 
 # The override may add host-specific settings, but not swap an image, flip the musicbrainz
 # profile, rename a container or publish a data-tier port: compare Compose's renders without and
@@ -258,9 +300,24 @@ elif ((status != 0)); then
   exit 1
 fi
 
+# An external store is verified by its read-only store-check one-shot before anything starts or
+# is decided: unreachable, too old, wrongly configured or pooled by transaction, it stops here, so
+# the stack never starts against it and MusicBrainz is never enabled on a guess.
+if ((${#store_checks[@]})); then
+  say "Checking the external stores"
+  note "Each check only reads (scripts/store-check-*.sh); nothing starts until every one passes."
+  for service in "${store_checks[@]}"; do
+    if ! "${compose[@]}" run --rm --no-deps -T "$service"; then
+      echo "deploy: $service refused the external store (see above); nothing was started or changed" >&2
+      exit 3
+    fi
+  done
+fi
+
 # --- 3. where are we? ------------------------------------------------------------------
 
-stack_running() { [[ -n "$(docker ps -q --filter 'name=^groovemap-postgres$')" ]]; }
+# The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
+stack_running() { [[ -n "$(docker ps -q --filter "name=^${stack_container}\$")" ]]; }
 
 # Evidence that MusicBrainz already ran here is MusicBrainz-exclusive only: its containers, a volume
 # no other service mounts, or a loader_extraction_latch row for it. Phase 1 itself creates

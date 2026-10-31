@@ -48,7 +48,10 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
 3. **Never deploy the base file alone as production.** Production is always
    `-f docker-compose.yml -f docker-compose.prod.yml`, plus `-f docker-compose.override.yml`
    last when it exists. A bare `docker compose up` in the checkout starts the development
-   stack, which has fixed, public credentials.
+   stack, which has fixed, public credentials. The one exception is an external store (step
+   2a): then `just deploy` keeps `COMPOSE_FILE` in `.env` listing the production files, the
+   external overlays and the override, so a bare command uses exactly those. Never edit or
+   remove that line.
 4. **GrooveMap's images are linux/amd64 only.** On an arm64 host they run under emulation,
    several times slower, and the first load takes days longer. Tell the user before deploying.
    Pass `just deploy --yes` only after they agree. Multi-arch images are tracked as
@@ -134,30 +137,45 @@ If only one of the two exists, adapt the wording to name that one and say that t
 dedicated either way. If neither exists, do not ask: the stack's own stores are the only option.
 Then explain both options, recommend one, and wait for the answer:
 
-- **Dedicated instances (what the stack deploys today).** Compatible by construction, isolated,
-  sized by the production overlay, and the only option the tooling supports. Cost: a few
-  more containers and their memory, and one more PostgreSQL and Valkey to back up.
-- **Reuse compatible existing services.** Saves memory and a backup target, but needs a
-  separate GrooveMap database and dedicated role, a connection budget, PgBouncer in session
-  mode only, a Valkey that is `noeviction` with AOF and not shared with another
-  application, and operator-run changes on services GrooveMap does not own.
-  **Reuse is not deployable today** (blockers in
-  [references/shared-services.md](references/shared-services.md#current-status-not-deployable)).
+- **Dedicated instances (the default).** Compatible by construction, isolated, sized by the
+  production overlay, and deployable today. Cost: a few more containers and their memory, and
+  one more PostgreSQL and Valkey to back up.
+- **Reuse compatible existing services (the external-stores mode).** Saves memory and a backup
+  target, but needs a separate GrooveMap database and dedicated role, a connection budget,
+  PgBouncer in session mode only, a Valkey that is `noeviction` with AOF and a key prefix no
+  other application uses, TLS to both (or an explicit, risky cleartext opt-out on a network
+  the user trusts), and operator-run changes on services GrooveMap does not own.
+  **Reuse is refused until the capability floors are met**, and today they are not: `just deploy`
+  stops with exit 3 until the reviewed images include database-schema's pre-provisioned mode
+  (PostgreSQL) and catalog-api and analytics-engine with the key prefix and TLS (Valkey). Status and
+  procedure: [references/shared-services.md](references/shared-services.md).
 
 Recommendation rule: recommend **dedicated** unless every one of compatibility (PostgreSQL 18
-with `pg_trgm` and `vector` available; Valkey with the needed version), isolation (an instance
-no other application depends on, or a dedicated database and role), capacity (connection and
-memory headroom) and operational impact (the operator owns its upgrades and restarts) passes.
-While reuse is not deployable, dedicated is the recommendation whatever the matrix says, and
-say why. Discovery is never authorization to reuse, connect to or reconfigure anything.
+with `pg_trgm` and the connection budget; Valkey 8.0 or newer with `noeviction` and AOF),
+isolation (an instance no other application depends on, or a dedicated database and role and
+a prefix of its own), capacity (connection and memory headroom) and operational impact (the
+operator owns its upgrades, restarts and backups) passes, **and** that store's capability
+floor is met. Read the floor in `scripts/check-images.py` (`EXTERNAL_STORE_FLOORS`): a store
+whose floor is `unreleased` cannot be external yet. While it is, dedicated is the
+recommendation whatever the matrix says, and say why. Discovery is never authorization to
+reuse, connect to or reconfigure anything.
 
 What happens on each answer:
 
 - **Dedicated:** continue with step 3.
-- **Reuse:** explain that it is not deployable and name the blockers and
-  `gm-deployment-e1uh`. **Keep the deployment stopped**: write no override, start nothing.
-  Offer dedicated instances, or waiting until the upstream work lands. Never work around it
-  by editing connection variables in the override; the override check refuses that.
+- **Reuse, floor not met (today):** explain that `just deploy` refuses it and why, naming the
+  unreleased upstream work and `gm-deployment-e1uh`. **Keep the deployment stopped**: write no
+  override, set no store variable, start nothing. Offer dedicated instances, or waiting until
+  the releases are promoted. Never work around it by editing connection variables in the
+  override; the override check refuses that.
+- **Reuse, floor met:** follow the procedure in
+  [references/shared-services.md](references/shared-services.md#procedure). The operator runs
+  the provisioning SQL and writes the credentials into `secrets/`; you never run a write on a
+  shared server and never see or print a credential. You set only the `GROOVEMAP_*` and
+  `EXTERNAL_*` values in `.env`, with approval, and `just deploy` verifies both servers
+  read-only before anything starts. Never set an `EXTERNAL_*_ALLOW_PLAINTEXT` opt-out on your
+  own: explain the risk (anyone on the network path can read the password and the data) and
+  set it only if the user asks for it.
 - **No answer or unsure:** stay stopped and ask again. Never default to reuse.
 
 ### 3. Propose a plan and get approval
@@ -172,8 +190,9 @@ Present the plan before you write anything. Cover:
 - **Network:** a different subnet if `172.20.0.0/16` is taken.
 - **Stack manager:** how GrooveMap fits it. See
   [references/stack-managers.md](references/stack-managers.md).
-- **Stores:** the answer from step 2a. Reuse is not deployable (`gm-deployment-e1uh`), so the
-  plan uses dedicated instances.
+- **Stores:** the answer from step 2a. Reuse is refused until its capability floor is met
+  (`gm-deployment-e1uh`), so today the plan uses dedicated instances. Once it is met, list the
+  external servers, the `.env` values and the operator's provisioning steps.
 - **Changes outside the checkout:** each one listed separately, each needing a yes.
 - **Expectations:** the first load runs for hours to about two days on the reference hardware,
   longer on a small or emulated host.
@@ -195,6 +214,9 @@ Inside the checkout:
    - `GRAFANA_URL`: the browser-facing Grafana URL, if Grafana is proxied (`TRACES_URL`
      follows it).
    - `COMPOSE_PROJECT_NAME`: fresh installs only (step 1).
+   - `GROOVEMAP_POSTGRES` / `GROOVEMAP_VALKEY` and their `EXTERNAL_*` values: only for a store the
+     user chose to reuse in step 2a and whose capability floor is met
+     ([references/shared-services.md](references/shared-services.md#procedure)).
 
    The full list is in `docs/configuration.md` in the checkout, under "Host ports and bind
    addresses" and "Production Secrets".
@@ -296,7 +318,8 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
 - [references/discovery.md](references/discovery.md): read-only commands, and what to look for
   in their output.
 - [references/shared-services.md](references/shared-services.md): reusing an existing
-  PostgreSQL or Valkey: requirements, and why it is not deployable yet.
+  PostgreSQL or Valkey: requirements, the external-stores procedure, and why it is refused
+  until the capability floors are met.
 - [references/override.md](references/override.md): how the override merges, what deploy
   rejects, restart policies, subnet.
 - [references/reverse-proxy.md](references/reverse-proxy.md): Traefik, Caddy, nginx, Nginx

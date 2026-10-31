@@ -145,9 +145,11 @@ the key and mount rules cover. The override may not point GrooveMap at an extern
 the check stops (exit 3, before any `compose up`) when it changes `POSTGRES_HOST`,
 `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_USERNAME`, `VALKEY_HOST` or `VALKEY_PORT`, or
 their `_FILE` variants, on any stack service (an `env_file` counts, because Compose inlines it
-into the rendered environment), or changes a `postgres_*` or `valkey_*` secret's source. External
-stores are not supported yet because the deploy gate and the MusicBrainz latch probe read this
-stack's own `postgres` container; see `gm-deployment-e1uh` and [homelab.md](homelab.md#existing-postgresql-and-valkey).
+into the rendered environment), or changes a `postgres_*` or `valkey_*` secret's source. An
+existing PostgreSQL or Valkey is reached only through the supported
+[external-stores mode](#external-postgresql-and-valkey), whose overlays are part of the render
+on both sides of this comparison: the deploy gate and the MusicBrainz latch probe follow that
+mode, not an override. See `gm-deployment-e1uh` and [homelab.md](homelab.md#existing-postgresql-and-valkey).
 `POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` only publish a port and stay allowed. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
@@ -169,6 +171,7 @@ The following groups are interpolated by the executable stack:
 | `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
+| `EXTERNAL_POSTGRES_HOST`, `EXTERNAL_POSTGRES_PORT`, `EXTERNAL_POSTGRES_DATABASE`, `EXTERNAL_VALKEY_HOST`, `EXTERNAL_VALKEY_PORT`, `EXTERNAL_VALKEY_DB`, `EXTERNAL_VALKEY_KEY_PREFIX` | External-store overlays only, selected by `GROOVEMAP_POSTGRES` and `GROOVEMAP_VALKEY`; see [External PostgreSQL and Valkey](#external-postgresql-and-valkey) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
@@ -494,7 +497,7 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 
 ### PostgreSQL Configuration
 
-> These variables describe the stack's own `postgres`. Pointing them at an existing PostgreSQL is not supported yet and the override check refuses it (`gm-deployment-e1uh`; see [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). Reuse would also need PgBouncer in session mode only.
+> These variables describe how a service reaches PostgreSQL. The stack sets them for its own `postgres`; to use an existing PostgreSQL, select the [external-stores mode](#external-postgresql-and-valkey) in `.env` instead of changing them (the override check refuses that; `gm-deployment-e1uh`, [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). Reuse needs PgBouncer in session mode only.
 
 | Variable            | Description                                  | Default          | Required |
 | ------------------- | -------------------------------------------- | ---------------- | -------- |
@@ -573,7 +576,7 @@ POSTGRES_POOL_MAX_SIZE=20
 
 ### Valkey Configuration
 
-> These variables describe the stack's own `valkey`. Pointing them at an existing Valkey is not supported yet and the override check refuses it (`gm-deployment-e1uh`; see [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). A separate logical database is not a security boundary.
+> These variables describe how a service reaches Valkey. The stack sets them for its own `valkey`; to use an existing Valkey, select the [external-stores mode](#external-postgresql-and-valkey) in `.env` instead of changing them (the override check refuses that; `gm-deployment-e1uh`, [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)). A separate logical database is not a security boundary.
 
 | Variable         | Description                            | Default     | Required                               |
 | ---------------- | -------------------------------------- | ----------- | -------------------------------------- |
@@ -631,6 +634,75 @@ VALKEY_PASSWORD_FILE="/run/secrets/valkey_password"
 - Persistence: append-only file enabled (`--appendonly yes`) on the
   `valkey_data` volume; Valkey is used as a cache plus security state, and
   container replacement does not discard the volume automatically.
+
+### External PostgreSQL and Valkey
+
+Production overlay only. `just deploy` and `just discogs-import-status --prod` read these from
+the shell, then `.env`, and add `docker-compose.external-postgres.yml` or
+`docker-compose.external-valkey.yml` after `docker-compose.prod.yml`. Unset, they change nothing:
+the rendered stack is byte for byte the dedicated one. `just deploy` refuses an external store
+(exit 3) until the reviewed images support it (`EXTERNAL_STORE_FLOORS` in
+`scripts/check-images.py`, both `unreleased` today). The procedure and what each server needs
+are in [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GROOVEMAP_POSTGRES` | `local` | `local`: the stack's own `postgres`. `external`: the server below; `postgres` and `postgres-exporter` move to the never-enabled `local-stores` profile |
+| `EXTERNAL_POSTGRES_HOST` | none, required | Host of the existing server, reachable from containers (`host.docker.internal` for one on the Docker host) |
+| `EXTERNAL_POSTGRES_PORT` | `5432` | Its port; a PgBouncer there must pool by session |
+| `EXTERNAL_POSTGRES_DATABASE` | `groovemap` | GrooveMap's own database, never `postgres` or a template |
+| `EXTERNAL_POSTGRES_SSLMODE` | `verify-full` | libpq `sslmode` for every PostgreSQL client (`PGSSLMODE`). `verify-full` and `verify-ca` check the server against `secrets/postgres_ca.crt` (`PGSSLROOTCERT`); `require` encrypts without verifying (a warning); `disable`, `allow` and `prefer` are cleartext |
+| `EXTERNAL_POSTGRES_ALLOW_PLAINTEXT` | `false` | `true` accepts a cleartext mode to a server off this machine; the password and every query can then be read and the server impersonated on the network path |
+| `GROOVEMAP_VALKEY` | `local` | `local`: the stack's own `valkey`. `external`: the server below; `valkey` and `valkey-exporter` move to `local-stores` |
+| `EXTERNAL_VALKEY_HOST` | none, required | Host of the existing Valkey or Redis |
+| `EXTERNAL_VALKEY_PORT` | `6379` | Its port |
+| `EXTERNAL_VALKEY_DB` | `0` | Logical database number (0-255) |
+| `EXTERNAL_VALKEY_KEY_PREFIX` | none, required | Prefix of every GrooveMap key (`VALKEY_KEY_PREFIX`), letters, digits and `_-.:`; no other application may use it |
+| `EXTERNAL_VALKEY_TLS` | `true` | TLS (`VALKEY_TLS`, `valkeys://`), verified against `secrets/valkey_ca.crt` (`VALKEY_TLS_CA_FILE`). Strict: true/false, 1/0, yes/no, on/off |
+| `EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME` | `true` | `false` checks the certificate chain but not the host name (a warning) |
+| `EXTERNAL_VALKEY_ALLOW_PLAINTEXT` | `false` | `true` accepts `EXTERNAL_VALKEY_TLS=false` to a server off this machine; the password and every key and value can then be read on the network path |
+
+Off this machine means any host but loopback and `host.docker.internal` (this Docker host, which
+the overlays map to the host gateway). A container name on a shared Docker network counts as off
+this machine, because nothing can tell that network from one that spans hosts.
+
+The credentials are Docker secrets you write before deploying: the GrooveMap role in
+`secrets/postgres_username.txt` and `secrets/postgres_password.txt`, the Valkey password in
+`secrets/valkey_password.txt`, and the CA certificates in `secrets/postgres_ca.crt` and
+`secrets/valkey_ca.crt` when that store verifies its server (with TLS off, or a non-verifying
+`sslmode`, `just deploy` leaves an empty placeholder that nothing reads, because the overlay
+mounts the file either way). In this mode `just deploy` never lets `create-secrets.sh` invent
+them. No GrooveMap service sets `sslmode` itself (they all connect through libpq), so the
+`PGSSLMODE` and `PGSSLROOTCERT` environment applies to every one. The services read them through the same `_FILE` variables as with the local stores;
+`schema-init` also gets `POSTGRES_PREPROVISIONED=true`, so it verifies the database, role and
+`pg_trgm` and never creates a database, role or extension.
+
+Two read-only one-shots verify each server before any service connects, on every
+`docker compose up` and first on their own in `just deploy`. They run the stack's own pinned
+images, read the credentials from the secret files, and print `ok:` lines or one `FAILED:`
+line with the reason:
+
+- `store-check-postgres` (`scripts/store-check-postgres.sh`): the TLS settings (and that the
+  session really is encrypted when they ask for it), connection, PostgreSQL 18 or newer,
+  `pg_trgm`, `CREATE` on the database and `public`, at least 60 usable connections and no lower
+  role or database limit, and session pooling (two concurrent sessions must get two server
+  backends, which a PgBouncer in transaction or statement mode does not give). It runs `SELECT`
+  and `SHOW` only, inside the configured database.
+- `store-check-valkey` (`scripts/store-check-valkey.sh`): the TLS settings, the prefix,
+  connection, authentication required, Valkey 8.0 or newer (or Redis 7.2),
+  `maxmemory-policy noeviction` and AOF on. It sends `AUTH`, `SELECT`, `PING`, `INFO` and
+  `QUIT` only, never a key, `FLUSH*` or `CONFIG`. Over TLS it sends no credential until the
+  server's certificate has verified against `secrets/valkey_ca.crt` for `EXTERNAL_VALKEY_HOST`
+  (`openssl s_client -verify_hostname -verify_return_error`), and it sends the password only on
+  a connection verified that way: `valkey-cli` checks the certificate chain but never the host
+  name, so it is used only in cleartext mode. `EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME=false` skips
+  the host name, still verifies the chain, and warns.
+
+While a store is external, `just deploy` keeps `COMPOSE_FILE` in `.env` equal to the files it
+uses (base, production overlay, external overlays, `docker-compose.override.yml` when present,
+joined by the platform's path separator) under a marker comment, so a bare `docker compose`
+addresses the same stack. It refuses a `COMPOSE_FILE` it did not write, in `.env` or the shell,
+and removes its own once both stores are local again.
 
 ## JWT Configuration
 
