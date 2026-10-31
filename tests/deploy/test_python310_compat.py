@@ -72,7 +72,7 @@ def test_deploy_time_code_paths_run_on_python_3_10_with_only_the_stdlib() -> Non
 
 
 def test_env_init_writes_env_on_python_3_10(tmp_path: Path) -> None:
-    for relative in ("scripts/env-init.py", "scripts/check-images.py", ".env.example"):
+    for relative in ("scripts/env-init.py", "scripts/check-images.py", "scripts/deploy_helpers.py", ".env.example"):
         (tmp_path / relative).parent.mkdir(exist_ok=True)
         shutil.copy(ROOT / relative, tmp_path / relative)
     for _ in range(2):
@@ -80,3 +80,7 @@ def test_env_init_writes_env_on_python_3_10(tmp_path: Path) -> None:
         assert result.returncode == 0, result.stderr
     assert "REPLACE_WITH_64_HEX_CHARACTERS" not in (tmp_path / ".env").read_text()
     assert len(list(tmp_path.glob(".env.*.bak"))) == 1
+    (tmp_path / ".env").write_text((tmp_path / ".env").read_text() + "WEB_BIND_ADDRESS=10.0.0.5\n")
+    result = _python310(str(tmp_path / "scripts" / "env-init.py"))
+    assert result.returncode == 0, result.stderr
+    assert "WEB_BIND_ADDRESS=10.0.0.5" in (tmp_path / ".env").read_text()

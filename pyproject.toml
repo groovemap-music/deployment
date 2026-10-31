@@ -67,7 +67,6 @@ lines-after-imports = 2
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["PLC", "S105", "S106", "S107", "S603", "T201"]
 "scripts/*.py" = ["S108", "T201"]
-"skills/*/scripts/*.py" = ["T201"]
 
 [tool.mypy]
 python_version = "3.14"
@@ -82,7 +81,7 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
-files = ["scripts", "skills", "tests/deploy"]
+files = ["scripts", "tests/deploy"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --tb=short"

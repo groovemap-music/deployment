@@ -249,22 +249,21 @@ the directory on an existing deployment: the stack would come up on new, empty v
 > run `just deploy`, which detects existing MusicBrainz containers or volumes and sets it
 > for you. Otherwise a plain `docker compose up -d` no longer manages the MusicBrainz services.
 
-To move to newly reviewed image digests, pull this repository and refresh `.env`. Be aware that
-`just env-init --force` regenerates `.env` from the template, keeping the old file as a
-timestamped backup (`.env.<timestamp>.bak`), and so drops host-specific values: `APP_BASE_URL`,
-bind addresses, port remaps, Neo4j sizing. The groovemap-homelab skill carries them across with
-`skills/groovemap-homelab/scripts/carry_env.py`: run from the checkout right after the pull,
+To move to newly reviewed image digests, pull this repository, refresh `.env` and redeploy:
 
 ```bash
-git rev-parse HEAD                         # note this before pulling
 git pull
-just env-init --force
-python3 skills/groovemap-homelab/scripts/carry_env.py --since <commit before the pull> .env.<timestamp>.bak
+just env-init      # or: python3 scripts/env-init.py
+just deploy        # or: bash scripts/deploy.sh
 ```
 
-It copies values that differ from the old template and never the `*_IMAGE` digests. A built-in
-merge mode for `just env-init` is coming; until then use this flow or re-apply the values by hand.
-Then run `just deploy` to bring the stack up to date.
+With an existing `.env`, `just env-init` rewrites only the `*_IMAGE` lines to the reviewed
+digests and appends any key the new `.env.example` has and your file lacks, under a comment.
+Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOST_PORT` remaps,
+`COMPOSE_PROFILES` and the Neo4j sizing that `just deploy` wrote. It keeps the previous file as
+`.env.<timestamp>.bak`, lists what it changed, and does nothing when `.env` is already current.
+`just env-init --force` instead regenerates `.env` from the template; it warns which of your
+values it drops, and the backup still has them.
 
 ## Known limitations
 
@@ -275,7 +274,7 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   sign-in silently returns to the login form. Put a TLS reverse proxy in front of the console
   ([details](configuration.md#console-session-cookie-and-https)). Do not work around it by
   turning the opt-out on.
-- **`just env-init --force` drops host-specific values.** See
+- **`just env-init --force` drops host-specific values.** Plain `just env-init` keeps them; see
   [Upgrading](#upgrading-an-existing-deployment).
 - **The disk preflight measures only Docker's data root.** See [Hardware and sizing](#hardware-and-sizing).
 - **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See

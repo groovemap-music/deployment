@@ -118,3 +118,106 @@ def test_force_keeps_the_previous_env_as_a_timestamped_backup(tmp_path: Path) ->
 def test_just_recipe_runs_the_generator_with_forwarded_arguments() -> None:
     justfile = (ROOT / "Justfile").read_text()
     assert "env-init *args:\n    uv run python scripts/env-init.py {{args}}" in justfile
+
+
+# --- upgrading an existing .env in place -------------------------------------------------
+
+REPO = "ghcr.io/groovemap-music/catalog-api"
+TEMPLATE_TEXT = f"# template\nCATALOG_API_IMAGE={REPO}@sha256:REPLACE_WITH_64_HEX_CHARACTERS\nWEB_BIND_ADDRESS=0.0.0.0\nNEW_KEY=fresh\n"
+OPERATOR_ENV = (
+    "# mine\n"
+    f"CATALOG_API_IMAGE={REPO}@sha256:{'0' * 64}\n"
+    "WEB_BIND_ADDRESS=10.0.0.5\n"
+    "WEB_HOST_PORT=8081   # remapped\n"
+    "\n"
+    "# Neo4j sizing written by just deploy for about 16 GB of memory (docs/configuration.md). Edit freely; deploy will not rewrite it.\n"
+    "NEO4J_HEAP_SIZE=6g\n"
+    "COMPOSE_PROFILES=musicbrainz\n"
+)
+
+
+def _upgrade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_text: str | None, *args: str) -> Path:
+    (tmp_path / ".env.example").write_text(TEMPLATE_TEXT)
+    target = tmp_path / ".env"
+    if env_text is not None:
+        target.write_text(env_text)
+    monkeypatch.setattr(env_init, "TEMPLATE", tmp_path / ".env.example")
+    monkeypatch.setattr(env_init, "TARGET", target)
+    monkeypatch.setattr(env_init, "load_release_digests", lambda: {"CATALOG_API_IMAGE": "a" * 64})
+    assert env_init.main(list(args)) == 0
+    return target
+
+
+def _backups(tmp_path: Path) -> list[Path]:
+    return sorted(tmp_path.glob(".env.*.bak"))
+
+
+def test_upgrade_refreshes_digests_and_keeps_every_other_line_byte_for_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV)
+    text = target.read_text()
+
+    assert f"CATALOG_API_IMAGE={REPO}@sha256:{'a' * 64}\n" in text
+    kept = OPERATOR_ENV.replace("0" * 64, "a" * 64)
+    assert text.startswith(kept)
+    for line in ("WEB_BIND_ADDRESS=10.0.0.5", "WEB_HOST_PORT=8081   # remapped", "COMPOSE_PROFILES=musicbrainz", "NEO4J_HEAP_SIZE=6g"):
+        assert line in text.splitlines()
+    assert "# Neo4j sizing written by just deploy for about 16 GB" in text
+    out = capsys.readouterr().out
+    assert "CATALOG_API_IMAGE" in out
+    assert "NEW_KEY" in out
+
+
+def test_upgrade_appends_missing_template_keys_as_new(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    text = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV).read_text()
+    assert text.endswith("# Added by just env-init: new in .env.example since this file was written\nNEW_KEY=fresh\n")
+    assert text.count("WEB_BIND_ADDRESS=") == 1
+
+
+def test_upgrade_keeps_a_timestamped_backup_of_the_previous_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _upgrade(tmp_path, monkeypatch, OPERATOR_ENV)
+    (backup,) = _backups(tmp_path)
+    assert re.fullmatch(r"\.env\.\d{8}T\d{12}Z\.bak", backup.name)
+    assert backup.read_text() == OPERATOR_ENV
+
+
+def test_upgrade_is_a_no_op_when_the_file_is_current(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV)
+    for backup in _backups(tmp_path):
+        backup.unlink()
+    upgraded = target.read_text()
+    capsys.readouterr()
+
+    assert env_init.main([]) == 0
+    assert target.read_text() == upgraded
+    assert _backups(tmp_path) == []
+    assert "already up to date" in capsys.readouterr().out
+
+
+def test_upgrade_adds_a_missing_image_line_with_its_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _upgrade(tmp_path, monkeypatch, "WEB_BIND_ADDRESS=10.0.0.5\nNEW_KEY=mine\n")
+    text = target.read_text()
+    assert f"CATALOG_API_IMAGE={REPO}@sha256:{'a' * 64}\n" in text
+    assert "NEW_KEY=mine\n" in text
+    assert "NEW_KEY=fresh" not in text
+
+
+def test_force_regenerates_from_the_template_and_warns_about_dropped_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = _upgrade(tmp_path, monkeypatch, OPERATOR_ENV, "--force")
+    assert target.read_text() == env_init.render_env(TEMPLATE_TEXT, {"CATALOG_API_IMAGE": "a" * 64})
+    assert _backups(tmp_path)[0].read_text() == OPERATOR_ENV
+    err = capsys.readouterr().err
+    assert "WEB_BIND_ADDRESS" in err
+    assert "WEB_HOST_PORT" in err
+    assert "COMPOSE_PROFILES" in err
+    assert "NEO4J_HEAP_SIZE" in err
+    assert "CATALOG_API_IMAGE" not in err
+
+
+def test_a_missing_env_is_created_from_the_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _upgrade(tmp_path, monkeypatch, None)
+    assert target.read_text() == env_init.render_env(TEMPLATE_TEXT, {"CATALOG_API_IMAGE": "a" * 64})
+    assert _backups(tmp_path) == []
