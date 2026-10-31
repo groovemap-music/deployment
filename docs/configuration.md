@@ -141,7 +141,14 @@ not redefine a network that a data-tier service uses (`name`, `external`, `drive
 service's `networks`; changing its `ipam` subnet is fine. A new service that omits `networks`
 joins the project's default network, a separate network from `groovemap`, so it needs no
 network opt-in; that says nothing about what the service reaches on the host or LAN, which
-the key and mount rules cover. Move published ports with the
+the key and mount rules cover. The override may not point GrooveMap at an external PostgreSQL or Valkey, with no opt-in:
+the check stops (exit 3, before any `compose up`) when it changes `POSTGRES_HOST`,
+`POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_USERNAME`, `VALKEY_HOST` or `VALKEY_PORT`, or
+their `_FILE` variants, on any stack service (an `env_file` counts, because Compose inlines it
+into the rendered environment), or changes a `postgres_*` or `valkey_*` secret's source. External
+stores are not supported yet because the deploy gate and the MusicBrainz latch probe read this
+stack's own `postgres` container; see `gm-deployment-e1uh` and [homelab.md](homelab.md).
+`POSTGRES_HOST_PORT` and `VALKEY_HOST_PORT` only publish a port and stay allowed. Move published ports with the
 [host port and bind address variables](#host-ports-and-bind-addresses) in
 `.env` instead. Run `just discogs-import-status --prod -f docker-compose.override.yml`
 to address the same stack by hand.
