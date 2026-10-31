@@ -1,0 +1,762 @@
+"""Regression tests for `just deploy` (scripts/deploy.sh and scripts/deploy_helpers.py).
+
+Nothing here starts a container. The helpers' decisions are pure and tested in-process; the
+shell script runs from a scratch copy of the repository layout with a fake `docker` and a fake
+import gate on PATH, so every Docker call is recorded instead of made, and the real repository's
+.env and secrets/ are never touched.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+GIB = 1024**3
+_BASH = shutil.which("bash") or "/bin/bash"
+
+
+def _load() -> Any:
+    spec = importlib.util.spec_from_file_location("deploy_helpers", ROOT / "scripts" / "deploy_helpers.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+helpers = _load()
+
+
+# --- .env handling ---------------------------------------------------------------------
+
+
+def test_parse_env_reads_assignments_like_compose() -> None:
+    text = "# COMPOSE_PROFILES=musicbrainz\nA=1\nexport B=two\nC='quoted # kept'\nD=value # comment\nE=\n  # F=no\n"
+    assert helpers.parse_env(text) == {"A": "1", "B": "two", "C": "quoted # kept", "D": "value", "E": ""}
+
+
+def test_set_env_values_replaces_in_place_and_appends_the_rest_under_a_comment() -> None:
+    text = "# COMPOSE_PROFILES=musicbrainz\nNEO4J_HEAP_SIZE=2G\nOTHER=x"
+    updated = helpers.set_env_values(text, {"NEO4J_HEAP_SIZE": "8g", "COMPOSE_PROFILES": "musicbrainz"}, "# added")
+    assert updated == "# COMPOSE_PROFILES=musicbrainz\nNEO4J_HEAP_SIZE=8g\nOTHER=x\n\n# added\nCOMPOSE_PROFILES=musicbrainz\n"
+
+
+def test_shell_environment_outranks_env_file_and_empty_means_default() -> None:
+    assert helpers.effective("K", {"K": "file"}, {"K": "shell"}) == "shell"
+    assert helpers.effective("K", {"K": "file"}, {}) == "file"
+    assert helpers.effective("K", {"K": ""}, {}, "default") == "default"
+
+
+def test_profiles_merge_without_duplicates() -> None:
+    assert helpers.merge_profiles("") == "musicbrainz"
+    assert helpers.merge_profiles("jobs") == "jobs,musicbrainz"
+    assert helpers.merge_profiles("musicbrainz, jobs") == "musicbrainz,jobs"
+    assert helpers.has_profile("jobs, musicbrainz")
+    assert not helpers.has_profile("musicbrainz-extra")
+
+
+@pytest.mark.parametrize(
+    ("explicit", "env_values", "expected"),
+    [("Custom.Name", {}, "customname"), (None, {"COMPOSE_PROJECT_NAME": "fromenv"}, "fromenv"), (None, {}, "deployment")],
+)
+def test_project_name_follows_compose(explicit: str | None, env_values: dict[str, str], expected: str) -> None:
+    assert helpers.project_name(explicit, env_values, {}, Path("/srv/Deployment")) == expected
+
+
+# --- sizing ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("total", "expected"),
+    [
+        (8, (1, 3, 5, 1)),
+        (16, (2, 6, 12, 1)),
+        (24, (4, 8, 20, 2)),
+        (32, (5, 11, 28, 3)),
+        (48, (8, 16, 44, 5)),
+        (64, (8, 16, 48, 5)),
+        (256, (8, 16, 48, 5)),
+    ],
+)
+def test_neo4j_sizing_formula(total: int, expected: tuple[int, int, int, int]) -> None:
+    sizing = helpers.neo4j_sizing(total)
+    assert (sizing.heap, sizing.pagecache, sizing.limit, sizing.transaction) == expected
+    assert sizing.heap + sizing.pagecache < sizing.limit
+    if total >= 16:
+        assert sizing.limit <= total - 4
+        # The transaction cap lives inside the heap and only bounds anything below it.
+        assert sizing.transaction < sizing.heap
+
+
+def test_large_hosts_get_the_overlay_defaults_with_a_transaction_cap_below_the_heap() -> None:
+    overlay = (ROOT / "docker-compose.prod.yml").read_text()
+    sizing = helpers.neo4j_sizing(64).env()
+    for key in ("NEO4J_HEAP_SIZE", "NEO4J_PAGECACHE_SIZE", "NEO4J_MEMORY_LIMIT"):
+        assert f"${{{key}:-{sizing[key]}}}" in overlay
+    # The overlay's own 8G default equals its 8g heap, so the formula's 5g replaces it.
+    assert "NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TRANSACTION_MEMORY_MAX:-8G}" in overlay
+    assert sizing["NEO4J_TRANSACTION_MEMORY_MAX"] == "5g"
+
+
+@pytest.mark.parametrize(("heap", "expected"), [(0.5, 1), (1, 1), (2, 1), (4.5, 3), (8, 5), (16, 11)])
+def test_transaction_cap_is_70_percent_of_the_heap_floor_1g(heap: float, expected: int) -> None:
+    assert helpers.transaction_max_gb(heap) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "gb"), [("2G", 2.0), ("4096m", 4.0), ("1048576k", 1.0), ("8589934592", 8.0), ("1.5g", 1.5), ("lots", None), ("", None)]
+)
+def test_neo4j_memory_values_are_read_in_gb(value: str, gb: float | None) -> None:
+    assert helpers.memory_gb(value) == gb
+
+
+def test_memory_rounds_up_to_what_the_machine_was_sold_as() -> None:
+    assert helpers.nominal_gb(int(15.4 * GIB)) == 16
+    assert helpers.nominal_gb(32 * GIB) == 32
+
+
+def test_template_heap_counts_as_unset_but_an_operator_choice_is_kept() -> None:
+    template = helpers.parse_env((ROOT / ".env.example").read_text())
+    assert template["NEO4J_HEAP_SIZE"] == "2G", "the template value this rule is about"
+    sizing = helpers.neo4j_sizing(32)
+    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=2G\n", template, sizing) == sizing.env()
+    # An operator's heap is kept, and the transaction cap follows it rather than the formula's 5g.
+    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=6144m\nNEO4J_PAGECACHE_SIZE=\n", template, sizing) == {
+        "NEO4J_PAGECACHE_SIZE": "11g",
+        "NEO4J_MEMORY_LIMIT": "28G",
+        "NEO4J_TRANSACTION_MEMORY_MAX": "4g",
+    }
+    assert helpers.plan_sizing("NEO4J_HEAP_SIZE=big\n", template, sizing)["NEO4J_TRANSACTION_MEMORY_MAX"] == "3g"
+    assert helpers.plan_sizing("NEO4J_TRANSACTION_MEMORY_MAX=2g\n", template, sizing).keys() == set(helpers.SIZING_KEYS) - {
+        "NEO4J_TRANSACTION_MEMORY_MAX"
+    }
+    assert helpers.plan_sizing(f"{helpers.SIZING_MARKER}\nNEO4J_HEAP_SIZE=2G\n", template, sizing) == {}
+
+
+def test_configure_writes_sizing_and_base_url_once(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("NEO4J_HEAP_SIZE=2G\n# APP_BASE_URL=\n")
+    messages = helpers.configure(env, ROOT / ".env.example", 32 * GIB, "lab", {})
+    values = helpers.parse_env(env.read_text())
+    assert values["NEO4J_HEAP_SIZE"] == "5g"
+    assert values["NEO4J_PAGECACHE_SIZE"] == "11g"
+    assert values["NEO4J_MEMORY_LIMIT"] == "28G"
+    assert values["NEO4J_TRANSACTION_MEMORY_MAX"] == "3g"
+    assert values["APP_BASE_URL"] == "http://lab:8006"
+    assert "Sized Neo4j" in messages[0]
+
+    env.write_text(env.read_text().replace("NEO4J_HEAP_SIZE=5g", "NEO4J_HEAP_SIZE=6g"))
+    before = env.read_text()
+    messages = helpers.configure(env, ROOT / ".env.example", 128 * GIB, "lab", {})
+    assert env.read_text() == before
+    assert "Keeping the Neo4j sizing" in messages[0]
+
+
+def test_configure_keeps_a_set_base_url_and_uses_the_web_bind_address(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("APP_BASE_URL=https://music.example\n")
+    helpers.configure(env, ROOT / ".env.example", 64 * GIB, "lab", {})
+    assert helpers.parse_env(env.read_text())["APP_BASE_URL"] == "https://music.example"
+    env.write_text("WEB_BIND_ADDRESS=192.168.1.5\nEXPLORE_HOST_PORT=9006\n")
+    helpers.configure(env, ROOT / ".env.example", 64 * GIB, "lab", {})
+    assert helpers.parse_env(env.read_text())["APP_BASE_URL"] == "http://192.168.1.5:9006"
+
+
+# --- preflight findings ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("version", "level"),
+    [(None, "stop"), ("1.29.2", "stop"), ("garbage", "stop"), ("v2.29.1", "ok"), ("5.6.1", "ok")],
+)
+def test_compose_version(version: str | None, level: str) -> None:
+    assert helpers.check_compose(version).level == level
+
+
+def test_engine_finding() -> None:
+    assert helpers.check_engine(None, "permission denied").level == "stop"
+    assert "Docker Desktop" in helpers.check_engine({"ServerVersion": "29.5.2", "OperatingSystem": "Docker Desktop"}, "").message
+
+
+def test_arm64_needs_confirmation_and_says_how_to_emulate() -> None:
+    assert helpers.check_architecture("x86_64", desktop=False, amd64_emulation=None).level == "ok"
+    linux = helpers.check_architecture("aarch64", desktop=False, amd64_emulation=False)
+    assert linux.level == "confirm"
+    assert "linux/amd64 only" in linux.message
+    assert "binfmt" in linux.hint
+    assert "registered" in helpers.check_architecture("aarch64", desktop=False, amd64_emulation=True).hint
+    assert "Rosetta" in helpers.check_architecture("aarch64", desktop=True, amd64_emulation=None).hint
+
+
+@pytest.mark.parametrize(
+    ("mode", "gib", "level"),
+    [("prod", 12, "stop"), ("prod", 15.4, "warn"), ("prod", 31.3, "ok"), ("dev", 7, "stop"), ("dev", 8, "warn"), ("dev", 16, "ok")],
+)
+def test_memory_minimums(mode: str, gib: float, level: str) -> None:
+    finding = helpers.check_memory(int(gib * GIB), mode, desktop=False)
+    assert finding.level == level
+    assert finding.forcible == (level == "stop")
+
+
+def test_docker_desktop_memory_points_at_its_settings() -> None:
+    assert "Settings > Resources" in helpers.check_memory(8 * GIB, "prod", desktop=True).message
+
+
+@pytest.mark.parametrize(
+    ("free_gb", "existing", "level"),
+    [(80, False, "stop"), (150, False, "warn"), (250, False, "ok"), (15, True, "warn"), (80, True, "ok")],
+)
+def test_disk_minimums(free_gb: int, existing: bool, level: str) -> None:
+    assert helpers.check_disk(free_gb * 10**9, "/var/lib/docker", existing).level == level
+
+
+def test_unmeasurable_disk_warns_with_the_sizes() -> None:
+    finding = helpers.check_disk(None, "/var/lib/docker", existing=False, why_unknown="remote")
+    assert finding.level == "warn"
+    assert "100 GB" in finding.message
+
+
+def test_disk_is_measured_only_where_it_can_be(tmp_path: Path) -> None:
+    def usage(_path: str) -> Any:
+        return shutil._ntuple_diskusage(10, 5, 5)
+
+    assert helpers.measure_disk(str(tmp_path), local=True, desktop=False, usage=usage) == (5, "")
+    assert helpers.measure_disk(str(tmp_path), local=False, desktop=False)[0] is None
+    assert helpers.measure_disk(str(tmp_path), local=True, desktop=True)[0] is None
+    assert helpers.measure_disk(str(tmp_path / "missing"), local=True, desktop=False)[0] is None
+
+    def broken(_path: str) -> Any:
+        raise PermissionError(13, "Permission denied")
+
+    assert helpers.measure_disk(str(tmp_path), local=True, desktop=False, usage=broken) == (None, f"{tmp_path}: Permission denied")
+
+
+def test_configured_ports_follow_the_overlay_bind_groups() -> None:
+    prod = {port.variable: port for port in helpers.configured_ports("prod", {"POSTGRES_HOST_PORT": "6543"}, {"DATA_BIND_ADDRESS": "10.0.0.2"})}
+    dev = {port.variable: port for port in helpers.configured_ports("dev", {}, {})}
+    assert len(prod) == 15
+    assert (prod["POSTGRES_HOST_PORT"].address, prod["POSTGRES_HOST_PORT"].port) == ("10.0.0.2", 6543)
+    assert prod["VALKEY_HOST_PORT"].address == "127.0.0.1"
+    assert dev["VALKEY_HOST_PORT"].address == ""
+    assert prod["GRAFANA_HOST_PORT"].port == 3000
+
+
+def test_port_table_covers_every_published_host_port() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text() + (ROOT / "docker-compose.prod.yml").read_text()
+    published = dict(re.findall(r"\$\{([A-Z0-9_]+_HOST_PORT):-(\d+)\}", compose))
+    assert published == {variable: str(default) for variable, default, *_ in helpers.PORTS}
+
+
+def _bind_groups(name: str) -> dict[str, str]:
+    lines = (ROOT / name).read_text().splitlines()
+    return {
+        port: group.lower()
+        for line in lines
+        for group, port in re.findall(r"\$\{(WEB|DATA|INTERNAL)_BIND_ADDRESS.*?\$\{([A-Z0-9_]+_HOST_PORT):-", line)
+    }
+
+
+def test_port_bind_groups_match_the_compose_files() -> None:
+    base = _bind_groups("docker-compose.yml")
+    prod = base | _bind_groups("docker-compose.prod.yml")
+    assert {variable: dev for variable, _, _, dev, _ in helpers.PORTS} == base
+    assert {variable: group for variable, _, group, _, _ in helpers.PORTS} == prod
+
+
+def test_port_conflicts_skip_the_stacks_own_ports() -> None:
+    ports = [helpers.Port("GRAFANA_HOST_PORT", "Grafana", "", 3000), helpers.Port("API_HOST_PORT", "Catalog API", "", 8004)]
+    findings = helpers.check_ports(ports, {3000}, lambda _address, _port: True)
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "8004" in findings[0].message
+    assert "API_HOST_PORT" in findings[0].hint
+    assert not findings[0].forcible
+    assert helpers.check_ports(ports, set(), lambda _address, _port: False)[0].level == "ok"
+    assert helpers.check_ports([helpers.Port("X_HOST_PORT", "X", "", -1)], set(), lambda _address, _port: False)[0].level == "stop"
+
+
+def test_port_probe_sees_a_listener_and_a_free_port() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        assert helpers.port_in_use("", port)
+        assert helpers.port_in_use("127.0.0.1", port)
+    assert not helpers.port_in_use("127.0.0.1", _free_port())
+
+
+def test_published_ports_are_read_from_docker_ps() -> None:
+    assert helpers.published_ports("groovemap-postgres\t0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp, 127.0.0.1:15692->15692/tcp") == {5433, 15692}
+
+
+def test_amd64_emulation_detection(tmp_path: Path) -> None:
+    assert helpers.amd64_emulation_registered(tmp_path / "absent") is None
+    assert helpers.amd64_emulation_registered(tmp_path) is False
+    (tmp_path / "qemu-x86_64").write_text("enabled")
+    assert helpers.amd64_emulation_registered(tmp_path) is True
+
+
+# --- preflight end to end, with Docker faked -------------------------------------------
+
+
+def docker_info(**overrides: Any) -> dict[str, Any]:
+    info = {
+        "ServerVersion": "29.5.2",
+        "OperatingSystem": "Ubuntu 26.04 LTS",
+        "Architecture": "x86_64",
+        "MemTotal": 64 * GIB,
+        "DockerRootDir": "/nonexistent/docker",
+    }
+    return info | overrides
+
+
+class FakeRunner:
+    """Answers `docker ...` argv the way the CLI does; records every call."""
+
+    def __init__(self, info: dict[str, Any] | None = None, compose: str | None = "5.6.1", containers: str = "", running: str = "") -> None:
+        self.info = info if info is not None else docker_info()
+        self.compose = compose
+        self.containers = containers
+        self.running = running
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.calls.append(argv)
+        args = argv[1:]
+        if args[:1] == ["info"]:
+            if not self.info:
+                return subprocess.CompletedProcess(argv, 1, '{"ServerErrors":["down"]}', "Cannot connect to the Docker daemon\n")
+            return subprocess.CompletedProcess(argv, 0, json.dumps(self.info), "")
+        if args[:2] == ["compose", "version"]:
+            return subprocess.CompletedProcess(argv, 0 if self.compose else 1, self.compose or "", "")
+        if args[:1] == ["ps"]:
+            return subprocess.CompletedProcess(argv, 0, self.containers if "-a" in args else self.running, "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def run_preflight(runner: FakeRunner, mode: str = "prod", **kwargs: Any) -> int:
+    options: dict[str, Any] = {
+        "assume_yes": False,
+        "force": False,
+        "environ": {},
+        "env_values": {},
+        "in_use": lambda _address, _port: False,
+        "binfmt": lambda: False,
+    } | kwargs
+    result: int = helpers.preflight(mode, docker=helpers.Docker(runner), **options)
+    return result
+
+
+def test_preflight_passes_a_ready_host(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_preflight(FakeRunner()) == 0
+    out = capsys.readouterr().out
+    assert "[ok  ] Docker Engine 29.5.2" in out
+    assert "[ok  ] Docker Compose 5.6.1" in out
+    assert "Could not measure free disk space" in out
+
+
+@pytest.mark.parametrize("runner", [FakeRunner(info={}), FakeRunner(compose=None)])
+def test_preflight_stops_without_working_docker(runner: FakeRunner, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_preflight(runner, force=True, assume_yes=True) == 3
+    assert "[stop]" in capsys.readouterr().out
+
+
+def test_missing_docker_binary_is_reported() -> None:
+    def missing(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError(argv[0])
+
+    assert helpers.Docker(missing).info() == (None, "the docker command is not installed or not on PATH")
+    assert helpers.Docker(missing).compose_version() is None
+    assert helpers.Docker(missing).lines("ps") == []
+
+
+def test_low_memory_stops_unless_forced(capsys: pytest.CaptureFixture[str]) -> None:
+    low = FakeRunner(docker_info(MemTotal=8 * GIB))
+    assert run_preflight(low) == 3
+    assert "--force" in capsys.readouterr().out
+    assert run_preflight(low, force=True) == 0
+    assert "going ahead below the minimums" in capsys.readouterr().out
+
+
+def test_low_disk_on_a_fresh_host_stops_unless_forced(tmp_path: Path) -> None:
+    runner = FakeRunner(docker_info(DockerRootDir=str(tmp_path)))
+
+    def usage(_path: str) -> Any:
+        return shutil._ntuple_diskusage(500 * 10**9, 450 * 10**9, 50 * 10**9)
+
+    assert run_preflight(runner, usage=usage) == 3
+    assert run_preflight(runner, usage=usage, force=True) == 0
+    # Once the stack exists its data is already on disk, so 50 GB free is fine.
+    existing = FakeRunner(docker_info(DockerRootDir=str(tmp_path)), containers="groovemap-postgres\t")
+    assert run_preflight(existing, usage=usage) == 0
+
+
+def test_force_never_overrides_a_port_conflict(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_preflight(FakeRunner(), force=True, in_use=lambda _address, port: port == 3000) == 3
+    out = capsys.readouterr().out
+    assert "Port 3000 (Grafana) is already in use" in out
+    assert "--force to go ahead" not in out
+
+
+def test_rerun_ignores_ports_the_stack_already_holds() -> None:
+    runner = FakeRunner(running="groovemap-grafana\t0.0.0.0:3000->3000/tcp")
+    assert run_preflight(runner, in_use=lambda _address, port: port == 3000) == 0
+
+
+def test_remote_engine_skips_the_local_port_probe(capsys: pytest.CaptureFixture[str]) -> None:
+    def explode(_address: str, _port: int) -> bool:
+        raise AssertionError("probed a local port for a remote engine")
+
+    assert run_preflight(FakeRunner(), environ={"DOCKER_HOST": "ssh://lab"}, in_use=explode) == 0
+    assert "remote" in capsys.readouterr().out
+
+
+def test_arm64_asks_or_needs_yes(capsys: pytest.CaptureFixture[str]) -> None:
+    arm = FakeRunner(docker_info(Architecture="aarch64"))
+    assert run_preflight(arm) == 3
+    assert "--yes" in capsys.readouterr().out
+    assert run_preflight(arm, assume_yes=True) == 0
+    assert run_preflight(arm, interactive=True, ask=lambda _prompt: "y") == 0
+    assert run_preflight(arm, interactive=True, ask=lambda _prompt: "") == 3
+
+
+# --- endpoints and the command line ----------------------------------------------------
+
+
+def test_endpoints_use_configured_ports_and_addresses() -> None:
+    rows = helpers.endpoints("prod", {"DASHBOARD_HOST_PORT": "9003", "WEB_BIND_ADDRESS": "192.168.1.5"}, {}, "lab")
+    urls = {label: url for label, url, _ in rows}
+    assert urls["Operations console"] == "http://192.168.1.5:9003"
+    assert urls["Neo4j Browser"] == "http://lab:7474"
+    assert "secrets/grafana_admin_password.txt" in {label: note for label, _, note in rows}["Grafana"]
+    dev = helpers.render_endpoints(helpers.endpoints("dev", {"DATA_BIND_ADDRESS": "::1"}, {}, "lab"))
+    assert "http://[::1]:15672" in dev
+    assert "password groovemap" in dev
+
+
+@pytest.fixture
+def scratch_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    env = tmp_path / ".env"
+    monkeypatch.setattr(helpers, "ENV_FILE", env)
+    monkeypatch.setattr(helpers, "TEMPLATE", ROOT / ".env.example")
+    return env
+
+
+def test_main_profile_commands(scratch_env: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    scratch_env.write_text("# COMPOSE_PROFILES=musicbrainz\nCOMPOSE_PROJECT_NAME=lab\n")
+    assert helpers.main(["profile-enabled"], environ={}) == 1
+    assert helpers.main(["profile-enabled"], environ={"COMPOSE_PROFILES": "musicbrainz"}) == 0
+    assert helpers.main(["enable-profile"], environ={}) == 0
+    assert helpers.parse_env(scratch_env.read_text())["COMPOSE_PROFILES"] == "musicbrainz"
+    assert helpers.main(["profile-enabled"], environ={}) == 0
+    assert helpers.main(["project-name"], environ={}) == 0
+    assert helpers.main(["project-name", "--project-name", "Other"], environ={}) == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == ["lab", "other"]
+
+
+def test_main_configure_and_endpoints(scratch_env: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    scratch_env.write_text("NEO4J_HEAP_SIZE=2G\n")
+    assert helpers.main(["configure", "--mode", "dev"], docker=helpers.Docker(FakeRunner()), environ={}) == 0
+    assert scratch_env.read_text() == "NEO4J_HEAP_SIZE=2G\n"
+    assert helpers.main(["configure"], docker=helpers.Docker(FakeRunner(info={})), environ={}) == 1
+    assert helpers.main(["configure"], docker=helpers.Docker(FakeRunner()), environ={}) == 0
+    assert helpers.parse_env(scratch_env.read_text())["NEO4J_MEMORY_LIMIT"] == "48G"
+    assert helpers.main(["endpoints", "--mode", "prod"], environ={}) == 0
+    assert "Operations console" in capsys.readouterr().out
+    assert helpers.main(["preflight", "--yes"], docker=helpers.Docker(FakeRunner(info={})), environ={}) == 3
+
+
+# --- scripts/deploy.sh, with docker and the gate faked ---------------------------------
+
+
+FAKE_DOCKER = r"""#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"$DEPLOY_LOG"
+case "$*" in
+  "info --format {{json .}}") printf '%s\n' "$FAKE_DOCKER_INFO" ;;
+  "compose version --short") echo 5.6.1 ;;
+  *"name=^groovemap-extractor-musicbrainz\$"*) printf '%s' "${FAKE_MUSICBRAINZ_CONTAINERS:-}" ;;
+  *"name=^groovemap-postgres\$"*) printf '%s' "${FAKE_RUNNING:-}" ;;
+  "ps -a --filter name=^groovemap- "*) printf '%s' "${FAKE_CONTAINERS:-}" ;;
+  "volume ls "*) printf '%s' "${FAKE_VOLUMES:-}" ;;
+  *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
+esac
+exit 0
+"""
+
+# Stands in for scripts/discogs_import_status.py: one exit code for the quick probe, one for --wait.
+FAKE_GATE = r"""import os, sys
+argv = sys.argv[1:]
+with open(os.environ["DEPLOY_LOG"], "a") as log:
+    log.write("gate " + " ".join(argv) + "\n")
+sys.exit(int(os.environ.get("FAKE_GATE_WAIT" if "--wait" in argv else "FAKE_GATE", "2")))
+"""
+
+COPIED = (
+    "scripts/deploy.sh",
+    "scripts/deploy_helpers.py",
+    "scripts/env-init.py",
+    "scripts/check-images.py",
+    "scripts/create-secrets.sh",
+    ".env.example",
+)
+PROD = "-f docker-compose.yml -f docker-compose.prod.yml"
+
+
+_CANDIDATES = iter(range(20000, 30000))
+
+
+def _free_port() -> int:
+    """A free port below every OS's ephemeral range, so no outgoing connection takes it meanwhile."""
+    return next(port for port in _CANDIDATES if not helpers.port_in_use("", port))
+
+
+class Deploy:
+    """A scratch repository with a fake docker and gate; `run` executes scripts/deploy.sh in it."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        for relative in COPIED:
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / relative, root / relative)
+        (root / "scripts" / "discogs_import_status.py").write_text(FAKE_GATE)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "docker").write_text(FAKE_DOCKER)
+        (bin_dir / "docker").chmod(0o755)
+        self.log = root / "deploy.log"
+        self.env = {key: value for key, value in os.environ.items() if not key.startswith(("COMPOSE_", "DOCKER_"))}
+        # Every configured host port points at a port free right now, so the real probe passes.
+        self.env |= {variable: str(_free_port()) for variable, *_ in helpers.PORTS}
+        self.env |= {
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DEPLOY_LOG": str(self.log),
+            "DEPLOY_PYTHON": sys.executable,
+            "FAKE_DOCKER_INFO": json.dumps(docker_info()),
+        }
+
+    def run(self, *args: str, **fake: str) -> subprocess.CompletedProcess[str]:
+        self.log.write_text("")
+        return subprocess.run(
+            [_BASH, str(self.root / "scripts" / "deploy.sh"), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+            env=self.env | fake,
+        )
+
+    @property
+    def calls(self) -> list[str]:
+        return [line for line in self.log.read_text().splitlines() if line.startswith("gate ") or " compose " in f" {line}"]
+
+    @property
+    def ups(self) -> list[str]:
+        return [line for line in self.calls if line.endswith(" up -d --wait")]
+
+    @property
+    def env_values(self) -> dict[str, str]:
+        result: dict[str, str] = helpers.read_env(self.root / ".env")
+        return result
+
+    def write_env(self, text: str) -> None:
+        (self.root / ".env").write_text(text)
+
+
+@pytest.fixture
+def deploy(tmp_path: Path) -> Iterator[Deploy]:
+    yield Deploy(tmp_path)
+
+
+def _compose_calls(calls: Sequence[str]) -> list[str]:
+    return [call for call in calls if not call.startswith("docker compose version")]
+
+
+def test_fresh_host_runs_both_phases_in_order(deploy: Deploy) -> None:
+    result = deploy.run(FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _compose_calls(deploy.calls) == [
+        f"docker compose {PROD} up -d --wait",
+        "gate --prod --wait --interval 300",
+        f"docker compose {PROD} up -d --wait",
+        f"docker compose {PROD} exec -T api catalog-admin-setup --list",
+    ]
+    values = deploy.env_values
+    assert values["CATALOG_API_IMAGE"].startswith("ghcr.io/groovemap-music/catalog-api@sha256:")
+    assert tuple(values[key] for key in helpers.SIZING_KEYS) == ("8g", "16g", "48G", "5g")
+    assert values["APP_BASE_URL"].startswith("http://")
+    assert values["COMPOSE_PROFILES"] == "musicbrainz"
+    assert (deploy.root / "secrets" / "neo4j_password.txt").exists()
+    out = result.stdout
+    assert out.index("Phase 1 of 2") < out.index("about two days") < out.index("Phase 2 of 2") < out.index("Your GrooveMap")
+    assert "catalog-admin-setup --email" in out
+
+
+def test_the_profile_is_off_while_phase_one_runs(deploy: Deploy) -> None:
+    result = deploy.run("--no-wait")
+    assert result.returncode == 0, result.stderr
+    assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
+    assert not any(call.startswith("gate") for call in deploy.calls)
+    assert "COMPOSE_PROFILES" not in deploy.env_values
+    assert "just deploy\n" in result.stdout
+    assert "just discogs-import-status --prod" in result.stdout
+
+
+def test_rerun_during_the_import_resumes_the_wait(deploy: Deploy) -> None:
+    deploy.run("--no-wait")
+    env_before = (deploy.root / ".env").read_text()
+    result = deploy.run(FAKE_RUNNING="abc", FAKE_GATE="3", FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stderr
+    assert _compose_calls(deploy.calls)[:4] == [
+        "gate --prod",
+        f"docker compose {PROD} up -d --wait",
+        "gate --prod --wait --interval 300",
+        f"docker compose {PROD} up -d --wait",
+    ]
+    assert ".env already exists; keeping it." in result.stdout
+    assert helpers.read_env(deploy.root / ".env") == helpers.parse_env(env_before) | {"COMPOSE_PROFILES": "musicbrainz"}
+
+
+def test_interrupting_the_wait_exits_130_and_says_how_to_resume(deploy: Deploy) -> None:
+    result = deploy.run("--interval", "60", "--no-admin", FAKE_GATE_WAIT="130")
+    assert result.returncode == 130
+    assert "COMPOSE_PROFILES" not in deploy.env_values
+    assert "just deploy --no-admin --interval 60" in result.stdout
+    assert not any("catalog-admin-setup" in call for call in deploy.calls)
+
+
+def test_a_failed_wait_is_an_error(deploy: Deploy) -> None:
+    assert deploy.run(FAKE_GATE_WAIT="2").returncode == 1
+    assert "COMPOSE_PROFILES" not in deploy.env_values
+
+
+def test_an_enabled_profile_only_reconciles(deploy: Deploy) -> None:
+    deploy.run("--no-wait")
+    deploy.write_env((deploy.root / ".env").read_text() + "COMPOSE_PROFILES=musicbrainz\n")
+    result = deploy.run(FAKE_GATE="3", FAKE_GATE_WAIT="3")
+    assert result.returncode == 0, result.stderr
+    assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
+    assert not any(call.startswith("gate") for call in deploy.calls)
+    assert "only brings the stack up to date" in result.stdout
+
+
+def test_profile_exported_in_the_shell_counts_as_enabled(deploy: Deploy) -> None:
+    result = deploy.run(COMPOSE_PROFILES="musicbrainz", FAKE_GATE_WAIT="3")
+    assert result.returncode == 0, result.stderr
+    assert not any(call.startswith("gate") for call in deploy.calls)
+
+
+@pytest.mark.parametrize(
+    "fake",
+    [
+        {"FAKE_MUSICBRAINZ_CONTAINERS": "0123456789ab\n"},
+        {"FAKE_VOLUMES": "postgres_data\nmusicbrainz_data\n"},
+        {"FAKE_RUNNING": "abc", "FAKE_GATE": "0"},
+    ],
+    ids=["musicbrainz-containers", "musicbrainz-volume", "import-already-complete"],
+)
+def test_an_existing_musicbrainz_path_is_kept_running(deploy: Deploy, fake: dict[str, str]) -> None:
+    result = deploy.run(FAKE_GATE_WAIT="3", **fake)
+    assert result.returncode == 0, result.stderr
+    assert deploy.env_values["COMPOSE_PROFILES"] == "musicbrainz"
+    assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
+    assert not any("--wait --interval" in call for call in deploy.calls)
+    assert not any(" stop" in call or " down" in call for call in deploy.calls)
+
+
+def test_dev_uses_the_base_stack_without_secrets_or_sizing(deploy: Deploy) -> None:
+    result = deploy.run("--dev", FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stderr
+    assert deploy.ups == ["docker compose -f docker-compose.yml up -d --wait"] * 2
+    assert "gate --wait --interval 300" in deploy.calls
+    assert not (deploy.root / "secrets").exists()
+    assert deploy.env_values["NEO4J_HEAP_SIZE"] == "2G"
+    assert not {"NEO4J_MEMORY_LIMIT", "NEO4J_TRANSACTION_MEMORY_MAX"} & deploy.env_values.keys()
+    assert "user admin, password groovemap" in result.stdout
+
+
+def test_project_name_reaches_compose_the_gate_and_the_volume_lookup(deploy: Deploy) -> None:
+    result = deploy.run("-p", "lab", "--no-admin", FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stderr
+    assert deploy.ups[0] == f"docker compose --project-name lab {PROD} up -d --wait"
+    assert "gate --project-name lab --prod --wait --interval 300" in deploy.calls
+    assert "label=com.docker.compose.project=lab" in deploy.log.read_text()
+
+
+def test_no_admin_skips_the_admin_offer(deploy: Deploy) -> None:
+    result = deploy.run("--no-admin", FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stderr
+    assert not any("catalog-admin-setup" in call for call in deploy.calls)
+    assert "catalog-admin-setup" not in result.stdout
+
+
+def test_admin_email_creates_the_admin_interactively(deploy: Deploy) -> None:
+    result = deploy.run("--admin-email", "me@example.com", FAKE_GATE_WAIT="0")
+    assert result.returncode == 0, result.stderr
+    assert deploy.calls[-1] == f"docker compose {PROD} exec api catalog-admin-setup --email me@example.com"
+
+
+def test_an_existing_admin_is_not_offered_again(deploy: Deploy) -> None:
+    result = deploy.run(FAKE_GATE_WAIT="0", FAKE_ADMINS="admin@example.com\n")
+    assert result.returncode == 0, result.stderr
+    assert "An admin account already exists" in result.stdout
+
+
+def test_arm64_stops_before_changing_anything_unless_confirmed(deploy: Deploy) -> None:
+    arm = json.dumps(docker_info(Architecture="aarch64"))
+    result = deploy.run(FAKE_DOCKER_INFO=arm)
+    assert result.returncode == 3
+    assert "linux/amd64 only" in result.stdout
+    assert not (deploy.root / ".env").exists()
+    assert deploy.ups == []
+    assert deploy.run("--yes", "--no-wait", FAKE_DOCKER_INFO=arm).returncode == 0
+    assert deploy.ups
+
+
+def test_deploy_stops_on_low_memory_unless_forced(deploy: Deploy) -> None:
+    small = json.dumps(docker_info(MemTotal=8 * GIB))
+    result = deploy.run(FAKE_DOCKER_INFO=small)
+    assert result.returncode == 3
+    assert "needs at least 16 GB" in result.stdout
+    assert not (deploy.root / ".env").exists()
+    assert deploy.run("--force", "--no-wait", FAKE_DOCKER_INFO=small).returncode == 0
+    assert tuple(deploy.env_values[key] for key in helpers.SIZING_KEYS) == ("1g", "3g", "5G", "1g")
+
+
+@pytest.mark.parametrize("args", [["--bogus"], ["--interval", "0"], ["--interval", "soon"], ["--admin-email"], ["-p", ""]])
+def test_bad_arguments_exit_2_before_doing_anything(deploy: Deploy, args: list[str]) -> None:
+    result = deploy.run(*args)
+    assert result.returncode == 2
+    assert deploy.log.read_text() == ""
+
+
+def test_help_lists_every_option(deploy: Deploy) -> None:
+    result = deploy.run("--help")
+    assert result.returncode == 0
+    for option in ("--dev", "--no-wait", "--no-admin", "--admin-email", "--project-name", "--interval", "--yes", "--force"):
+        assert option in result.stdout
+    assert deploy.log.read_text() == ""
+
+
+def test_recipe_runs_the_script_and_check_never_does() -> None:
+    justfile = (ROOT / "Justfile").read_text()
+    assert 'deploy *args:\n    bash scripts/deploy.sh "$@"' in justfile
+    check_line = next(line for line in justfile.splitlines() if line.startswith("check:"))
+    assert "deploy" not in check_line
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        assert "deploy.sh" not in workflow.read_text()
+        assert "just deploy" not in workflow.read_text()
