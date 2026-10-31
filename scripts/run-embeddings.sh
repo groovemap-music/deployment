@@ -9,8 +9,9 @@
 # The job has no service of its own: it reuses the `insights` service's image
 # (ANALYTICS_ENGINE_IMAGE) with its entrypoint overridden and --no-deps, so this
 # one-shot run never starts or waits on api/valkey. `docker-compose.yml`'s
-# `embeddings` service (the "jobs" profile) declares its required
-# SOURCE_DUMP_ID/SOURCE_DUMP_DATE and its EMBEDDING_PIPELINE_POSTGRES_USERNAME/
+# `embeddings` service (the "jobs" profile) passes through
+# SOURCE_DUMP_ID/SOURCE_DUMP_DATE (empty when unset, so the stack renders without them; this
+# script is what refuses to run without real values) and its EMBEDDING_PIPELINE_POSTGRES_USERNAME/
 # _PASSWORD login — a member of database-schema's NOLOGIN embedding_pipeline
 # group role, never this stack's POSTGRES_USERNAME superuser.
 #
@@ -26,7 +27,11 @@ set -euo pipefail
 env_file="${RUN_EMBEDDINGS_ENV_FILE:-.env}"
 
 : "${SOURCE_DUMP_ID:?Set SOURCE_DUMP_ID to the dump this run embeds, e.g. discogs-2026-09.}"
-: "${SOURCE_DUMP_DATE:?Set SOURCE_DUMP_DATE to that dump's release date (YYYY-MM-DD).}"
+: "${SOURCE_DUMP_DATE:?Set SOURCE_DUMP_DATE to the release date of that dump (YYYY-MM-DD).}"
+[[ "$SOURCE_DUMP_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+  echo "run-embeddings: SOURCE_DUMP_DATE must be an ISO date (YYYY-MM-DD), got '$SOURCE_DUMP_DATE'." >&2
+  exit 2
+}
 export SOURCE_DUMP_ID SOURCE_DUMP_DATE
 
 [[ -f "$env_file" ]] || {
