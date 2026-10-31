@@ -202,8 +202,18 @@ def gate_state(code: int | None) -> str:
     return {0: "complete", 3: "in progress", 2: "cannot determine"}.get(code if code is not None else -1, "not started")
 
 
-def classify(service: str, container: Container | None, gate_code: int | None, musicbrainz_enabled: bool, external: Sequence[str]) -> ServiceRow:
-    """installed / healthy / importing / waiting-on-gate for one service. `gate_code` is the Discogs gate's exit code."""
+def classify(
+    service: str,
+    container: Container | None,
+    gate_code: int | None,
+    musicbrainz_enabled: bool,
+    external: Sequence[str],
+    shared_monitoring: bool = False,
+) -> ServiceRow:
+    """installed / healthy / importing / waiting-on-gate for one service. `gate_code` is the Discogs gate's exit code.
+
+    A local store or monitoring service an overlay omits is "external" or "shared", never "not installed".
+    """
     if container is None:
         if service in MUSICBRAINZ_SERVICES and not musicbrainz_enabled:
             if gate_code is None:
@@ -217,6 +227,8 @@ def classify(service: str, container: Container | None, gate_code: int | None, m
             return ServiceRow(service, "external", note="PostgreSQL is not a container of this stack")
         if service in stores.LOCAL_STORE_SERVICES["valkey"] and "valkey" in external:
             return ServiceRow(service, "external", note="Valkey is not a container of this stack")
+        if service in stores.SHARED_MONITORING_SERVICES and shared_monitoring:
+            return ServiceRow(service, "shared", note="GROOVEMAP_MONITORING=shared: the stack reports to the shared one and runs none")
         return ServiceRow(service, "not installed")
     if container.state == "running":
         if container.health == "unhealthy":
@@ -393,7 +405,10 @@ def main(
 
     policy = helpers.load_image_policy()
     names = [*SERVICES, *sorted(name for name in containers if name not in SERVICES)]
-    rows = [classify(name, containers.get(name), gate_result.code, musicbrainz_enabled, configured.external) for name in names]
+    rows = [
+        classify(name, containers.get(name), gate_result.code, musicbrainz_enabled, configured.external, configured.shared_monitoring)
+        for name in names
+    ]
     images = [
         image_row(containers[name], variable, policy)
         for name, variable in SERVICES.items()

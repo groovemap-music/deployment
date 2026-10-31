@@ -135,8 +135,9 @@ which classifies each as shared infrastructure or dedicated to another applicati
 ### 2a. Ask: reuse or dedicated (only when PostgreSQL and Valkey already exist)
 
 **First read `.env` (and the shell) for decisions already recorded:** `GROOVEMAP_POSTGRES`,
-`GROOVEMAP_VALKEY`, and `GROOVEMAP_MONITORING` when set. `just deploy` prints them as
-`Decision ...` lines and `just status` lists them under "Decisions recorded". A value that is
+`GROOVEMAP_VALKEY` and `GROOVEMAP_MONITORING` (step 2b). `just deploy` prints them as
+`Decision ...` lines and `just status` lists them under "Decisions recorded" (an unset one shows
+as `local (default)`, which is not a recorded answer). A value that is
 there, including `local`, is an answer the user already gave: **never ask it again.** Say what
 `.env` records ("`.env` has PostgreSQL reused from the existing server and Valkey dedicated"),
 confirm in one sentence that this still holds, and go on to the matching branch below; ask only

@@ -1149,7 +1149,7 @@ def test_preflight_reports_the_decisions_recorded_in_env(capsys: pytest.CaptureF
     assert run_preflight(FakeRunner(), environ={"GROOVEMAP_VALKEY": "external"}, linux=False) == 0
     out = capsys.readouterr().out
     assert "Decision PostgreSQL: local (default)" in out and "Decision Valkey: external (the shell)" in out
-    assert "Decision Monitoring" not in out
+    assert "Decision Monitoring: local (default)" in out
 
 
 def test_force_never_overrides_a_port_conflict(capsys: pytest.CaptureFixture[str]) -> None:

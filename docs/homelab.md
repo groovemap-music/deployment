@@ -487,6 +487,8 @@ What changes in shared mode:
 - Every GrooveMap series carries `service_namespace="groovemap"`, and every dashboard and alert
   query selects it, so GrooveMap's panels on the shared Grafana never mix in another stack's series.
 - `just secrets-bootstrap` writes no Grafana admin password: this stack has no Grafana to sign in to.
+- `just status` lists `Monitoring shared` under the recorded decisions and shows the five omitted
+  services as `shared`, not `not installed`.
 
 ### Procedure
 
