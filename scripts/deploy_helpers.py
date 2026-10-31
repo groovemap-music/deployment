@@ -26,9 +26,14 @@ Minimums, and where they come from:
   as large as Discogs, as musicbrainz_data's share.
 - Disk, existing deployment: the data is already on disk, so only warn below 20 GB free on any of those filesystems.
 
-Memory is what Docker reports (`docker info` MemTotal), which on Docker Desktop is the VM's
-share, not the host's. A machine sold as 16 GB reports a little less, so the check rounds up to
-whole gigabytes before comparing.
+Memory is judged twice. Total is what Docker reports (`docker info` MemTotal), which on Docker
+Desktop is the VM's share, not the host's; a machine sold as 16 GB reports a little less, so total
+rounds up to whole gigabytes before comparing. Available is what is free now, read from the
+source that fits the engine, and the message names which one it used: the host's MemAvailable
+(/proc/meminfo) for a local Linux engine, the Docker Desktop VM's total minus what its running
+containers use (`docker stats`), and nothing for a remote engine, which has total only. Below the
+minimum, available memory refuses just like total does, except when GrooveMap already runs here:
+then the running stack holds that memory, so a shortfall only warns.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ import ipaddress
 import json
 import math
 import os
+import platform
 import posixpath
 import re
 import shutil
@@ -432,7 +438,8 @@ def check_architecture(arch: str, desktop: bool, amd64_emulation: bool | None) -
     return Finding("confirm", message, hint)
 
 
-def check_memory(mem_bytes: int, mode: str, desktop: bool) -> Finding:
+def check_memory(mem_bytes: int, mode: str, desktop: bool, available_bytes: int | None = None, source: str = "", existing: bool = False) -> Finding:
+    """Judge total memory, and available memory when `source` could read it. `existing`: GrooveMap already runs here."""
     refuse, recommended = RAM_MINIMUMS[mode]
     total = nominal_gb(mem_bytes)
     stack = "production stack" if mode == "prod" else "development stack"
@@ -440,12 +447,32 @@ def check_memory(mem_bytes: int, mode: str, desktop: bool) -> Finding:
     if total < refuse:
         return Finding(
             "stop",
-            f"Docker has about {total} GB of memory; the {stack} needs at least {refuse} GB ({recommended} GB recommended).{where}",
+            f"Docker has about {total} GB of memory (total, from docker info); the {stack} needs at least {refuse} GB ({recommended} GB recommended).{where}",
             forcible=True,
         )
-    if total < recommended:
-        return Finding("warn", f"Docker has about {total} GB of memory; {recommended} GB is recommended, so the import will be slower.{where}")
-    return Finding("ok", f"Memory: about {total} GB")
+    if available_bytes is None:
+        if total < recommended:
+            return Finding("warn", f"Docker has about {total} GB of memory; {recommended} GB is recommended, so the import will be slower.{where}")
+        return Finding(
+            "ok", f"Memory: about {total} GB total (docker info); available memory cannot be read for this engine, so only the total was checked"
+        )
+    available = available_bytes / GIB
+    figures = f"{total} GB total (docker info), {available:.1f} GiB available ({source})"
+    if available < refuse:
+        if existing:
+            return Finding(
+                "warn",
+                f"Memory: {figures}, below the {refuse} GB minimum for the {stack}, but GrooveMap is already running here and holds part of it.",
+            )
+        return Finding(
+            "stop",
+            f"Memory: {figures}. The {stack} needs at least {refuse} GB available ({recommended} GB recommended); something else is using the rest.{where}",
+            "Stop what else runs on this host, or free memory, then re-run.",
+            forcible=True,
+        )
+    if total < recommended or available < recommended:
+        return Finding("warn", f"Memory: {figures}; {recommended} GB is recommended, so the import will be slower.{where}")
+    return Finding("ok", f"Memory: {figures}")
 
 
 def check_free(free_bytes: int, label: str, volumes: Sequence[DataVolume], existing: bool) -> Finding:
@@ -1096,6 +1123,57 @@ class Docker:
         return self.lines("ps", *(["-a"] if all_states else []), "--filter", f"name=^{CONTAINER_PREFIX}", "--format", "{{.Names}}\t{{.Ports}}")
 
 
+MEMINFO = Path("/proc/meminfo")
+SIZE_UNITS = {"b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3, "kib": 1024, "mib": 1024**2, "gib": GIB, "tib": 1024**4}
+SIZE_VALUE = re.compile(r"^\s*(?P<amount>\d+(?:\.\d+)?)\s*(?P<unit>[kmgt]?i?b)\s*$", re.IGNORECASE)
+
+
+def linux_mem_available(meminfo: Path = MEMINFO) -> int | None:
+    """MemAvailable in bytes from /proc/meminfo, or None where there is no such file or line."""
+    try:
+        text = meminfo.read_text()
+    except OSError:
+        return None
+    match = re.search(r"^MemAvailable:\s+(\d+)\s*kB\s*$", text, re.MULTILINE)
+    return int(match[1]) * 1024 if match else None
+
+
+def parse_size(text: str) -> int | None:
+    """`1.5GiB`, `512MiB`, `0B` (docker stats) in bytes; None for anything else."""
+    match = SIZE_VALUE.match(text)
+    return int(float(match["amount"]) * SIZE_UNITS[match["unit"].lower()]) if match else None
+
+
+def containers_memory_used(docker: Docker) -> int | None:
+    """What the running containers use, summed from `docker stats`; None when it cannot be read."""
+    completed = docker.run("stats", "--no-stream", "--format", "{{.MemUsage}}")
+    if completed is None or completed.returncode != 0:
+        return None
+    used = 0
+    for line in completed.stdout.splitlines():
+        if line.strip():
+            size = parse_size(line.split("/", 1)[0])
+            if size is None:
+                return None
+            used += size
+    return used
+
+
+def available_memory(
+    total_bytes: int, docker: Docker, *, local: bool, desktop: bool, linux: bool, meminfo: Callable[[], int | None]
+) -> tuple[int | None, str]:
+    """(available bytes, which source said so), or (None, "") when this engine cannot tell."""
+    if desktop:
+        used = containers_memory_used(docker)
+        if used is None:
+            return None, ""
+        return max(total_bytes - used, 0), "Docker Desktop VM total minus its running containers' use, from docker stats"
+    if local and linux:
+        free = meminfo()
+        return (free, "the host's MemAvailable, /proc/meminfo") if free is not None else (None, "")
+    return None, ""
+
+
 def local_engine(environ: Mapping[str, str]) -> bool:
     host = environ.get("DOCKER_HOST", "")
     return not host or host.startswith(("unix://", "npipe://"))
@@ -1219,6 +1297,15 @@ def check_volumes(
 
 
 # --- external stores (scripts/stores.py) ------------------------------------------------
+
+
+def decision_findings(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[Finding]:
+    """The reuse decisions already recorded in .env (or the shell), reported so nobody is asked them again."""
+    return [
+        Finding("ok", f"Decision {name}: {value} ({where})" + ("; recorded, not asked again" if where != "default" else ""))
+        for name, value, where in stores.recorded_decisions(env_values, environ)
+    ]
+
 
 STORE_NAMES = {"postgres": "PostgreSQL", "valkey": "Valkey"}
 STORES_DOCS = "docs/homelab.md, Existing PostgreSQL and Valkey"
@@ -1471,6 +1558,8 @@ def preflight(
     binfmt: Callable[[], bool | None] = amd64_emulation_registered,
     interactive: bool = False,
     ask: Callable[[str], str] = input,
+    meminfo: Callable[[], int | None] = linux_mem_available,
+    linux: bool | None = None,
 ) -> int:
     """Print every finding; return 0 to go ahead or 3 to stop before anything changes."""
     info, error = docker.info()
@@ -1483,9 +1572,15 @@ def preflight(
 
     desktop = "Docker Desktop" in str(info.get("OperatingSystem", ""))
     local = local_engine(environ)
+    total = int(info.get("MemTotal") or 0)
+    available, source = available_memory(
+        total, docker, local=local, desktop=desktop, linux=platform.system() == "Linux" if linux is None else linux, meminfo=meminfo
+    )
+    running = bool(docker.groovemap_containers(all_states=False))
     findings = [
         check_architecture(str(info.get("Architecture", "")), desktop, binfmt() if local else None),
-        check_memory(int(info.get("MemTotal") or 0), mode, desktop),
+        check_memory(total, mode, desktop, available, source, existing=running),
+        *decision_findings(env_values, environ),
     ]
     if local:
         # A re-run finds the stack's own containers holding its ports; those are not conflicts.

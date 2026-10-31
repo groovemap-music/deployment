@@ -1,6 +1,6 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# Operator recipes (deploy, env-init, discogs-import-status, the embeddings steps, secrets-bootstrap)
+# Operator recipes (deploy, env-init, discogs-import-status, status, the embeddings steps, secrets-bootstrap)
 # need only Docker, git and python3 >= 3.10; just is the only optional convenience. They run
 # stdlib scripts through this runner, which uses uv when present and python3 otherwise, the same
 # selection scripts/deploy.sh makes (DEPLOY_PYTHON overrides). Exit codes pass through unchanged.
@@ -145,3 +145,12 @@ discogs-import-status *args:
 
 down:
     docker compose down
+
+# Read-only. Where the deployment stands: per service installed / healthy / importing /
+# waiting-on-gate, the Discogs gate (0 complete, 3 in progress, 2 cannot determine), the decisions
+# recorded in .env, and each running image's digest against the reviewed release table with its OCI
+# version and revision labels. Changes nothing and pulls nothing. Exit 0 state determined (an
+# unhealthy service is a finding, not an error), 2 it could not be. `--dev` addresses the dev stack.
+[positional-arguments]
+status *args:
+    {{operator_python}} scripts/status.py "$@"

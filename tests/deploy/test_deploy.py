@@ -988,7 +988,10 @@ def docker_info(**overrides: Any) -> dict[str, Any]:
 class FakeRunner:
     """Answers `docker ...` argv the way the CLI does; records every call."""
 
-    def __init__(self, info: dict[str, Any] | None = None, compose: str | None = "5.6.1", containers: str = "", running: str = "") -> None:
+    def __init__(
+        self, info: dict[str, Any] | None = None, compose: str | None = "5.6.1", containers: str = "", running: str = "", stats: str | None = None
+    ) -> None:
+        self.stats = stats
         self.info = info if info is not None else docker_info()
         self.compose = compose
         self.containers = containers
@@ -1006,6 +1009,8 @@ class FakeRunner:
             return subprocess.CompletedProcess(argv, 0 if self.compose else 1, self.compose or "", "")
         if args[:1] == ["ps"]:
             return subprocess.CompletedProcess(argv, 0, self.containers if "-a" in args else self.running, "")
+        if args[:1] == ["stats"]:
+            return subprocess.CompletedProcess(argv, 0 if self.stats is not None else 1, self.stats or "", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
 
@@ -1050,6 +1055,101 @@ def test_low_memory_stops_unless_forced(capsys: pytest.CaptureFixture[str]) -> N
     assert "--force" in capsys.readouterr().out
     assert run_preflight(low, force=True) == 0
     assert "going ahead below the minimums" in capsys.readouterr().out
+
+
+# Memory: total (docker info) and available, each from the source that fits the engine.
+
+
+def test_linux_mem_available_is_read_from_proc_meminfo(tmp_path: Path) -> None:
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemTotal:       131072000 kB\nMemFree:         1000 kB\nMemAvailable:   65011712 kB\n")
+    assert helpers.linux_mem_available(meminfo) == 65011712 * 1024
+    meminfo.write_text("MemTotal: 1 kB\n")
+    assert helpers.linux_mem_available(meminfo) is None
+    assert helpers.linux_mem_available(tmp_path / "missing") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), [("1GiB", GIB), ("512MiB", 512 * 1024**2), ("1.5GiB", int(1.5 * GIB)), ("0B", 0), ("12kB", 12000), ("n/a", None)]
+)
+def test_parse_size_reads_docker_stats_figures(text: str, expected: int | None) -> None:
+    assert helpers.parse_size(text) == expected
+
+
+def test_a_local_linux_engine_judges_the_hosts_mem_available_and_says_so(capsys: pytest.CaptureFixture[str]) -> None:
+    ready = FakeRunner(docker_info(MemTotal=128 * GIB))
+    assert run_preflight(ready, linux=True, meminfo=lambda: 62 * GIB) == 0
+    assert "Memory: 128 GB total (docker info), 62.0 GiB available (the host's MemAvailable, /proc/meminfo)" in capsys.readouterr().out
+
+    assert run_preflight(ready, linux=True, meminfo=lambda: 12 * GIB) == 3  # plenty in total, little left
+    out = capsys.readouterr().out
+    assert "12.0 GiB available (the host's MemAvailable, /proc/meminfo)" in out
+    assert "needs at least 16 GB available" in out
+    assert run_preflight(ready, linux=True, meminfo=lambda: 12 * GIB, force=True) == 0
+
+    assert run_preflight(ready, linux=True, meminfo=lambda: 20 * GIB) == 0  # above the minimum, below the recommended: a warning
+    assert "[warn] Memory:" in capsys.readouterr().out
+
+
+def test_a_running_stack_makes_low_available_memory_a_warning_not_a_refusal(capsys: pytest.CaptureFixture[str]) -> None:
+    running = FakeRunner(docker_info(MemTotal=128 * GIB), running="groovemap-postgres\t5432/tcp")
+    assert run_preflight(running, linux=True, meminfo=lambda: 6 * GIB) == 0
+    out = capsys.readouterr().out
+    assert "[warn] Memory:" in out
+    assert "GrooveMap is already running here" in out
+
+
+def test_docker_desktop_judges_the_vm_total_minus_what_its_containers_use(capsys: pytest.CaptureFixture[str]) -> None:
+    desktop = docker_info(OperatingSystem="Docker Desktop", MemTotal=24 * GIB)
+    busy = FakeRunner(desktop, stats="10GiB / 24GiB\n3.5GiB / 24GiB\n512MiB / 24GiB")
+    assert run_preflight(busy, linux=False) == 3
+    out = capsys.readouterr().out
+    assert "10.0 GiB available (Docker Desktop VM total minus its running containers' use, from docker stats)" in out
+    assert "raise it in Settings > Resources" in out
+
+    idle = FakeRunner(desktop, stats="")
+    assert run_preflight(idle, linux=False) == 0
+    assert "24.0 GiB available (Docker Desktop VM" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "runner",
+    [
+        FakeRunner(docker_info(OperatingSystem="Docker Desktop", MemTotal=40 * GIB), stats=None),
+        FakeRunner(docker_info(OperatingSystem="Docker Desktop", MemTotal=40 * GIB), stats="x / y"),
+    ],
+    ids=["stats-fails", "stats-unreadable"],
+)
+def test_docker_desktop_without_readable_stats_falls_back_to_the_total(runner: FakeRunner, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_preflight(runner, linux=False) == 0
+    assert "available memory cannot be read for this engine, so only the total was checked" in capsys.readouterr().out
+
+
+def test_a_remote_engine_has_a_total_only_and_the_hosts_meminfo_is_never_read(capsys: pytest.CaptureFixture[str]) -> None:
+    def explode() -> int:
+        raise AssertionError("the local /proc/meminfo says nothing about a remote engine")
+
+    assert run_preflight(FakeRunner(), environ={"DOCKER_HOST": "ssh://lab"}, linux=True, meminfo=explode) == 0
+    assert "so only the total was checked" in capsys.readouterr().out
+
+
+def test_a_low_total_is_still_refused_whatever_is_available(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_preflight(FakeRunner(docker_info(MemTotal=8 * GIB)), linux=True, meminfo=lambda: 8 * GIB) == 3
+    assert "8 GB of memory (total, from docker info)" in capsys.readouterr().out
+
+
+def test_preflight_reports_the_decisions_recorded_in_env(capsys: pytest.CaptureFixture[str]) -> None:
+    env = {"GROOVEMAP_POSTGRES": "external", "GROOVEMAP_VALKEY": "local", "GROOVEMAP_MONITORING": "shared"}
+    assert run_preflight(FakeRunner(), env_values=env, linux=False) == 0
+    out = capsys.readouterr().out
+    assert "Decision PostgreSQL: external (.env); recorded, not asked again" in out
+    assert "Decision Valkey: local (.env); recorded, not asked again" in out
+    assert "Decision Monitoring: shared (.env); recorded, not asked again" in out
+
+    assert run_preflight(FakeRunner(), environ={"GROOVEMAP_VALKEY": "external"}, linux=False) == 0
+    out = capsys.readouterr().out
+    assert "Decision PostgreSQL: local (default)" in out and "Decision Valkey: external (the shell)" in out
+    assert "Decision Monitoring" not in out
 
 
 def test_force_never_overrides_a_port_conflict(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1144,7 +1244,7 @@ case "$*" in
   *"catalog-admin-setup --list") printf '%s' "${FAKE_ADMINS:-}" ;;
   *"-f docker-compose.override.yml --profile * config --format json") printf '%s' "${FAKE_RENDER_OVERRIDE:-$empty}" ;;
   *"exec -T postgres sh -c"* | *"run --rm --no-deps -T store-check-postgres sh -c"*) printf '%s' "${FAKE_LATCH:-}"; [[ -n "${FAKE_LATCH:-}" ]] || exit 1 ;;
-  *"run --rm --no-deps -T store-check-"*) printf '%s' "${FAKE_STORE_CHECK_OUTPUT:-}"; exit "${FAKE_STORE_CHECK:-0}" ;;
+  *"run --rm --no-deps -T"*"store-check-"*) printf '%s' "${FAKE_STORE_CHECK_OUTPUT:-}"; exit "${FAKE_STORE_CHECK:-0}" ;;
   *"--profile * config --format json") if [[ -n "${FAKE_RENDER_FILE:-}" ]]; then cat "$FAKE_RENDER_FILE"; else printf '%s' "${FAKE_RENDER:-$empty}"; fi ;;
 esac
 exit 0
