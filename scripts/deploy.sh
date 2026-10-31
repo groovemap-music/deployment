@@ -227,6 +227,33 @@ if [[ -f "$OVERRIDE" ]]; then
   fi
 fi
 
+# Free space is judged on the disk behind each data volume, so it waits for the render that
+# includes the override (and .env, which Compose needs to render at all). If Compose cannot
+# render, every volume is assumed to be on Docker's data root.
+disk_check() {
+  local rendered args=() status=0
+  rendered="$(mktemp)"
+  ((force)) && args+=(--force)
+  if "${compose[@]}" --profile '*' config --format json >"$rendered"; then
+    helper disk-check "$rendered" ${args[@]+"${args[@]}"} || status=$?
+  else
+    echo "deploy: docker compose could not render the stack; assuming the data is on Docker's data root" >&2
+    helper disk-check ${args[@]+"${args[@]}"} || status=$?
+  fi
+  rm -f "$rendered"
+  return "$status"
+}
+
+say "Checking free disk space behind the data volumes"
+status=0
+disk_check || status=$?
+if ((status == 3)); then
+  exit 3
+elif ((status != 0)); then
+  echo "deploy: the disk check failed unexpectedly (exit $status)" >&2
+  exit 1
+fi
+
 # --- 3. where are we? ------------------------------------------------------------------
 
 musicbrainz_present() {

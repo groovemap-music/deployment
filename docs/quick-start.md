@@ -64,13 +64,14 @@ the tracked Compose files; see
 exists, deploy adds it last to every Compose call and to the import gate.
 
 The host checks stop below these minimums unless you pass `--force`, and warn
-below the recommended sizes:
+below the recommended sizes. The disk check runs once the override is in place and follows
+volumes relocated there; see [Hardware and sizing](homelab.md#hardware-and-sizing):
 
 | Check | Minimum | Recommended | Source |
 | --- | --- | --- | --- |
 | Memory for Docker, production | 16 GB | 32 GB | Neo4j sizing above, plus PostgreSQL's 2 GB shared buffers and 6 GB cache in `docker-compose.prod.yml` |
 | Memory for Docker, `--dev` | 8 GB | 16 GB | Neo4j's fixed 2 GiB heap and 1 GiB page cache in `docker-compose.yml` |
-| Free disk on Docker's data root, new install | 100 GB | 200 GB | Discogs is ~76 GB on disk plus its ~11.3 GB dump ([architecture](architecture.md), "Dataset Scale"); MusicBrainz is not measured yet, so the recommendation assumes it is as large |
+| Free disk, new install, on each disk that holds data volumes (summed shares) | 100 GB | 200 GB | Discogs is ~76 GB on disk plus its ~11.3 GB dump ([architecture](architecture.md), "Dataset Scale"); MusicBrainz is not measured yet, so the recommendation assumes it is as large |
 
 On an existing deployment the disk check only warns below 20 GB free. Every
 configured host port must be free (ports the stack already holds are fine), and

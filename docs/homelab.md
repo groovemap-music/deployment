@@ -66,13 +66,13 @@ workflow.
 ## Hardware and sizing
 
 `just deploy` enforces these minimums and warns below the recommended sizes. `--force` goes
-ahead anyway. The values come from `scripts/deploy_helpers.py`.
+ahead anyway; it also skips the memory minimum, so a relocated data volume does not need it. The values come from `scripts/deploy_helpers.py`.
 
 | Check | Minimum | Recommended |
 | --- | --- | --- |
 | Memory for Docker, production | 16 GB | 32 GB |
 | Memory for Docker, `--dev` | 8 GB | 16 GB |
-| Free disk on Docker's data root, new install | 100 GB | 200 GB |
+| Free disk, new install, summed over the disks the data volumes live on | 100 GB | 200 GB |
 
 On an existing deployment the disk check only warns below 20 GB free.
 
@@ -92,8 +92,14 @@ Neo4j is sized from the memory Docker reports: half of it goes to heap plus page
 buffers and 6 GB cache in `docker-compose.prod.yml` come on top. `just deploy` writes the Neo4j
 values to `.env` only where you have not set them, so you can edit them afterwards.
 
-The disk preflight measures only Docker's data root. If you move volumes elsewhere with the
-override (see [Data on a large disk](#data-on-a-large-disk)), check the target disk yourself.
+The disk check runs after `.env` and the override are in place and follows each data volume
+to the disk it lives on, including bind mounts and `driver_opts: {o: bind, device: ...}`
+volumes from `docker-compose.override.yml` (see [Data on a large disk](#data-on-a-large-disk)).
+Volumes that share a filesystem share its free space, so each disk needs the sum of its
+volumes' shares of the sizes above. The per-volume shares are in
+[configuration](configuration.md#disk-check-per-volume-shares). Docker Desktop's VM disk, a
+remote `DOCKER_HOST` and network filesystems cannot be measured from the host; deploy warns
+with the sizes instead, and you check those yourself.
 
 ### Architecture support
 
@@ -277,7 +283,9 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   turning the opt-out on.
 - **`just env-init --force` drops host-specific values.** See
   [Upgrading](#upgrading-an-existing-deployment).
-- **The disk preflight measures only Docker's data root.** See [Hardware and sizing](#hardware-and-sizing).
+- **The disk check cannot measure everything.** Docker Desktop's VM disk, a remote `DOCKER_HOST`,
+  network filesystems and non-local volume drivers get a warning with the sizes, not a
+  measurement. See [Hardware and sizing](#hardware-and-sizing).
 - **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See
   [Later cycles](#later-cycles).
 - **MusicBrainz disk use is an estimate.**

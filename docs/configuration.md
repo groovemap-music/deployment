@@ -336,6 +336,27 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 | `/discogs-data/.extraction_status_<version>.json` | Per-dump processing state marker |
 | `/discogs-data/flagged/<version>/<type>/` | Records flagged by the data-quality rules |
 
+#### Disk check per-volume shares
+
+`just deploy` resolves each data volume from the rendered Compose
+config (override included), groups the volumes by filesystem, and checks every filesystem
+against the sum of its volumes' shares (`DATA_VOLUMES` in `scripts/deploy_helpers.py`):
+
+| Volume | Minimum | Recommended |
+| --- | --- | --- |
+| `postgres_data` | 48 GB | 48 GB |
+| `neo4j_data` | 28 GB | 28 GB |
+| `discogs_data` | 12 GB | 12 GB |
+| `victoria_metrics_data` | 2 GB | 2 GB |
+| `rabbitmq_data` | 2 GB | 2 GB |
+| Docker's data root (images, layers, logs, small volumes) | 8 GB | 8 GB |
+| `musicbrainz_data` | 0 | 100 GB (an estimate, not measured; gm-deployment-q4en) |
+
+Named volumes on the default driver count against Docker's data root. Docker Desktop's VM
+disk, a remote `DOCKER_HOST` and network filesystems cannot be measured, so they warn with
+the sizes. The 76 GB Discogs figure is 28 GB Neo4j plus 48 GB PostgreSQL
+([architecture](architecture.md)); the 2 GB, 2 GB and 8 GB allowances are rough.
+
 **PERIODIC_CHECK_DAYS**:
 
 - How often to check for new data dumps
