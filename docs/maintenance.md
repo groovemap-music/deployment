@@ -772,10 +772,14 @@ configuration.
 
 The operations console shows firing Grafana alerts in its attention bar only when it
 holds a read token. It is optional: with no token the console shows the problems it
-derives from its live feed and says nothing about Grafana. The console reads the token
-server-side from a file, so it never reaches the browser.
+derives from its live feed and says nothing about Grafana; its deep links into Grafana
+and its Grafana health row need no token. The console reads the token server-side from
+a file, so it never reaches the browser.
 
-1. In Grafana, open Administration > Users and access > Service accounts and add a
+Create the token on the Grafana that evaluates GrooveMap's alert rules: this stack's own
+Grafana, or the shared one when `GROOVEMAP_MONITORING=shared` (below).
+
+1. In that Grafana, open Administration > Users and access > Service accounts and add a
    service account (for example `operations-console`) with the **Viewer** role.
 2. Add a token to it. Choose an expiry you will remember to rotate; Grafana shows the
    token once.
@@ -785,8 +789,9 @@ server-side from a file, so it never reaches the browser.
    overwrites it.
 4. Set `GRAFANA_URL` in the production environment to the Grafana address operators'
    browsers can reach (the console builds its deep links on it). `TRACES_URL` defaults to
-   it. The console fetches alerts from the in-network `GRAFANA_API_URL`
-   (`http://grafana:3000`), which compose already sets.
+   it. The console fetches alerts from the server-side `GRAFANA_API_URL`: the in-network
+   `http://grafana:3000` for this stack's own Grafana, which compose already sets, or
+   `SHARED_GRAFANA_URL` for a shared one.
 5. Restart the `dashboard` service and open the console: `GET /api/alerts` reports
    `configured: true, available: true`.
 
@@ -796,6 +801,25 @@ cannot be read or decoded, or a token Grafana rejects or cannot be reached with,
 `configured: true, available: false` with a note. To rotate,
 create a new token, replace the file, restart `dashboard`, then delete the old token in
 Grafana. The development stack mounts no token, so alerts stay off there.
+
+### On this stack's own Grafana
+
+Sign in to it with the `admin` user and the password in `secrets/grafana_admin_password.txt`
+to create the service account.
+
+### On a shared Grafana
+
+With shared monitoring this stack runs no Grafana and has no Grafana login of its own, so
+nothing here holds a password for it. Ask whoever administers the shared Grafana to create the
+**Viewer** service account and its token (steps 1 and 2), in the organization that holds
+GrooveMap's imported alert rules, and hand you the token through your secret store; then
+continue at step 3. The file is the same `secrets/grafana_viewer_token.txt`, and the console
+reaches the shared Grafana at `SHARED_GRAFANA_URL` (or `GRAFANA_URL` when that is unset).
+
+A Viewer sees every firing alert of its organization, and the console lists all of them. Import
+GrooveMap into an organization of its own on the shared Grafana
+([Shared Grafana](observability.md#shared-grafana)) so the attention bar shows only GrooveMap's
+alerts; a Viewer of an organization other stacks share would show theirs too.
 
 ## Console sign-in over HTTPS
 

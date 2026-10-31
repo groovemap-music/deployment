@@ -134,7 +134,11 @@ Only for a store whose floor is met, and only with the user's approval at each s
    overlays, and `just discogs-import-status --prod` adds them itself. Never edit that line.
 
 Backups, upgrades, restarts, disk space and monitoring of the external server stay with its
-operator. `postgres-exporter` and `valkey-exporter` do not run in this mode.
+operator. `postgres-exporter` and `valkey-exporter` do not run in this mode: their scrape jobs get
+no target and the console shows them disabled. If an exporter already watches the shared
+PostgreSQL (typically beside it in the same stack), set `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` to
+its `host:port`: the collector scrapes it and the console probes it as shared. `otel-collector`
+and `dashboard` must then reach that address too (see the monitoring network below).
 
 ## Comparing the options
 
@@ -148,3 +152,47 @@ operator. `postgres-exporter` and `valkey-exporter` do not run in this mode.
 
 Recommend dedicated. Once a floor is met, recommend reuse of that store only for an instance
 that passes every requirement above and is operated by the user who asked for it.
+
+## Shared monitoring
+
+A separate choice from the stores: `GROOVEMAP_MONITORING=shared` in `.env` makes GrooveMap report to
+an existing Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor instead of running
+its own. Read the current value from `.env` first; it is the deployment's decision, not yours.
+Full procedure: [docs/homelab.md](../../../docs/homelab.md#shared-monitoring).
+
+What you set, with approval, and nothing else:
+
+| `.env` value | What to put there |
+| --- | --- |
+| `GROOVEMAP_MONITORING` | `shared` |
+| `SHARED_VICTORIA_METRICS_URL` | Base URL of the shared VictoriaMetrics as a container reaches it, such as `http://victoria-metrics:8428` (required) |
+| `SHARED_VICTORIA_TRACES_URL` | The same for VictoriaTraces, such as `http://victoria-traces:10428` (required) |
+| `SHARED_GRAFANA_URL` | The shared Grafana as the console's container reaches it, such as `http://grafana:3000` |
+| `GRAFANA_URL` | The shared Grafana as the operator's browser reaches it |
+| `SHARED_NODE_EXPORTER_ADDRESS`, `SHARED_CADVISOR_ADDRESS` | `host:port` of each, when GrooveMap's host dashboards should include them |
+| `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | Only with `GROOVEMAP_POSTGRES=external`: `host:port` of the exporter that watches that server |
+
+**Network.** Exactly two GrooveMap services talk to shared monitoring services: `otel-collector`
+(it writes metrics and spans and scrapes the shared exporters) and `dashboard` (the console probes
+them and reads history and alerts). No application talks to them; they send telemetry only to
+`otel-collector`. When the shared services are containers on another Docker network, attach those
+two services to it, and only those: start from
+[`assets/override-shared-monitoring-network.yml`](../assets/override-shared-monitoring-network.yml).
+The list is `MONITORING_CLIENTS` in `scripts/stores.py`, and the tests keep the example equal to it.
+A LAN address or `host.docker.internal` needs no attachment.
+
+**The shared Grafana.** Someone with admin rights there imports GrooveMap's dashboards and alert
+rules ([docs/observability.md](../../../docs/observability.md#shared-grafana)), ideally into an
+organization of their own; every query is scoped to `service_namespace="groovemap"`, so they show
+only GrooveMap's series. You never sign in to it and never handle its credentials.
+
+**Viewer token (optional).** It lets the console's attention bar list firing Grafana alerts; the
+console's deep links and its Grafana health row work without it. It is created on the shared
+Grafana, by its administrator: a service account with the **Viewer** role in GrooveMap's
+organization, then a token, which the operator writes to `secrets/grafana_viewer_token.txt` from
+their secret store ([maintenance](../../../docs/maintenance.md#on-a-shared-grafana)). This stack
+runs no Grafana in shared mode, so never suggest creating or using a local Grafana login for it.
+
+**Tell the user** that until the operations-console release with configurable targets is
+promoted, the console shows the shared services as unreachable (`just deploy` warns), and that
+shared endpoints needing authentication are not supported yet.

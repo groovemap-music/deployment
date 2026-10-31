@@ -113,6 +113,14 @@ EXTERNAL_STORE_FLOORS = {
     "valkey": {"CATALOG_API_IMAGE": "0.6.0", "ANALYTICS_ENGINE_IMAGE": "0.5.0"},
 }
 
+# The first operations-console release that reads the configurable Platform Health targets
+# (<NAME>_MODE / <NAME>_URL, operations-console 5af1a0d, after v0.2.0). The shared-monitoring and
+# external-store overlays set them; an older console ignores them, which is harmless, but keeps
+# probing the omitted local services by their compose names, so `just deploy` warns (never stops)
+# while the reviewed console is below this floor. Promoting that release (gm-deployment-8nbg) means
+# replacing UNRELEASED with its version here.
+CONSOLE_TARGETS_FLOOR = {"OPERATIONS_CONSOLE_IMAGE": UNRELEASED}
+
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
 # store checks use the stack's own postgres and valkey images, so one Dependabot bump moves both.
 OVERLAY_IMAGES = {
@@ -194,6 +202,9 @@ def check_declarations() -> None:
         for variable, floor in floors.items():
             assert variable in IMAGE_OWNERS, f"the external {store} floor names {variable}, which is not an owned image"
             assert floor == UNRELEASED or re.fullmatch(r"\d+\.\d+\.\d+", floor), f"the external {store} floor for {variable} is X.Y.Z or UNRELEASED"
+    for variable, floor in CONSOLE_TARGETS_FLOOR.items():
+        assert variable in IMAGE_OWNERS, f"the console targets floor names {variable}, which is not an owned image"
+        assert floor == UNRELEASED or re.fullmatch(r"\d+\.\d+\.\d+", floor), f"the console targets floor for {variable} is X.Y.Z or UNRELEASED"
     assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_REPOSITORIES), "a service runs either a released GrooveMap image or a public one"
     assert all(
         repository and "@" not in repository and ":" not in repository.rsplit("/", 1)[-1] for repository in THIRD_PARTY_REPOSITORIES.values()

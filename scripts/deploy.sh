@@ -15,7 +15,9 @@
 # PostgreSQL and Valkey are the stack's own containers unless .env sets GROOVEMAP_POSTGRES or
 # GROOVEMAP_VALKEY to external. Then every Compose call adds that store's overlay
 # (docker-compose.external-*.yml) after the production overlay, the gate adds it the same way,
-# and its read-only store-check one-shot must pass before anything starts.
+# and its read-only store-check one-shot must pass before anything starts. Likewise
+# GROOVEMAP_MONITORING=shared adds docker-compose.shared-monitoring.yml after them: the stack then
+# runs no Grafana, VictoriaMetrics, VictoriaTraces, node-exporter or cAdvisor of its own.
 #
 # The decisions (preflight minimums, Neo4j sizing, the override check, .env edits, endpoints)
 # live in scripts/deploy_helpers.py, which runs on the distro's own python3 (stdlib only). This starts containers, so it is operator-run only and never part
@@ -194,7 +196,10 @@ store_checks=()
 while read -r file service; do
   [[ -n "$file" ]] || continue
   store_files+=("$file")
-  store_checks+=("$service")
+  # The shared-monitoring overlay has no check one-shot.
+  if [[ -n "$service" ]]; then
+    store_checks+=("$service")
+  fi
 done < <(helper store-files)
 stack_container="$(helper stack-container)"
 # The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
@@ -218,7 +223,8 @@ else
 fi
 
 # The files every Compose call names, in order. The external-store overlays come right after the
-# production overlay; the gate reads the same GROOVEMAP_* settings and adds them itself.
+# production overlay, then the shared-monitoring one; the gate reads the same GROOVEMAP_* settings
+# and adds them itself.
 files=(docker-compose.yml)
 gate=("${PYTHON[@]}" scripts/discogs_import_status.py)
 [[ -n "$project" ]] && gate+=(--project-name "$project")
@@ -243,9 +249,9 @@ if [[ -f "$OVERRIDE" ]]; then
   compose_with "${files[@]}"
   gate+=(-f "$OVERRIDE")
 fi
-# With an external store a bare `docker compose` must use these files too, or it would start the
-# local stores and point the services at them: keep COMPOSE_FILE in .env equal to them. With both
-# stores local this removes only a COMPOSE_FILE deploy wrote.
+# With an external store or shared monitoring a bare `docker compose` must use these files too, or
+# it would start the local stores or monitoring and point the services at them: keep COMPOSE_FILE
+# in .env equal to them. With no overlay this removes only a COMPOSE_FILE deploy wrote.
 helper compose-file "${files[@]}"
 
 # The override may add host-specific settings, but not swap an image, flip the musicbrainz

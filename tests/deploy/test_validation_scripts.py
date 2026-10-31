@@ -141,6 +141,9 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
         f"{external} -f docker-compose.external-postgres.yml config --quiet",
         f"{external} -f docker-compose.external-valkey.yml config --quiet",
         f"{external} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml config --quiet",
+        f"{external} -f docker-compose.shared-monitoring.yml config --quiet",
+        f"{external} -f docker-compose.external-postgres.yml -f docker-compose.shared-monitoring.yml config --quiet",
+        f"{external} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml -f docker-compose.shared-monitoring.yml config --quiet",
         "compose --env-file config/validation.env -f docker-compose.yml config --services",
         "compose --env-file config/validation.env -f docker-compose.yml --profile musicbrainz config --services",
         "compose --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml config --services",
@@ -153,11 +156,14 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
 
 
 def _example_calls(example: Path, validation: str) -> list[str]:
-    """Plain examples render on the production stack; override-external-* ones on top of both store overlays."""
+    """Plain examples render on the production stack; override-external-* ones on top of both store overlays, override-shared-* on the monitoring one."""
     path = example.relative_to(ROOT)
     prod = "compose --profile * --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml"
     if example.name.startswith("override-external-"):
         stack = f"{prod} -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml"
+        return [f"{stack} -f {path} config --quiet", f"{stack} config --format json", f"{stack} -f {path} config --format json"]
+    if example.name.startswith("override-shared-"):
+        stack = f"{prod} -f docker-compose.shared-monitoring.yml"
         return [f"{stack} -f {path} config --quiet", f"{stack} config --format json", f"{stack} -f {path} config --format json"]
     return [
         f"{validation} -f docker-compose.yml -f docker-compose.prod.yml -f {path} config --quiet",

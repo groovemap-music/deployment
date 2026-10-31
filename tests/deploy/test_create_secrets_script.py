@@ -33,6 +33,7 @@ def test_generates_valkey_password_secret(tmp_path: Path) -> None:
     scratch_scripts.mkdir()
     scratch_script = scratch_scripts / "create-secrets.sh"
     shutil.copy(SCRIPT, scratch_script)
+    shutil.copy(SCRIPT.with_name("stores.py"), scratch_scripts / "stores.py")  # its GROOVEMAP_MONITORING reader
     scratch_script.chmod(0o755)
 
     result = subprocess.run(
@@ -70,6 +71,7 @@ def _run_in_scratch(tmp_path: Path) -> Path:
     scratch_scripts.mkdir(parents=True)
     scratch_script = scratch_scripts / "create-secrets.sh"
     shutil.copy(SCRIPT, scratch_script)
+    shutil.copy(SCRIPT.with_name("stores.py"), scratch_scripts / "stores.py")  # its GROOVEMAP_MONITORING reader
     scratch_script.chmod(0o755)
     result = subprocess.run([_BASH, str(scratch_script)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr

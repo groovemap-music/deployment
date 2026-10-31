@@ -278,8 +278,8 @@ def test_the_disk_check_skips_an_external_stores_volume(external_render: dict[st
 
     assert "postgres_data" in names(local_render)
     assert "postgres_data" not in names(external_render)
-    assert [volume.name for volume in helpers.external_store_volumes(external_render)] == ["postgres_data"]
-    assert helpers.external_store_volumes(local_render) == []
+    assert [volume.name for volume in helpers.omitted_volumes(external_render)] == ["postgres_data"]
+    assert helpers.omitted_volumes(local_render) == []
 
 
 def test_musicbrainz_evidence_is_the_same_in_external_mode(local_render: dict[str, Any], external_render: dict[str, Any]) -> None:
@@ -294,12 +294,12 @@ def test_musicbrainz_evidence_is_the_same_in_external_mode(local_render: dict[st
 
 def test_preflight_skips_the_host_ports_of_external_stores() -> None:
     variables = {port.variable for port in helpers.configured_ports("prod", {}, {})}
-    skipped = helpers.external_store_ports({"GROOVEMAP_POSTGRES": "external", "GROOVEMAP_VALKEY": "external"}, {})
+    skipped = helpers.omitted_service_ports({"GROOVEMAP_POSTGRES": "external", "GROOVEMAP_VALKEY": "external"}, {})
     assert skipped == ["POSTGRES_HOST_PORT", "VALKEY_HOST_PORT"]
     kept = {port.variable for port in helpers.configured_ports("prod", {}, {}, skipped)}
     assert variables - kept == {"POSTGRES_HOST_PORT", "VALKEY_HOST_PORT"}
-    assert helpers.external_store_ports({}, {}) == []
-    assert helpers.external_store_ports({"GROOVEMAP_POSTGRES": "bogus"}, {}) == []
+    assert helpers.omitted_service_ports({}, {}) == []
+    assert helpers.omitted_service_ports({"GROOVEMAP_POSTGRES": "bogus"}, {}) == []
 
 
 # --- settings and capability floors ------------------------------------------------------
@@ -403,9 +403,14 @@ def test_released_versions_match_the_comments_beside_the_digests() -> None:
     images.check_declarations()
 
 
+# What monitoring_findings adds to every run (tests/deploy/test_shared_monitoring.py covers it).
+MONITORING_FINDINGS = ("Monitoring: ", "PostgreSQL exporter: ", "The console will report ")
+
+
 def _store_findings(
     mode: str = "prod", env: dict[str, str] | None = None, *, tmp_path: Path, policy: Any = None, volumes: tuple[str, ...] = ()
 ) -> list[Any]:
+    """The store findings, without the monitoring ones that sit beside them."""
     findings: list[Any] = helpers.store_findings(
         mode,
         env_values=env if env is not None else BOTH,
@@ -414,7 +419,7 @@ def _store_findings(
         image_policy=policy or images,
         local_volumes=lambda: volumes,
     )
-    return findings
+    return [finding for finding in findings if not finding.message.startswith(MONITORING_FINDINGS)]
 
 
 class PromotedPolicy:
@@ -427,6 +432,7 @@ class PromotedPolicy:
     RELEASED_IMAGE_VERSIONS = images.RELEASED_IMAGE_VERSIONS
     RELEASED_IMAGE_DIGESTS = images.RELEASED_IMAGE_DIGESTS
     IMAGE_OWNERS = images.IMAGE_OWNERS
+    CONSOLE_TARGETS_FLOOR = images.CONSOLE_TARGETS_FLOOR
 
 
 class UnreleasedPolicy(PromotedPolicy):
@@ -1432,19 +1438,19 @@ def test_compose_file_follows_deploys_files_only_while_a_store_is_external(tmp_p
     env = tmp_path / ".env"
     env.write_text("APP_BASE_URL=https://x\n")
     files = ["docker-compose.yml", "docker-compose.prod.yml", POSTGRES_OVERLAY]
-    assert "Set COMPOSE_FILE=" in helpers.sync_compose_file(env, files, external=True, separator=":")
+    assert "Set COMPOSE_FILE=" in helpers.sync_compose_file(env, files, overlaid=True, separator=":")
     assert helpers.parse_env(env.read_text())["COMPOSE_FILE"] == f"docker-compose.yml:docker-compose.prod.yml:{POSTGRES_OVERLAY}"
     assert stores.COMPOSE_FILE_MARKER in env.read_text()
-    assert helpers.sync_compose_file(env, files, external=True, separator=":") == ""  # in sync: untouched
-    helpers.sync_compose_file(env, [*files, VALKEY_OVERLAY, "docker-compose.override.yml"], external=True, separator=";")
+    assert helpers.sync_compose_file(env, files, overlaid=True, separator=":") == ""  # in sync: untouched
+    helpers.sync_compose_file(env, [*files, VALKEY_OVERLAY, "docker-compose.override.yml"], overlaid=True, separator=";")
     text = env.read_text()
     assert text.count("COMPOSE_FILE=") == 1 and text.count(stores.COMPOSE_FILE_MARKER) == 1
     assert helpers.parse_env(text)["COMPOSE_FILE"].split(";")[-2:] == [VALKEY_OVERLAY, "docker-compose.override.yml"]
-    assert "Removed COMPOSE_FILE" in helpers.sync_compose_file(env, files[:2], external=False)
+    assert "Removed COMPOSE_FILE" in helpers.sync_compose_file(env, files[:2], overlaid=False)
     assert env.read_text() == "APP_BASE_URL=https://x\n"
     # An operator's own COMPOSE_FILE in local mode is theirs: nothing changes.
     env.write_text("COMPOSE_FILE=mine.yml\n")
-    assert helpers.sync_compose_file(env, files[:2], external=False) == ""
+    assert helpers.sync_compose_file(env, files[:2], overlaid=False) == ""
     assert env.read_text() == "COMPOSE_FILE=mine.yml\n"
 
 
@@ -1462,11 +1468,11 @@ def test_an_operators_own_compose_file_is_refused_in_external_mode(tmp_path: Pat
         return [finding.message for finding in findings if finding.level == "stop"]
 
     assert stops({}, env) == [
-        "COMPOSE_FILE in .env was not written by just deploy; with an external store deploy must own it, or a bare docker compose "
-        "could start the local stores and point the services at them"
+        "COMPOSE_FILE in .env was not written by just deploy; with an external store or shared monitoring deploy must own it, or a "
+        "bare docker compose could start the local stores or monitoring and point the services at them"
     ]
     assert stops({"COMPOSE_FILE": "x.yml"}, {**BOTH, **_reviewed_env()})[0].startswith("COMPOSE_FILE is set in your shell")
-    helpers.sync_compose_file(env_file, ["docker-compose.yml"], external=True)
+    helpers.sync_compose_file(env_file, ["docker-compose.yml"], overlaid=True)
     env_file.write_text(env_file.read_text().replace("COMPOSE_FILE=docker-compose.yml", "COMPOSE_FILE=mine.yml"))
     assert stops({}, env) == []  # deploy's own (marked) entry is deploy's to rewrite
 
@@ -1523,7 +1529,7 @@ def test_a_bare_render_from_env_equals_deploys_render_and_the_gates_files(tmp_pa
     files = ["docker-compose.yml", "docker-compose.prod.yml", POSTGRES_OVERLAY, VALKEY_OVERLAY, "docker-compose.override.yml"]
     env = tmp_path / ".env"
     env.write_text((ROOT / "config" / "validation.env").read_text() + "".join(f"{key}={value}\n" for key, value in BOTH.items()))
-    helpers.sync_compose_file(env, files, external=True)
+    helpers.sync_compose_file(env, files, overlaid=True)
     run_env = {"PATH": str(Path(docker).parent), "HOME": str(Path.home())}
 
     def render(*args: str) -> str:

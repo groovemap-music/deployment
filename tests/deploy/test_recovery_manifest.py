@@ -32,6 +32,7 @@ def _checkout(tmp_path: Path) -> Path:
     """A scratch deployment checkout with bootstrapped secrets, a .env and an override."""
     (tmp_path / "scripts").mkdir()
     shutil.copy(ROOT / "scripts" / "create-secrets.sh", tmp_path / "scripts" / "create-secrets.sh")
+    shutil.copy(ROOT / "scripts" / "stores.py", tmp_path / "scripts" / "stores.py")
     subprocess.run(
         [BASH, str(tmp_path / "scripts" / "create-secrets.sh")],
         capture_output=True,

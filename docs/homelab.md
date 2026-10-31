@@ -192,10 +192,11 @@ The [architecture guide](architecture.md) has the data flow.
 | `docker-compose.prod.yml` | Production overlay: Docker file secrets, hardening, Neo4j and PostgreSQL sizing, loopback binding for unauthenticated backends, Grafana without anonymous access |
 | `docker-compose.override.yml` | Yours, untracked, optional: host-specific settings. `.gitignore` already lists it |
 | `docker-compose.external-postgres.yml`, `docker-compose.external-valkey.yml` | Added by `just deploy` and the gate when `.env` selects an existing PostgreSQL or Valkey ([Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey)); never apply them by hand otherwise |
+| `docker-compose.shared-monitoring.yml` | Added by `just deploy` and the gate when `.env` sets `GROOVEMAP_MONITORING=shared` ([Shared monitoring](#shared-monitoring)); never apply it by hand otherwise |
 
 Production is always `-f docker-compose.yml -f docker-compose.prod.yml`, then any
-external-store overlay `.env` selects, and `-f docker-compose.override.yml` last when you have
-one. Compose reads the override by itself only when no `-f` is given, so name it explicitly.
+external-store overlay `.env` selects, then the shared-monitoring overlay, and
+`-f docker-compose.override.yml` last when you have one. Compose reads the override by itself only when no `-f` is given, so name it explicitly.
 
 ### Profiles
 
@@ -450,15 +451,93 @@ an external PostgreSQL in a project that already has a `postgres_data` volume, b
 is there and the gate would read an empty server. Move the data first, or stay local.
 
 **What becomes yours.** Backups, upgrades, restarts, disk space and monitoring of an external
-store are its operator's responsibility. The disk check skips it, `postgres-exporter` and
-`valkey-exporter` do not run (their scrape jobs read as down on the infrastructure dashboard),
-and the maintenance scripts that exec into the local `postgres` (`reset-password.sh`,
+store are its operator's responsibility. The disk check skips it, and `postgres-exporter` and
+`valkey-exporter` do not run: their scrape jobs get no target and the console's rows read disabled,
+so nothing reports them down. To keep watching an external PostgreSQL through an exporter that
+already watches it, set `EXTERNAL_POSTGRES_EXPORTER_ADDRESS=host:port`: the collector scrapes it
+for the infrastructure dashboard and the console probes it as shared. The maintenance scripts that exec into the local `postgres` (`reset-password.sh`,
 `provision-embedding-pipeline-login.sh`, `cleanup-implausible-years.sh`) do not apply; run
 their SQL against your server instead. An override may still never rewire `POSTGRES_*`,
 `VALKEY_*` or the store secrets: the supported mode is the only route
 ([the override check](#the-override-and-its-safety-check)). Secrets stay in encrypted storage,
 and nothing is applied on a shared server without your explicit approval. Details:
 [shared-services.md](../skills/groovemap-homelab/references/shared-services.md).
+
+## Shared monitoring
+
+A homelab that already runs Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor
+for other stacks can have GrooveMap report to them instead of running its own copies. Set
+`GROOVEMAP_MONITORING=shared` in `.env`; `just deploy` adds `docker-compose.shared-monitoring.yml`
+(after any external-store overlay) and records it in `COMPOSE_FILE`, exactly as for
+[existing stores](#existing-postgresql-and-valkey). Valkey, Neo4j and RabbitMQ are unaffected,
+and so is the collector: it stays the one place every GrooveMap service sends telemetry to.
+
+What changes in shared mode:
+
+- `grafana`, `victoria-metrics`, `victoria-traces`, `node-exporter` and `cadvisor` move into the
+  never-enabled `local-monitoring` profile, so they do not start; nothing waits for them. Their
+  volumes are left alone, and their host ports are neither published nor checked.
+- The collector remote-writes metrics to the shared VictoriaMetrics, pushes spans to the shared
+  VictoriaTraces and scrapes the shared node-exporter and cAdvisor, from the same
+  `config/otel-collector.yaml` (it reads the endpoints from its environment). Its healthcheck
+  validates that configuration in the same environment, so an endpoint it cannot use turns it
+  unhealthy instead of silently dropping telemetry.
+- The operations console probes the shared services and shows them as Shared with their
+  endpoints, instead of UNREACHABLE for the services this stack no longer runs.
+- Every GrooveMap series carries `service_namespace="groovemap"`, and every dashboard and alert
+  query selects it, so GrooveMap's panels on the shared Grafana never mix in another stack's series.
+- `just secrets-bootstrap` writes no Grafana admin password: this stack has no Grafana to sign in to.
+
+### Procedure
+
+1. Find the shared services' addresses as seen from a container: names on a shared Docker network
+   (such as `http://victoria-metrics:8428`), LAN addresses, or `host.docker.internal` for one
+   published on this Docker host. The agent skill can discover them read-only.
+2. Set them in `.env` (all variables in [configuration.md](configuration.md#shared-monitoring)):
+
+   ```bash
+   GROOVEMAP_MONITORING=shared
+   SHARED_VICTORIA_METRICS_URL=http://victoria-metrics:8428   # required
+   SHARED_VICTORIA_TRACES_URL=http://victoria-traces:10428    # required
+   SHARED_GRAFANA_URL=http://grafana:3000                     # the console server's address for it
+   SHARED_NODE_EXPORTER_ADDRESS=node-exporter:9100            # optional host:port
+   SHARED_CADVISOR_ADDRESS=cadvisor:8080                      # optional host:port
+   GRAFANA_URL=https://grafana.example.net                    # the shared Grafana, as browsers reach it
+   ```
+
+   With an existing PostgreSQL watched by a shared exporter, add
+   `EXTERNAL_POSTGRES_EXPORTER_ADDRESS=pg-exporter:9187`; without it the console shows the
+   PostgreSQL exporter as disabled. An unset node-exporter or cAdvisor address leaves that
+   exporter unscraped (GrooveMap's Containers & host dashboard then has no host data) and the
+   console lists it as shared but not configured.
+3. If the shared services are containers on another Docker network, attach exactly `dashboard`
+   and `otel-collector` to it in `docker-compose.override.yml`
+   ([example](../skills/groovemap-homelab/assets/override-shared-monitoring-network.yml)). No other
+   GrooveMap service talks to them. The override check accepts this.
+4. Import GrooveMap's dashboards and alert rules into the shared Grafana:
+   [Shared Grafana](observability.md#shared-grafana). Optionally create a Viewer token there for
+   the console's alerts: [Grafana Viewer token](maintenance.md#on-a-shared-grafana).
+5. Run `just deploy`. Before anything starts it checks every `SHARED_*` value's shape and stops
+   on a missing or malformed one; it warns about what it cannot monitor and prints the shared
+   Grafana instead of a local login.
+
+**The console needs its configurable-targets release.** The reviewed operations-console (v0.2.0)
+predates the `<NAME>_MODE` targets the overlay sets. It ignores them, which is harmless, but keeps
+probing the omitted services by their compose names, so until the release that reads them is
+promoted (`gm-deployment-8nbg`) it still shows them unreachable; `just deploy` says so with a
+`[warn]` line. Everything else in shared mode works with v0.2.0.
+
+**History.** Series written before this change lack the stack label on the exporter and collector
+series, so the scoped infrastructure panels start at the upgrade (application series always had it).
+Switching an existing deployment to shared monitoring does not move its local VictoriaMetrics or
+Grafana data; the volumes stay, and switching back to `local` brings them back.
+
+**Not supported yet:** shared endpoints that need authentication, and `https://` endpoints signed
+by a private CA. Use an internal network both stacks share.
+
+**Switching back.** Remove `GROOVEMAP_MONITORING` (or set it to `local`) and run `just deploy`:
+the local services start again, deploy removes its `COMPOSE_FILE`, and
+`just secrets-bootstrap` creates the local Grafana admin password if it is missing.
 
 ## Known limitations
 
@@ -483,6 +562,9 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   external-stores mode is supported: the capability floors are met by the reviewed release set,
   and `just deploy` still refuses a store whose settings, secrets, TLS or server checks fail.
   See [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
+- **Shared monitoring needs the next console release for truthful health rows.** Until the
+  operations-console release with configurable targets is promoted, the console shows the shared
+  services as unreachable; see [Shared monitoring](#shared-monitoring).
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations

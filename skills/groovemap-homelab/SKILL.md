@@ -49,9 +49,9 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
    `-f docker-compose.yml -f docker-compose.prod.yml`, plus `-f docker-compose.override.yml`
    last when it exists. A bare `docker compose up` in the checkout starts the development
    stack, which has fixed, public credentials. The one exception is an external store (step
-   2a): then `just deploy` keeps `COMPOSE_FILE` in `.env` listing the production files, the
-   external overlays and the override, so a bare command uses exactly those. Never edit or
-   remove that line.
+   2a) or shared monitoring (step 2b): then `just deploy` keeps `COMPOSE_FILE` in `.env` listing
+   the production files, the overlays and the override, so a bare command uses exactly those.
+   Never edit or remove that line.
 4. **GrooveMap's images are linux/amd64 only.** On an arm64 host they run under emulation,
    several times slower, and the first load takes days longer. Tell the user before deploying.
    Pass `just deploy --yes` only after they agree. Multi-arch images are tracked as
@@ -117,7 +117,11 @@ Run the read-only checks in [references/discovery.md](references/discovery.md). 
 - existing Docker networks, and whether any overlaps GrooveMap's `172.20.0.0/16` subnet;
 - occupied host ports that collide with GrooveMap's defaults;
 - how the user manages stacks (plain Compose, Portainer, Dockge, Komodo, systemd, Ansible);
-- existing PostgreSQL, PgBouncer, Neo4j, RabbitMQ, Valkey or Redis containers, and whether each is shared infrastructure or dedicated to another application.
+- existing PostgreSQL, PgBouncer, Neo4j, RabbitMQ, Valkey or Redis containers, and whether each is shared infrastructure or dedicated to another application;
+- existing Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor containers (and a
+  PostgreSQL exporter beside a shared PostgreSQL), their Docker network and their in-network
+  addresses, for step 2b. Read them from `docker ps` and `docker inspect` only; never sign in to
+  a Grafana or read its credentials.
 
 **GrooveMap's images are tested with their own databases.** They are pinned by digest to
 PostgreSQL 18, Neo4j 2026.10 Community with APOC, RabbitMQ 4 with its own plugin set and
@@ -191,6 +195,35 @@ What happens on each answer:
   set it only if the user asks for it.
 - **No answer or unsure:** stay stopped and ask again. Never default to reuse.
 
+### 2b. Monitoring: local or shared
+
+First read the current choice: `GROOVEMAP_MONITORING` in the checkout's `.env` (the shell
+overrides it, as Compose does). `shared` means this deployment already reports to shared
+monitoring: keep it, check the `SHARED_*` values against what discovery found, and never switch an
+existing deployment back or forth without the user asking. Unset or `local` on an existing
+deployment means it runs its own monitoring; leave it unless the user asks.
+
+On a fresh install, when discovery found a Grafana, VictoriaMetrics and VictoriaTraces that other
+stacks already use, ask whether GrooveMap should report to them or run its own. Recommend its own
+(isolated, provisioned for you) unless the user prefers one Grafana for everything. Shared mode is
+supported, with these consequences to state:
+
+- The stack runs no Grafana, VictoriaMetrics, VictoriaTraces, node-exporter or cAdvisor of its
+  own, and no Grafana admin password is created. Its collector writes to the shared stores; the
+  console probes the shared services.
+- Someone with admin rights on the shared Grafana imports GrooveMap's dashboards and alert rules
+  (every query is scoped to `service_namespace="groovemap"`, so they never mix in other stacks),
+  ideally into an organization of their own, and creates the optional Viewer token there.
+- Until the operations-console release with configurable targets is promoted, the console shows
+  the shared services as unreachable (`just deploy` warns).
+- Shared endpoints must accept unauthenticated access on an internal network.
+
+With approval, set only `GROOVEMAP_MONITORING=shared` and the `SHARED_*` values in `.env` (and
+`EXTERNAL_POSTGRES_EXPORTER_ADDRESS` with an external PostgreSQL whose exporter is shared), and,
+when the shared services sit on another Docker network, attach exactly `dashboard` and
+`otel-collector` to it in the override. Details and the network example:
+[references/shared-services.md](references/shared-services.md#shared-monitoring).
+
 ### 3. Propose a plan and get approval
 
 Present the plan before you write anything. Cover:
@@ -203,6 +236,8 @@ Present the plan before you write anything. Cover:
 - **Network:** a different subnet if `172.20.0.0/16` is taken.
 - **Stack manager:** how GrooveMap fits it. See
   [references/stack-managers.md](references/stack-managers.md).
+- **Monitoring:** local, or shared with the `SHARED_*` values, the override's network attachment
+  and who imports the dashboards on the shared Grafana (step 2b).
 - **Stores:** the answer from step 2a. If the user chose reuse and the capability floor is met
   (`gm-deployment-e1uh`), list the external servers, the `.env` values and the operator's
   provisioning steps; otherwise the plan uses dedicated instances.
