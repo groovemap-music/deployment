@@ -551,14 +551,38 @@ def _joins_stack_network(service: Mapping[str, Any], networks: Mapping[str, Any]
     return service.get("network_mode") not in (None, "", "none", "bridge")
 
 
-def sensitive_host_path(path: str) -> bool:
-    """True for `/`, a documented sensitive host path, anything under one, or a parent that contains one."""
+def canonical_host_path(path: str) -> str:
+    """A host path in one spelling: leading slashes collapsed (POSIX keeps exactly two), then normalized."""
+    return posixpath.normpath("/" + path.lstrip("/")) if path.startswith("/") else path
+
+
+def host_path_forms(path: str, resolve: bool) -> frozenset[str]:
+    """The canonical spelling of a host path and, for a local engine, where its symlinks lead.
+
+    realpath resolves the path or its nearest existing parent. It is skipped for a remote
+    DOCKER_HOST, whose host paths are not on this machine.
+    """
+    canonical = canonical_host_path(path)
+    if resolve and canonical.startswith("/"):
+        return frozenset({canonical, os.path.realpath(canonical)})
+    return frozenset({canonical})
+
+
+def sensitive_host_path(path: str, resolve: bool = False) -> bool:
+    """True for `/`, a documented sensitive host path, anything under one, or a parent that contains one.
+
+    Both the literal-canonical and the symlink-resolved forms are checked, against the list as
+    written and as resolved (macOS keeps /etc under /private).
+    """
     if not path.startswith("/"):
         return False
-    normal = posixpath.normpath(path)
-    if normal in ("/", "//") or ROOTLESS_SOCKET.match(normal) or re.match(r"^/run/user(/\d+)?$", normal):
-        return True
-    return any(normal == bad or normal.startswith(bad + "/") or bad.startswith(normal + "/") for bad in OVERRIDE_SENSITIVE_PATHS)
+    bad_paths = {*OVERRIDE_SENSITIVE_PATHS, *(os.path.realpath(bad) for bad in OVERRIDE_SENSITIVE_PATHS if resolve)}
+    for normal in host_path_forms(path, resolve):
+        if normal == "/" or ROOTLESS_SOCKET.match(normal) or re.match(r"^/run/user(/\d+)?$", normal):
+            return True
+        if any(normal == bad or normal.startswith(bad + "/") or bad.startswith(normal + "/") for bad in bad_paths):
+            return True
+    return False
 
 
 def _mounts(service: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -585,7 +609,7 @@ def _mount_id(mount: Mapping[str, Any]) -> tuple[str, str, str]:
 def _device_path(definition: Mapping[str, Any]) -> str:
     """The normalized host directory a bind-backed named volume (`driver_opts.device`) lives in, or ''."""
     device = str((definition.get("driver_opts") or {}).get("device") or "")
-    return posixpath.normpath(device) if device.startswith("/") else ""
+    return canonical_host_path(device) if device.startswith("/") else ""
 
 
 def _engine_names(key: str, definitions: Mapping[str, Any], project: str) -> set[tuple[str, str]]:
@@ -601,8 +625,13 @@ def _engine_names(key: str, definitions: Mapping[str, Any], project: str) -> set
     return names
 
 
-def _overlaps(first: str, second: str) -> bool:
-    return first == second or first.startswith(second + "/") or second.startswith(first + "/")
+def _overlaps(first: str, second: str, resolve: bool = False) -> bool:
+    """True when the paths are the same, or one contains the other, in either spelling (canonical or symlink-resolved)."""
+    return any(
+        one == two or one.startswith(two + "/") or two.startswith(one + "/")
+        for one in host_path_forms(first, resolve)
+        for two in host_path_forms(second, resolve)
+    )
 
 
 @dataclass
@@ -611,12 +640,13 @@ class Ownership:
 
     names: dict[tuple[str, str], set[str]]
     paths: dict[tuple[str, str], set[str]]  # (host path, tag of the volume or mount that lives there) -> owners
+    resolve: bool = False
 
 
-def _ownership(before: Mapping[str, Any], after: Mapping[str, Any]) -> Ownership:
+def _ownership(before: Mapping[str, Any], after: Mapping[str, Any], resolve: bool = False) -> Ownership:
     project = str(before.get("name") or after.get("name") or "")
     base_definitions, definitions = before.get("volumes") or {}, after.get("volumes") or {}
-    owned = Ownership({}, {})
+    owned = Ownership({}, {}, resolve)
     for key in base_definitions:
         for ident in _engine_names(key, base_definitions, project):
             if ident[0] == "volume":
@@ -636,7 +666,7 @@ def _ownership(before: Mapping[str, Any], after: Mapping[str, Any]) -> Ownership
                         owned.paths.setdefault((path, f"volume:{key}"), set()).add(name)
         for mount in _mounts((after.get("services") or {}).get(name) or {}):
             if mount.get("type") == "bind" and str(mount.get("target") or "") in targets and mount.get("source"):
-                owned.paths.setdefault((posixpath.normpath(str(mount["source"])), f"bind:{name}:{mount.get('target')}"), set()).add(name)
+                owned.paths.setdefault((canonical_host_path(str(mount["source"])), f"bind:{name}:{mount.get('target')}"), set()).add(name)
     return owned
 
 
@@ -646,7 +676,7 @@ def _check_path_collisions(owned: Ownership) -> list[Finding]:
     entries = sorted(owned.paths.items())
     for index, ((first, first_tag), first_owners) in enumerate(entries):
         for (second, second_tag), second_owners in entries[index + 1 :]:
-            if first_tag != second_tag and not first_owners & second_owners and _overlaps(first, second):
+            if first_tag != second_tag and not first_owners & second_owners and _overlaps(first, second, owned.resolve):
                 findings.append(
                     Finding(
                         "stop",
@@ -696,7 +726,7 @@ def _check_mounts(
 
     def path_owner(path: str) -> tuple[str, set[str]] | None:
         for (other, _tag), owners in sorted(owned.paths.items()):
-            if _overlaps(path, other) and name not in owners:
+            if _overlaps(path, other, owned.resolve) and name not in owners:
                 return other, owners
         return None
 
@@ -704,11 +734,11 @@ def _check_mounts(
         kind, source, _ = _mount_id(mount)
         fresh = _mount_id(mount) not in known
         if kind == "bind":
-            if fresh and sensitive_host_path(source):
+            if fresh and sensitive_host_path(source, owned.resolve):
                 findings.append(
                     Finding("stop", f"{OVERRIDE_FILE} mounts the sensitive host path {source} into {who}", _volume_hint(new, name, sensitive))
                 )
-            elif fresh and (clash := path_owner(posixpath.normpath(source))):
+            elif fresh and (clash := path_owner(source)):
                 findings.append(
                     Finding(
                         "stop",
@@ -731,7 +761,7 @@ def _check_mounts(
                             )
                         )
                 device = _device_path(definition)
-                if device and sensitive_host_path(device):
+                if device and sensitive_host_path(device, owned.resolve):
                     findings.append(
                         Finding(
                             "stop",
@@ -834,7 +864,9 @@ def _check_data_tier_networks(before: Mapping[str, Any], after: Mapping[str, Any
     return findings
 
 
-def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed: frozenset[str] = frozenset()) -> list[Finding]:
+def check_override(
+    before: Mapping[str, Any], after: Mapping[str, Any], allowed: frozenset[str] = frozenset(), resolve: bool = False
+) -> list[Finding]:
     """Compare the rendered stack without and with docker-compose.override.yml.
 
     The override is for host-specific settings: reverse-proxy labels and networks, data on
@@ -849,6 +881,9 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
 
     Services the override adds must be pinned by digest. One that publishes ports or joins the
     groovemap network (a forwarder into the data tier, say) must also be named in `allowed`.
+    `resolve` (a local engine) also follows symlinks in every host path; a remote DOCKER_HOST's paths
+    are not on this machine, so only the canonical spelling is compared.
+
     A new service that omits `networks` joins the project's default network, a separate network
     from groovemap, so it passes without an opt-in. That guarantees no route to the stack over
     groovemap only: it says nothing about what the service reaches on the host or the LAN, which
@@ -857,7 +892,7 @@ def check_override(before: Mapping[str, Any], after: Mapping[str, Any], allowed:
     """
     findings = []
     rendered = after.get("services") or {}
-    owners = _ownership(before, after)
+    owners = _ownership(before, after, resolve)
     findings += _check_volume_definitions(before, after) + _check_path_collisions(owners)
     for name, service in (before.get("services") or {}).items():
         if name not in rendered:
@@ -1425,6 +1460,7 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
                 json.loads(args.before.read_text()),
                 json.loads(args.after.read_text()),
                 parse_allowed_services(effective(OVERRIDE_ALLOW_VARIABLE, env_values, environ)),
+                local_engine(environ),
             )
         except (OSError, json.JSONDecodeError) as error:
             print(f"error: could not read the rendered stack: {error}", file=sys.stderr)

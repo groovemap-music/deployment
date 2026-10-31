@@ -124,7 +124,11 @@ declared with `name:` or `external: true` that resolves to a stack volume
 data was relocated to is stopped for every other service. The override may not change `name`,
 `external` or `driver` of the stack's own top-level volumes (`driver_opts`, the data's
 location, may change), and two services may not relocate their data into overlapping
-directories. Existing services are checked against this denylist, not a key allowlist, because overrides
+directories. Host paths are compared after leading slashes are collapsed and `.`/`..` resolved
+(`//var/run/docker.sock` is the Docker socket). On a local engine the check also follows
+symlinks, so a link to a sensitive or relocated path is judged by where it leads; with a
+remote `DOCKER_HOST` the paths are on another machine, so symlinks are not resolved.
+Existing services are checked against this denylist, not a key allowlist, because overrides
 legitimately change labels, networks, environment, restart and volumes on web-tier services.
 The digest and no-`build` rules have no opt-in, and neither do the rules for existing
 services. Sensitive host paths are `/`, the Docker, containerd and podman sockets

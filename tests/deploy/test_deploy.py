@@ -620,6 +620,59 @@ def test_sensitive_host_paths_stop_on_existing_and_new_services(mount: dict[str,
     assert "OVERRIDE_ALLOW_SERVICES" in added[0].hint
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "//var/run/docker.sock",
+        "///etc",
+        "/var//run/../run/docker.sock",
+        "//",
+        "///",
+        "/./etc/",
+        "//proc/1/root",
+        "/etc/../etc",
+    ],
+)
+@pytest.mark.parametrize("resolve", [False, True])
+def test_every_spelling_of_a_sensitive_host_path_is_sensitive(path: str, resolve: bool) -> None:
+    assert helpers.sensitive_host_path(path, resolve)
+    bind = {"volumes": [{"type": "bind", "source": path, "target": "/h"}]}
+    findings = helpers.check_override(_stack_with_volumes(), _stack_after("backup", {"image": PINNED, **bind}), resolve=resolve)
+    assert [finding.level for finding in findings] == ["stop"]
+
+
+def test_a_symlink_to_a_sensitive_path_is_sensitive_on_a_local_engine_only(tmp_path: Path) -> None:
+    link = tmp_path / "innocent"
+    link.symlink_to("/etc")
+    below = str(link / "shadow")
+    assert helpers.sensitive_host_path(str(link), True)
+    assert helpers.sensitive_host_path(below, True)
+    assert not helpers.sensitive_host_path(str(link), False)
+    bind = {"volumes": [{"type": "bind", "source": str(link), "target": "/h"}]}
+    after = _stack_after("explore", bind)
+    assert helpers.check_override(_stack_with_volumes(), after, resolve=True)[0].level == "stop"
+    assert helpers.check_override(_stack_with_volumes(), after, resolve=False)[0].level == "ok"
+
+
+def test_a_symlink_into_a_relocated_data_path_is_path_reuse_and_other_spellings_too(tmp_path: Path) -> None:
+    data = tmp_path / "pg"
+    data.mkdir()
+    link = tmp_path / "alias"
+    link.symlink_to(data)
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": str(data)}}
+    for spelling, resolve in ((str(link), True), (f"//{str(data).lstrip('/')}", False), (f"{data}/../pg", False), (f"{link}/sub", True)):
+        bind = {"volumes": [{"type": "bind", "source": spelling, "target": "/d"}]}
+        after = _stack_after("postgres", {}, {"postgres_data": moved})
+        after["services"]["explore"].update(bind)
+        findings = helpers.check_override(_stack_with_volumes(), after, resolve=resolve)
+        assert [finding.level for finding in findings] == ["stop"], spelling
+        assert "where the data of postgres lives" in findings[0].message
+    bind = {"volumes": [{"type": "bind", "source": str(link), "target": "/d"}]}
+    after = _stack_after("postgres", {}, {"postgres_data": moved})
+    after["services"]["explore"].update(bind)
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=False)] == ["ok"]
+
+
 def test_short_volume_syntax_is_judged_like_the_long_form() -> None:
     findings = helpers.check_override(
         _stack_with_volumes(), _stack_after("backup", {"image": PINNED, "volumes": ["/var/run/docker.sock:/s:ro", "postgres_data:/pg"]})
