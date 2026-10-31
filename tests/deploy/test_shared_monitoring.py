@@ -350,6 +350,12 @@ class ConsoleTargetsPromoted(PromotedPolicy):
     CONSOLE_TARGETS_FLOOR: dict[str, str] = {"OPERATIONS_CONSOLE_IMAGE": images.RELEASED_IMAGE_VERSIONS["OPERATIONS_CONSOLE_IMAGE"]}  # noqa: RUF012
 
 
+class ConsoleTargetsUnreleased(PromotedPolicy):
+    """The image policy before any console release reads its configurable targets."""
+
+    CONSOLE_TARGETS_FLOOR: dict[str, str] = {"OPERATIONS_CONSOLE_IMAGE": images.UNRELEASED}  # noqa: RUF012
+
+
 def test_local_monitoring_is_one_ok_line() -> None:
     findings = _findings({})
     assert [(finding.level, finding.message) for finding in findings] == [
@@ -358,7 +364,7 @@ def test_local_monitoring_is_one_ok_line() -> None:
 
 
 def test_shared_monitoring_says_where_telemetry_goes_and_warns_while_the_console_ignores_its_targets() -> None:
-    findings = _findings(SHARED_ENV)
+    findings = _findings(SHARED_ENV, ConsoleTargetsUnreleased)
     assert findings[0].level == "ok"
     assert "metrics to http://vm.lan:8428, traces to https://traces.lan/vt, Grafana at http://grafana:3000" in findings[0].message
     warning = findings[-1]
@@ -367,6 +373,7 @@ def test_shared_monitoring_says_where_telemetry_goes_and_warns_while_the_console
     assert "predates its configurable Platform Health targets" in warning.message
     promoted = _findings({**SHARED_ENV, **_reviewed_env()}, ConsoleTargetsPromoted)
     assert [finding.level for finding in promoted] == ["ok"]
+    assert [finding.level for finding in _findings({**SHARED_ENV, **_reviewed_env()})] == ["ok"], "the reviewed table meets the floor"
 
 
 def test_shared_monitoring_warns_about_what_it_cannot_monitor() -> None:
@@ -388,7 +395,7 @@ def test_bad_shared_settings_stop_and_say_where_to_fix_them() -> None:
 def test_external_postgres_reports_its_exporter() -> None:
     disabled = _findings({"GROOVEMAP_POSTGRES": "external", **_reviewed_env()}, ConsoleTargetsPromoted)
     assert disabled[-1].message.startswith("PostgreSQL exporter: none (EXTERNAL_POSTGRES_EXPORTER_ADDRESS is unset)")
-    shared = _findings({"GROOVEMAP_POSTGRES": "external", "EXTERNAL_POSTGRES_EXPORTER_ADDRESS": "pgx:9187"})
+    shared = _findings({"GROOVEMAP_POSTGRES": "external", "EXTERNAL_POSTGRES_EXPORTER_ADDRESS": "pgx:9187"}, ConsoleTargetsUnreleased)
     assert shared[1].message == "PostgreSQL exporter: shared, pgx:9187 (scraped by the collector, probed by the console)"
     assert "will report the PostgreSQL exporter as unreachable" in shared[-1].message
 

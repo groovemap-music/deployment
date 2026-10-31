@@ -117,9 +117,8 @@ EXTERNAL_STORE_FLOORS = {
 # (<NAME>_MODE / <NAME>_URL, operations-console 5af1a0d, after v0.2.0). The shared-monitoring and
 # external-store overlays set them; an older console ignores them, which is harmless, but keeps
 # probing the omitted local services by their compose names, so `just deploy` warns (never stops)
-# while the reviewed console is below this floor. Promoting that release (gm-deployment-8nbg) means
-# replacing UNRELEASED with its version here.
-CONSOLE_TARGETS_FLOOR = {"OPERATIONS_CONSOLE_IMAGE": UNRELEASED}
+# while the reviewed console is below this floor. Met by the v0.3.0 promotion (gm-deployment-8nbg).
+CONSOLE_TARGETS_FLOOR = {"OPERATIONS_CONSOLE_IMAGE": "0.3.0"}
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
 # store checks use the stack's own postgres and valkey images, so one Dependabot bump moves both.
