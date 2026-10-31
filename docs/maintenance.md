@@ -824,6 +824,42 @@ Record:
 Do not store backup archives in this repository. See
 [Database resilience](database-resilience.md) for failure-mode planning.
 
+### Shared PostgreSQL checklist
+
+Reusing an existing PostgreSQL does not add GrooveMap's database to its backup allowlist. Check,
+read-only, and record the answers next to the backup evidence above:
+
+1. Is GrooveMap's database (`EXTERNAL_POSTGRES_DATABASE`, default `groovemap`) in the backup's
+   protected-database list?
+2. Which schemas does the backup exclude? Keep the operator's policy. An excluded
+   `musicbrainz` schema is reconstructible, but a restore then has no MusicBrainz data until the
+   import runs again: plan for a long re-import (days of loading and about 100 GB of disk, an
+   estimate; MusicBrainz sizing is unmeasured, `gm-deployment-vc5s`).
+3. Does restore verification include the GrooveMap database, and when was it last restored to a
+   scratch target?
+4. Dedicated stores (Neo4j, RabbitMQ, Valkey, and PostgreSQL when not external): is each volume
+   backed up? Neo4j, RabbitMQ and Valkey contents are rebuilt by re-import. **User accounts,
+   collections, the identity ledger and the admin audit log are not reconstructible from dumps**,
+   so the PostgreSQL backup is the only copy.
+
+### Recovery bundle
+
+The bootstrap-generated secrets (JWT key, encryption master key, PostgreSQL, Neo4j, RabbitMQ and
+Valkey passwords) cannot be re-created: a new value leaves the restored data unreadable.
+`just recovery-manifest` lists what to capture without printing any value: `.env`,
+`docker-compose.override.yml`, each `secrets/` file by name, mode, owner and SHA-256 fingerprint,
+the deployment commit and its dirty state, the promoted image digests, and the external stores
+that need their own backups. It needs python3 3.10 or newer (uv is optional) and writes nothing.
+Put those files in one bundle and encrypt it (SOPS with age) before it leaves the host; keep it
+separate from the database backups and out of this repository.
+
+Rules: never reset an existing secret (`just secrets-bootstrap` skips existing files, and
+`just deploy` stops with exit 3 if one changed); never expose a value; never purge persistent keys
+or volumes (`docker compose down -v`, `docker volume rm`, deleting `secrets/`) after a failed
+staging. To recover, restore `secrets/` (directory 0700, files 0600), `.env` and the override from
+the decrypted bundle before any container starts and before `just secrets-bootstrap`, check out the
+pinned commit, restore the data, then run `just deploy --no-wait`.
+
 With an external PostgreSQL or Valkey (`GROOVEMAP_POSTGRES=external`, `GROOVEMAP_VALKEY=external`),
 that server's backups, upgrades, restarts and monitoring belong to its operator, and the
 PostgreSQL row above is their evidence to record. This stack neither backs it up nor measures

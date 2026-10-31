@@ -5,7 +5,10 @@
 # Usage: bash scripts/create-secrets.sh
 #
 # Behaviour:
-#   - Skips files that already exist (idempotent — safe to re-run)
+#   - Skips files that already exist (idempotent — safe to re-run). It never overwrites,
+#     rotates or deletes an existing secret: on a host being recovered, restore secrets/
+#     from the encrypted bundle first (docs/maintenance.md#recovery-bundle). The one
+#     exception is valkey_exporter_passwords.json, rebuilt from valkey_password.txt.
 #   - Sets secrets/ to mode 700 and each file to 600
 
 set -euo pipefail
@@ -19,7 +22,7 @@ write_secret() {
   local name="$1"
   local value="$2"
   local path="$SECRETS_DIR/$name"
-  if [ -f "$path" ]; then
+  if [ -e "$path" ] || [ -L "$path" ]; then
     echo "[skip] $name already exists"
   else
     printf '%s' "$value" >"$path"

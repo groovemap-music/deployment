@@ -62,6 +62,8 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
    the bind address is the control that counts.
 6. **Keep `secrets/` and `.env` out of git.** `.gitignore` already covers `.env`, `.env.*.bak`,
    `secrets/` and `docker-compose.override.yml`. Never commit, print or paste a secret value.
+   Never reset or delete an existing secret, and never purge keys or volumes after a failed
+   staging ([references/backup-recovery.md](references/backup-recovery.md)).
 7. **Never edit tracked files** (`docker-compose*.yml`, `scripts/`, `config/`, `.env.example`).
 8. **Never display credentials or modify an existing service.** Discovery of other PostgreSQL,
    PgBouncer, Valkey and Redis instances is read-only: never print a password, token or
@@ -297,6 +299,14 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    Drop `-f docker-compose.override.yml` if there is no override. The operations console and
    Grafana show queue progress too.
 
+5. **Backups and recovery (read-only):** follow
+   [references/backup-recovery.md](references/backup-recovery.md). With a shared PostgreSQL,
+   check that its backup includes GrooveMap's database, which schemas it excludes (an excluded
+   `musicbrainz` schema means a MusicBrainz re-import on restore) and that restore
+   verification covers it. Run `just recovery-manifest` and ask the user to keep the listed
+   files in an encrypted bundle (SOPS/age). Never reset an existing secret, print a value, or
+   purge keys or volumes after a failed staging.
+
 ### 7. Upgrades
 
 Upgrades bring new reviewed digests and Compose changes. The untracked override, `.env` and
@@ -329,6 +339,8 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
   ownership, the disk check.
 - [references/stack-managers.md](references/stack-managers.md): Portainer, Dockge, Komodo,
   systemd, Ansible.
+- [references/backup-recovery.md](references/backup-recovery.md): backup coverage of shared
+  and dedicated stores, what is rebuildable, and the encrypted secret recovery bundle.
 - [references/troubleshooting.md](references/troubleshooting.md): symptoms and fixes.
 - `assets/override-*.yml`: example overrides. `just check` renders each one on top of the
   production stack and runs deploy's override check on it.

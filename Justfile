@@ -65,6 +65,14 @@ secrets-bootstrap:
 deploy *args:
     DEPLOY_INVOKED_AS="just deploy" bash scripts/deploy.sh "$@"
 
+# Read-only checklist of what to capture for recovery: .env, the override, the secrets/ file names
+# (mode, owner, short SHA-256 fingerprint; never a value), the deployment commit and the promoted
+# image digests, and the external stores that need their own backups. Encrypt the bundle (SOPS/age).
+# See docs/maintenance.md#recovery-bundle. Standard library only; uv is optional.
+[positional-arguments]
+recovery-manifest *args:
+    @if command -v uv >/dev/null 2>&1; then exec uv run --quiet python scripts/recovery_manifest.py "$@"; else exec python3 scripts/recovery_manifest.py "$@"; fi
+
 # Writes .env from .env.example, filling every image digest from the reviewed release set in
 # scripts/check-images.py. Refuses to replace an existing .env unless --force is given, which
 # keeps the old file as a timestamped backup.

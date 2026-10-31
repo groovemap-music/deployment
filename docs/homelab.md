@@ -459,3 +459,12 @@ Backups are environment-specific and must be tested: see
 [Troubleshooting](troubleshooting.md); routine updates by [Maintenance](maintenance.md).
 An external PostgreSQL or Valkey is backed up by its own operator, not by this stack
 ([what becomes yours](#existing-postgresql-and-valkey)).
+
+**Reusing a shared PostgreSQL does not add GrooveMap's database to its backups.** Check that the
+backup's protected-database list includes it, which schemas are excluded (an excluded
+`musicbrainz` schema is fine to keep, but a restore needs a MusicBrainz re-import, a long job that
+is unmeasured until `gm-deployment-vc5s`) and that restore verification covers it. The
+[shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist) has the questions.
+`just recovery-manifest` lists the files to keep in an encrypted bundle (SOPS/age) with the
+generated secrets: see [Recovery bundle](maintenance.md#recovery-bundle). Never reset existing
+secrets, and never purge keys or volumes after a failed staging.

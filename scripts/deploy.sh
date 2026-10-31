@@ -200,7 +200,15 @@ stack_container="$(helper stack-container)"
 
 if [[ "$mode" == prod ]]; then
   note "Creating any missing secrets in secrets/ (existing ones are never replaced):"
+  # An existing secret is never regenerated: the bootstrap skips it, and this refuses to go on if
+  # one still came out different (a restored host keeps the keys its data was written with).
+  secrets_snapshot="$(mktemp)"
+  "${PYTHON[@]}" scripts/recovery_manifest.py snapshot "$secrets_snapshot"
   bash scripts/create-secrets.sh | indent
+  secrets_status=0
+  "${PYTHON[@]}" scripts/recovery_manifest.py verify "$secrets_snapshot" || secrets_status=$?
+  rm -f "$secrets_snapshot"
+  ((secrets_status == 0)) || exit "$secrets_status"
   helper configure --mode prod
 else
   note "The development stack uses the fixed local credentials and sizes in docker-compose.yml;"
