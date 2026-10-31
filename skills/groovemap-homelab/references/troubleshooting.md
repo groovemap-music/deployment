@@ -24,7 +24,7 @@ days to rebuild.
   free port. `--force` doesn't override a port conflict.
 - **"linux/amd64 only" on arm64:** explain the emulation cost to the user. With their consent,
   re-run with `--yes`. On Linux, register binfmt first (deploy prints the command).
-- **"Only N GB free under …":** see [storage.md](storage.md#the-disk-check-when-data-lives-elsewhere).
+- **"Only N GB free under …":** the named disk is short for the volumes listed on it; see [storage.md](storage.md#the-disk-check-when-data-lives-elsewhere).
 - **"Docker has about N GB of memory":** on Docker Desktop, raise the VM's memory. Elsewhere, the
   host is below the minimum. Going ahead with `--force` is the user's call, and it will be slow.
 - **"docker-compose.override.yml changes …":** remove that key from the override. The hint line

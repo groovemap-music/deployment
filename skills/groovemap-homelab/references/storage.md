@@ -12,8 +12,9 @@
 | `*_logs`, `neo4j_import`, `neo4j_plugins`, `valkey_data` | logs and small state | small |
 
 Images (several GB) and container layers always live under Docker's data root. `just deploy`
-refuses a new install with less than 100 GB free on the data root and recommends 200 GB. The
-200 GB figure assumes MusicBrainz is about as large as Discogs, which is an estimate.
+refuses a new install when a disk lacks the sum of its volumes' shares below (100 GB in total,
+200 GB recommended). The recommended size assumes MusicBrainz is about as large as Discogs,
+which is an estimate.
 
 Use local disks for the databases. Network filesystems (NFS, SMB) and FUSE layers (mergerfs,
 Unraid's `/mnt/user`) are poor homes for PostgreSQL and Neo4j. On Unraid, use a pool or cache
@@ -49,8 +50,7 @@ Moving other volumes works the same way, but the four in the example are the one
 If the user would rather move all of Docker to the big disk, set `"data-root"` in
 `/etc/docker/daemon.json` and move the existing data while Docker is stopped, following
 Docker's documentation. This affects every container on the host, so it is the user's decision
-and needs their explicit approval. It also makes `just deploy`'s disk check measure the right
-disk.
+and needs their explicit approval. `just deploy`'s disk check follows it.
 
 ### C. Bind-mount by container path
 
@@ -60,17 +60,30 @@ keeps the volume names that deploy and `docker volume ls` rely on, so prefer A.
 
 ## The disk check when data lives elsewhere
 
-`just deploy`'s preflight measures free space on Docker's data root only. With approach A or C,
-the data root can be small while the big disk has plenty of room, and preflight may stop with
-"Only N GB free under /var/lib/docker". `--force` gets past that, but it also bypasses the
-memory minimum. Use it only when all of these hold:
+`just deploy` finds each data volume in the rendered Compose config, override included: bind
+mounts, and named volumes whose `driver_opts` are `type: none`, `o: bind`, `device: <path>`.
+It groups the volumes by filesystem and checks each filesystem against the sum of its volumes'
+shares:
 
-- the disk stop is the only `[stop]` line, and memory shows `[ok  ]` or `[warn]`;
-- you have measured the big disk (`df -h /mnt/tank/groovemap`) and it has at least the
-  recommended free space;
-- the data root still has room for the images, about 20 GB.
+| Volume | Minimum | Recommended | Source |
+| --- | --- | --- | --- |
+| `postgres_data` | 48 GB | 48 GB | Discogs PostgreSQL size (docs/architecture.md) |
+| `neo4j_data` | 28 GB | 28 GB | Discogs Neo4j size (docs/architecture.md) |
+| `discogs_data` | 12 GB | 12 GB | the ~11.3 GB dump, rounded up |
+| `victoria_metrics_data`, `rabbitmq_data` | 2 GB each | 2 GB each | rough allowance |
+| Docker's data root, always | 8 GB | 8 GB | images, layers, logs, small volumes (rough allowance) |
+| `musicbrainz_data` | 0 | 100 GB | **an estimate**, as large as Discogs (gm-deployment-q4en) |
 
-Tell the user why you're passing `--force`.
+Named volumes on the default driver count against Docker's data root. With nothing moved the
+shares add up to the old 100 GB minimum and 200 GB recommendation. A relocated install is
+judged where its data lives, so `--force` is not the way past it, and it would also bypass the
+memory minimum. A `[stop]` line names the filesystem and the volumes on it: free space there
+or move more volumes. Use `--force` only for a measured shortfall the user accepts, and tell
+the user why.
+
+Some locations cannot be measured from the host: Docker Desktop's VM disk (host bind mounts
+still can), a remote `DOCKER_HOST`, network filesystems (`nfs`, `cifs`), other volume drivers.
+Those produce a `[warn]` with the sizes needed; check them yourself (`df -h <path>`).
 
 ## Existing deployments
 

@@ -181,9 +181,10 @@ session. Add `--yes` on arm64 only after the user agrees (hard rule 4). Handle t
 - `0`: phase 1 is running. Go to step 6.
 - `3`: a host check or the override check stopped before anything started. Read the `[stop]`
   lines, fix the cause (usually a port to remap or an override key to remove), and re-run.
-  Don't reach for `--force`: it also bypasses the memory minimum. The one exception is a disk
-  stop when the large volumes live on another disk you have measured; see
-  references/storage.md.
+  Don't reach for `--force`: it also bypasses the memory minimum. The disk check follows the
+  volumes to the disks they live on, so a relocated install is judged on the big disk and
+  needs no `--force`. A disk `[stop]` means that disk is short: free space or move the volume
+  (references/storage.md).
 - `1`: a step failed. See [references/troubleshooting.md](references/troubleshooting.md).
 
 Phase 2 (MusicBrainz) needs `just deploy` to run again after the import. Suggest the user runs
