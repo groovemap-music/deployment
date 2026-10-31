@@ -1,0 +1,139 @@
+name: Homelab smoke
+
+# The homelab-shape smoke (scripts/smoke-homelab.sh, docs/testing-guide.md#the-homelab-shape-smoke):
+# lux's installation on real Docker, plus the negative cases that must fail closed. CI starts only
+# disposable smoke stacks like this one: its own Compose projects, torn down by label on every
+# exit, the reviewed images pulled by digest, no secrets and no credentials.
+#
+# Runs on main, on bead branches (wt/**) and on pull requests that touch what the stack is made of
+# (Compose files, scripts, config, the homelab skill, the Justfile or this workflow), on any pull
+# request labelled smoke-homelab, and on demand. About 20-30 minutes of a standard ubuntu-24.04
+# runner, which GitHub does not bill for a public repository.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main, "wt/**"]
+    paths:
+      - "docker-compose*.yml"
+      - "scripts/**"
+      - "config/**"
+      - "skills/**"
+      - "Justfile"
+      - ".github/workflows/smoke-homelab.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-homelab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: Decide whether the homelab smoke runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Changed paths or the smoke-homelab label
+        id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          run=false
+          if [[ "$EVENT" != pull_request ]]; then
+            run=true
+          elif jq -e 'index("smoke-homelab") != null' <<<"$LABELS" >/dev/null; then
+            run=true
+          elif git diff --name-only "$BASE"...HEAD |
+            grep -qE '^(docker-compose[^/]*\.yml|scripts/.*|config/.*|skills/.*|Justfile|\.github/workflows/smoke-homelab\.yml)$'; then
+            run=true
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+          echo "homelab smoke runs: $run"
+
+  smoke:
+    name: Homelab smoke (Linux Docker, lux shape)
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned repository tools
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+        with:
+          install: true
+          cache: true
+
+      # lux runs Docker Compose 5.6.1, whose behavior two of its failures depended on (configs.content
+      # on a read-only container, `up --wait` and exited one-shots), so the smoke runs that release.
+      - name: Install Docker Compose 5.6.1
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/docker-compose" \
+            https://github.com/docker/compose/releases/download/v5.6.1/docker-compose-linux-x86_64
+          echo "47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0  $RUNNER_TEMP/docker-compose" | sha256sum -c -
+          install -D -m 0755 "$RUNNER_TEMP/docker-compose" "$HOME/.docker/cli-plugins/docker-compose"
+          docker compose version
+          docker version --format 'engine {{.Server.Version}} {{.Server.Arch}}'
+
+      - name: Make room for the images
+        shell: bash
+        run: |
+          df -h / /var/lib/docker 2>/dev/null || df -h /
+          # Toolchains this job never uses; the images and volumes need roughly 10 GB.
+          if (( $(df --output=avail -B1G / | tail -n 1) < 30 )); then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
+
+      - name: Synchronize the locked validation toolchain
+        run: just setup
+
+      - name: Run the homelab smoke
+        env:
+          SMOKE_HOMELAB_EVIDENCE_DIR: ${{ runner.temp }}/smoke-homelab-evidence
+        run: just smoke-homelab
+
+      - name: Summarize
+        if: always()
+        shell: bash
+        env:
+          REPORT: ${{ runner.temp }}/smoke-homelab-evidence/report.txt
+        run: |
+          {
+            echo "## Homelab smoke"
+            echo
+            echo '```'
+            cat "$REPORT" 2>/dev/null || echo "no report: the smoke stopped before its first case"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # Deploy and gate output, check results and, on failure, container log tails. No secret
+      # values: deploy and the checks print file names, modes and owners only.
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-homelab-evidence
+          path: ${{ runner.temp }}/smoke-homelab-evidence
+          retention-days: 14
+          if-no-files-found: ignore

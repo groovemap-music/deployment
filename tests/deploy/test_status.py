@@ -247,6 +247,22 @@ def test_an_external_postgres_is_not_reported_as_a_missing_container(tmp_path: P
     assert "external  - PostgreSQL is not a container of this stack" in line(out, "postgres-exporter")
 
 
+def test_an_external_stores_completed_check_is_a_one_shot_not_a_problem(tmp_path: Path) -> None:
+    def check(exit_code: int) -> dict[str, Any]:
+        return {
+            "Name": "/groovemap-store-check-postgres",
+            "State": {"Status": "exited", "ExitCode": exit_code},
+            "Config": {"Image": "postgres:18-alpine"},
+        }
+
+    containers = stack(*(name for name in CORE if name != "postgres"))
+    _, out, _ = run(FakeEngine([*containers, check(0)]), tmp_path, "GROOVEMAP_POSTGRES=external\n")
+    assert line(out, "store-check-postgres").startswith("  store-check-postgres") and "installed, completed" in line(out, "store-check-postgres")
+    assert "Attention" not in out
+    _, out, _ = run(FakeEngine([*containers, check(1)]), tmp_path, "GROOVEMAP_POSTGRES=external\n")
+    assert line(out, "store-check-postgres").startswith(" !") and "installed, exited (1)" in line(out, "store-check-postgres")
+
+
 def test_reviewed_images_show_their_release_and_oci_labels(tmp_path: Path) -> None:
     _, out, _ = run(FakeEngine(stack(*CORE)), tmp_path)
     version = policy.RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]

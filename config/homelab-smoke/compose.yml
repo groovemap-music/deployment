@@ -1,0 +1,71 @@
+---
+# The "homelab" PostgreSQL of the homelab-shape smoke (scripts/smoke-homelab.sh): a shared
+# PostgreSQL 18 that GrooveMap does not own, on its own bridge network, with TLS, like lux's.
+# It is a separate Compose project, never merged with docker-compose.yml; the smoke reaches it
+# from the stack only through the external network an override attaches.
+#
+# - The image is the stack's own pinned postgres (tests keep the two equal), so the smoke pulls
+#   nothing extra for it.
+# - The certificate and key are generated per run by the smoke (a throwaway CA, the server
+#   certificate for homelab-postgres) and bind-mounted read-only. PostgreSQL refuses a key that
+#   others can read and must own it, so the entrypoint, still root, copies both into the data
+#   volume as postgres with mode 0600 before handing over to the image's own entrypoint.
+# - The admin password comes from a file the smoke writes; GrooveMap never sees it. The admin
+#   provisions GrooveMap's role and database with docs/homelab.md's SQL (scripts/smoke_homelab.py
+#   provision-sql), as an operator would.
+
+services:
+  homelab-postgres:
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    hostname: homelab-postgres
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        install -d -o postgres -g postgres -m 0700 /var/lib/postgresql/tls &&
+        install -o postgres -g postgres -m 0600 /tls-source/server.crt /tls-source/server.key /var/lib/postgresql/tls/ &&
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - max_connections=100
+    environment:
+      POSTGRES_USER: homelab_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/homelab_admin_password
+      POSTGRES_DB: postgres
+    secrets:
+      - homelab_admin_password
+    volumes:
+      - "${SMOKE_HOMELAB_TLS_DIR:?the smoke sets SMOKE_HOMELAB_TLS_DIR}:/tls-source:ro"
+      - homelab_postgres_data:/var/lib/postgresql
+    networks:
+      homelab:
+        aliases:
+          - homelab-postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "homelab_admin", "-d", "postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  homelab_admin_password:
+    file: "${SMOKE_HOMELAB_ADMIN_PASSWORD_FILE:?the smoke sets SMOKE_HOMELAB_ADMIN_PASSWORD_FILE}"
+
+volumes:
+  homelab_postgres_data:
+
+networks:
+  homelab:
+    name: "${SMOKE_HOMELAB_NETWORK:?the smoke sets SMOKE_HOMELAB_NETWORK}"
+    driver: bridge

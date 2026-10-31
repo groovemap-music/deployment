@@ -19,6 +19,11 @@ check_compose docker-compose.yml docker-compose.media-smoke.yml
 check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml
 check_compose docker-compose.yml docker-compose.erasure-smoke.yml
 
+# The homelab smoke's own PostgreSQL (scripts/smoke-homelab.sh) is a separate Compose project, never
+# merged with the stack; the smoke supplies its certificate directory, password file and network.
+SMOKE_HOMELAB_TLS_DIR=./config/homelab-smoke SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=./config/homelab-smoke/compose.yml \
+  SMOKE_HOMELAB_NETWORK=validation-homelab docker compose --project-name validation -f config/homelab-smoke/compose.yml config --quiet
+
 # The external-store overlays render only on the production stack, each alone and together, with
 # syntax-only external settings: a service still depending on an omitted local store fails here.
 external_stores=(
