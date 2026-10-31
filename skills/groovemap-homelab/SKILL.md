@@ -10,8 +10,8 @@ description: >-
   first load to the repository's just recipes.
 license: MIT
 compatibility: >-
-  Needs a shell on the Docker host, git, Docker Engine with Compose v2, and just plus uv (the
-  checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
+  Needs a shell on the Docker host, git, Docker Engine with Compose v2, and python3 3.10 or
+  newer. just and uv are optional (the checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
 metadata:
   repository: https://github.com/groovemap-music/deployment
 ---
@@ -81,8 +81,12 @@ should live, preferably next to the user's other stacks, then:
 ```bash
 git clone https://github.com/groovemap-music/deployment.git groovemap
 cd groovemap
-mise install        # or check that just and uv are installed already
+mise install        # optional: just and uv. Without them, python3 >= 3.10 is enough
 ```
+
+Every `just deploy ...` below also runs as `bash scripts/deploy.sh ...` (the same script), and
+`just discogs-import-status ...` as `python3 scripts/discogs_import_status.py ...`. Use those
+forms when `just` is not installed.
 
 Compose names volumes after the project, which defaults to the checkout's directory name. On a
 fresh install, set `COMPOSE_PROJECT_NAME=groovemap` in `.env` (step 3) so volume names don't
@@ -132,8 +136,8 @@ Present the plan before you write anything. Cover:
 
 Inside the checkout:
 
-1. `just env-init` creates `.env` from the reviewed digests. If `.env` already exists, keep it
-   and don't pass `--force`. Use that flag only for upgrades (step 7).
+1. `just env-init` creates `.env` from the reviewed digests. If `.env` already exists, it
+   refreshes the digests in place and keeps your values; don't pass `--force` (step 7).
 2. Set these host values in `.env`. Edit only these keys and leave every `*_IMAGE` line alone.
    - `APP_BASE_URL`: the public origin of Explore, as users reach it (the proxied `https://`
      URL behind a proxy). Password-reset emails link to it. `just deploy` fills in a LAN
@@ -177,9 +181,10 @@ session. Add `--yes` on arm64 only after the user agrees (hard rule 4). Handle t
 - `0`: phase 1 is running. Go to step 6.
 - `3`: a host check or the override check stopped before anything started. Read the `[stop]`
   lines, fix the cause (usually a port to remap or an override key to remove), and re-run.
-  Don't reach for `--force`: it also bypasses the memory minimum. The one exception is a disk
-  stop when the large volumes live on another disk you have measured; see
-  references/storage.md.
+  Don't reach for `--force`: it also bypasses the memory minimum. The disk check follows the
+  volumes to the disks they live on, so a relocated install is judged on the big disk and
+  needs no `--force`. A disk `[stop]` means that disk is short: free space or move the volume
+  (references/storage.md).
 - `1`: a step failed. See [references/troubleshooting.md](references/troubleshooting.md).
 
 Phase 2 (MusicBrainz) needs `just deploy` to run again after the import. Suggest the user runs
@@ -200,8 +205,15 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
 3. **First admin:** the console signs in admins created with `catalog-admin-setup`, which asks
    for a password on a terminal. Ask the user to run it in their own terminal on the host:
    `docker exec -it groovemap-api catalog-admin-setup --email you@example.com`. Sign-in
-   requires HTTPS: on plain `http://` (other than `localhost`) the browser drops the secure
-   session cookie and sign-in silently returns to the login form.
+   requires HTTPS unless opted out: on plain `http://` (other than `localhost`) the browser drops
+   the secure session cookie and sign-in silently returns to the login form. `just deploy`
+   prints a "Console sign-in" notice when `APP_BASE_URL` is plain http on a LAN host. Read it
+   to the user: the recommended fix is a TLS reverse proxy
+   ([reverse-proxy.md](references/reverse-proxy.md)); on a trusted LAN only, they can opt in
+   with `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env` and recreate `dashboard`
+   (`docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.override.yml up -d --no-deps dashboard`).
+   Never set it for them without asking: the session cookie then crosses the network
+   unencrypted.
 4. **Expectations:** the Discogs import takes hours to about two days (releases alone take
    about 40 hours on the reference hardware). To check progress, which is read-only:
 
@@ -218,23 +230,17 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
 Upgrades bring new reviewed digests and Compose changes. The untracked override, `.env` and
 `secrets/` are untouched by `git pull`.
 
-1. Note the current commit: `git rev-parse HEAD`. Skim what changed
-   (`git fetch && git log --oneline HEAD..@{u} -- docs/maintenance.md`) and follow any manual
-   step that `docs/maintenance.md` names for the new release.
+1. Skim what changed (`git fetch && git log --oneline HEAD..@{u} -- docs/maintenance.md`) and
+   follow any manual step that `docs/maintenance.md` names for the new release.
 2. `git pull --ff-only`
-3. `just env-init --force` rewrites `.env` from the template with the new digests and keeps the
-   old file as `.env.<timestamp>.bak`. The new file has none of the host values.
-4. Carry the host values over, but not the old digests:
-   `python3 skills/groovemap-homelab/scripts/carry_env.py --since <commit from 1> .env.<timestamp>.bak`
-   (the checkout ships this skill, so the pulled copy is the current one).
-   It copies every non-`*_IMAGE` value that differs from the old commit's `.env.example`
-   (the host's choices; untouched defaults follow the new template) and prints each key it
-   carried. Without this step, `APP_BASE_URL`, the bind addresses and the port remaps go back
-   to their defaults. `COMPOSE_PROFILES` is restored either way, because deploy finds the
-   MusicBrainz containers.
-5. `just deploy --no-wait`. On a loaded deployment it only brings the stack up to date, and it
+3. `just env-init` (no flag) upgrades the existing `.env` in place: only the `*_IMAGE` lines move
+   to the new reviewed digests, template keys the file lacks are appended as new, and every
+   other line (`APP_BASE_URL`, bind addresses, port remaps, `COMPOSE_PROFILES`, the Neo4j
+   sizing) is kept byte for byte. It keeps `.env.<timestamp>.bak` and reports what changed.
+   Don't pass `--force` on an upgrade: it regenerates from the template and drops those values.
+4. `just deploy --no-wait`. On a loaded deployment it only brings the stack up to date, and it
    checks the override against the new Compose files first.
-6. Repeat the health checks from step 6.
+5. Repeat the health checks from step 6.
 
 ## References
 
@@ -251,5 +257,3 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
 - [references/troubleshooting.md](references/troubleshooting.md): symptoms and fixes.
 - `assets/override-*.yml`: example overrides. `just check` renders each one on top of the
   production stack and runs deploy's override check on it.
-- `scripts/carry_env.py`: carries host values across `just env-init --force` (also at
-  `skills/groovemap-homelab/scripts/carry_env.py` in the checkout).

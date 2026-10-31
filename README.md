@@ -14,16 +14,16 @@ states remain in retained Git history.
 
 GrooveMap is a self-hosted music knowledge graph built from the Discogs and MusicBrainz
 datasets. On a Docker host with about 16 GB of memory and 100 GB of free disk (200 GB
-recommended):
+recommended), you need Docker (with Compose v2), git and python3 3.10 or newer, which Debian 12
+and Ubuntu 22.04 already ship. Nothing else to install:
 
 ```bash
 git clone https://github.com/groovemap-music/deployment.git
 cd deployment
-mise install
-just deploy
+bash scripts/deploy.sh
 ```
 
-`just deploy` checks the host, creates `.env` and `secrets/`, starts the stack, waits for the
+The script checks the host, creates `.env` and `secrets/`, starts the stack, waits for the
 Discogs import (hours to about two days), then starts MusicBrainz and prints your URLs. It is
 safe to interrupt and re-run. The images are `linux/amd64` only, and the operations console
 needs HTTPS in front of it to sign in.
@@ -37,6 +37,9 @@ Read the [homelab guide](docs/homelab.md) for sizing, ports, reverse proxies, up
 known limitations. Already running GrooveMap? See
 [Upgrading an existing deployment](docs/homelab.md#upgrading-an-existing-deployment): MusicBrainz
 is now behind a Compose profile.
+
+Maintainers who use [mise](https://mise.jdx.dev/) and [just](https://just.systems/) can run the
+same script as `just deploy`; both are optional.
 
 The rest of this README is for maintainers of this repository.
 

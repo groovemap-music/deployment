@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One command from a fresh Docker host to a fully loaded GrooveMap: `just deploy`.
+# One command from a fresh Docker host to a fully loaded GrooveMap: `bash scripts/deploy.sh`
+# (or `just deploy`, which runs the same script). Needs only Docker, git and python3 >= 3.10.
 #
 # Phase 1 starts the stack without the musicbrainz profile and waits until the Discogs import
 # has finished (scripts/discogs_import_status.py --wait). Phase 2 sets COMPOSE_PROFILES=musicbrainz
@@ -12,7 +13,7 @@
 # and the gate add it last, after it passes the override check.
 #
 # The decisions (preflight minimums, Neo4j sizing, the override check, .env edits, endpoints)
-# live in scripts/deploy_helpers.py. This starts containers, so it is operator-run only and never part
+# live in scripts/deploy_helpers.py, which runs on the distro's own python3 (stdlib only). This starts containers, so it is operator-run only and never part
 # of `just check`.
 #
 # Exit codes: 0 done (or phase 1 started with --no-wait), 1 a step failed, 2 bad arguments,
@@ -25,14 +26,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# The command the user typed, so help, resume and status hints can be pasted back as they are.
+# `just deploy` sets DEPLOY_INVOKED_AS; running the script directly leaves it unset.
+INVOKED_AS="${DEPLOY_INVOKED_AS:-bash scripts/deploy.sh}"
+MIN_PYTHON="3.10"
 DEFAULT_INTERVAL=300
 OVERRIDE=docker-compose.override.yml
 MUSICBRAINZ_SERVICES=(extractor-musicbrainz brainzgraphinator brainztableinator)
 MUSICBRAINZ_VOLUMES=(musicbrainz_data extractor_musicbrainz_logs brainzgraphinator_logs brainztableinator_logs)
 
 usage() {
-  cat <<'EOF'
-Usage: just deploy [options]
+  cat <<EOF
+Usage: $INVOKED_AS [options]
 
 Installs GrooveMap on this Docker host, or picks up where an earlier run stopped.
 Checks the host, creates .env and secrets/, sizes Neo4j for this machine, starts the
@@ -57,7 +62,7 @@ EOF
 
 usage_error() {
   echo "deploy: $1" >&2
-  echo "Run 'just deploy --help' for the options." >&2
+  echo "Run '$INVOKED_AS --help' for the options." >&2
   exit 2
 }
 
@@ -104,6 +109,13 @@ else
   PYTHON=(python3)
 fi
 
+if ! "${PYTHON[@]}" -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+  found="$("${PYTHON[@]}" -c 'import platform; print(platform.python_version())' 2>/dev/null || true)"
+  echo "deploy: Python $MIN_PYTHON or newer is needed (${PYTHON[*]}: ${found:-not found})." >&2
+  echo "Install python3 $MIN_PYTHON+ (Debian 12 and Ubuntu 22.04 ship it), or point DEPLOY_PYTHON at one." >&2
+  exit 1
+fi
+
 helper() { "${PYTHON[@]}" scripts/deploy_helpers.py "$@"; }
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -112,7 +124,7 @@ indent() { sed 's/^/    /'; }
 
 # The command that continues from here, with every option that changes what it does.
 resume_command() {
-  local command=(just deploy)
+  local command=($INVOKED_AS)
   [[ "$mode" == dev ]] && command+=(--dev)
   [[ -n "$project" ]] && command+=(--project-name "$project")
   ((assume_yes)) && command+=(--yes)
@@ -140,7 +152,8 @@ if [[ -f "$OVERRIDE" ]]; then
 fi
 
 status_command() {
-  local command=(just discogs-import-status)
+  local command=("${PYTHON[@]}" scripts/discogs_import_status.py)
+  [[ "$INVOKED_AS" == "just deploy" ]] && command=(just discogs-import-status)
   [[ -n "$project" ]] && command+=(-p "$project")
   [[ "$mode" == prod ]] && command+=(--prod)
   [[ -f "$OVERRIDE" ]] && command+=(-f "$OVERRIDE")
@@ -212,6 +225,33 @@ if [[ -f "$OVERRIDE" ]]; then
     echo "deploy: the override check failed unexpectedly (exit $status)" >&2
     exit 1
   fi
+fi
+
+# Free space is judged on the disk behind each data volume, so it waits for the render that
+# includes the override (and .env, which Compose needs to render at all). If Compose cannot
+# render, every volume is assumed to be on Docker's data root.
+disk_check() {
+  local rendered args=() status=0
+  rendered="$(mktemp)"
+  ((force)) && args+=(--force)
+  if "${compose[@]}" --profile '*' config --format json >"$rendered"; then
+    helper disk-check "$rendered" ${args[@]+"${args[@]}"} || status=$?
+  else
+    echo "deploy: docker compose could not render the stack; assuming the data is on Docker's data root" >&2
+    helper disk-check ${args[@]+"${args[@]}"} || status=$?
+  fi
+  rm -f "$rendered"
+  return "$status"
+}
+
+say "Checking free disk space behind the data volumes"
+status=0
+disk_check || status=$?
+if ((status == 3)); then
+  exit 3
+elif ((status != 0)); then
+  echo "deploy: the disk check failed unexpectedly (exit $status)" >&2
+  exit 1
 fi
 
 # --- 3. where are we? ------------------------------------------------------------------
@@ -306,6 +346,25 @@ else
 fi
 
 # --- 5. endpoints and the first admin --------------------------------------------------
+
+# The console's session cookie is Secure, so over plain http on a LAN host sign-in silently
+# fails. Say so before the console URL is printed; on an interactive "yes", recreate only
+# `dashboard` with the same project and files as the rest of the run.
+console_sign_in() {
+  [[ "$mode" == prod ]] || return 0
+  local quoted status=0
+  printf -v quoted '%q ' "${compose[@]}" up -d --wait --no-deps dashboard
+  helper console-http --mode "$mode" --recreate-command "${quoted% }" || status=$?
+  if ((status == 10)); then
+    say "Recreating the console with the Secure cookie off"
+    "${compose[@]}" up -d --wait --no-deps dashboard
+  elif ((status != 0)); then
+    echo "deploy: the console sign-in check failed (exit $status)" >&2
+    exit 1
+  fi
+}
+
+console_sign_in
 
 say "Your GrooveMap"
 helper endpoints --mode "$mode"

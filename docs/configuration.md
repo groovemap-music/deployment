@@ -336,6 +336,27 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 | `/discogs-data/.extraction_status_<version>.json` | Per-dump processing state marker |
 | `/discogs-data/flagged/<version>/<type>/` | Records flagged by the data-quality rules |
 
+#### Disk check per-volume shares
+
+`just deploy` resolves each data volume from the rendered Compose
+config (override included), groups the volumes by filesystem, and checks every filesystem
+against the sum of its volumes' shares (`DATA_VOLUMES` in `scripts/deploy_helpers.py`):
+
+| Volume | Minimum | Recommended |
+| --- | --- | --- |
+| `postgres_data` | 48 GB | 48 GB |
+| `neo4j_data` | 28 GB | 28 GB |
+| `discogs_data` | 12 GB | 12 GB |
+| `victoria_metrics_data` | 2 GB | 2 GB |
+| `rabbitmq_data` | 2 GB | 2 GB |
+| Docker's data root (images, layers, logs, small volumes) | 8 GB | 8 GB |
+| `musicbrainz_data` | 0 | 100 GB (an estimate, not measured; gm-deployment-q4en) |
+
+Named volumes on the default driver count against Docker's data root. Docker Desktop's VM
+disk, a remote `DOCKER_HOST` and network filesystems cannot be measured, so they warn with
+the sizes. The 76 GB Discogs figure is 28 GB Neo4j plus 48 GB PostgreSQL
+([architecture](architecture.md)); the 2 GB, 2 GB and 8 GB allowances are rough.
+
 **PERIODIC_CHECK_DAYS**:
 
 - How often to check for new data dumps
@@ -1083,9 +1104,26 @@ itself sees. Only an explicit `SESSION_COOKIE_SECURE=false` turns Secure off.
   returns to the login form. Chromium and Firefox accept a Secure cookie on `http://localhost`.
 - **Production:** `docker-compose.prod.yml` resets the base file's value (`!reset null`; Compose
   merges `environment` key by key, so the opt-out would otherwise carry over), so the Secure default applies. The
-  production console must be reached over HTTPS. Reached over plain http, the browser drops
-  the cookie and sign-in silently returns to the login form; do not "fix" that with the
-  opt-out, put a TLS endpoint in front instead.
+  production console should be reached over HTTPS. Reached over plain http away from
+  localhost, the browser drops the cookie and sign-in silently returns to the login form. The
+  fix is a TLS endpoint in front (below).
+- **Production on a trusted LAN without TLS:** set `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in
+  `.env`, then recreate the console
+  (`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps dashboard`,
+  with your project name and override file if you use them). The overlay then loads
+  `config/console-insecure.true.env`, which sets `SESSION_COOKIE_SECURE=false` for `dashboard`
+  only. Unset, or any value but exactly `true`, leaves today's Secure default and an identical
+  Compose render. With the opt-in the session cookie crosses the network unencrypted, so anyone
+  on the path can read it: use it only where you trust every device on the network.
+- **What `just deploy` does:** after the stack is up and before it prints the endpoints, a
+  production run explains this and the two options when `APP_BASE_URL` (the TLS heuristic) or
+  the console's own published URL (the one in the endpoints block, `DASHBOARD_HOST_PORT`) is
+  plain `http://` on a host other than localhost. It names the console URL, for example
+  "GrooveMap is configured for plain http (APP_BASE_URL=http://nas:8006), so the console at
+  http://nas:8003 is reached without TLS". With a TLS proxy, set `https://` in `APP_BASE_URL`
+  and bind the raw ports to `127.0.0.1` (`WEB_BIND_ADDRESS`) and it stays quiet. On a terminal
+  it offers to set the opt-in and recreate only `dashboard`, defaulting to no; otherwise it only
+  prints the guidance. It is also silent with the opt-in set and for `--dev`.
 
 The TLS endpoint in front of the production console must:
 

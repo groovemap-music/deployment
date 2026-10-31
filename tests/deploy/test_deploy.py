@@ -220,33 +220,171 @@ def test_docker_desktop_memory_points_at_its_settings() -> None:
     assert "Settings > Resources" in helpers.check_memory(8 * GIB, "prod", desktop=True).message
 
 
+def volume(name: str) -> Any:
+    return next(item for item in helpers.DATA_VOLUMES if item.name == name)
+
+
+def mounts(**overrides: dict[str, Any]) -> dict[str, Any]:
+    """A rendered stack (`docker compose config --format json`) with every data volume named."""
+    services: dict[str, Any] = {
+        item.service: {"volumes": [{"type": "volume", "source": item.name, "target": item.target}]} for item in helpers.DATA_VOLUMES
+    }
+    return {"services": services, "volumes": {item.name: {} for item in helpers.DATA_VOLUMES}} | overrides
+
+
+def bind_volume(device: str) -> dict[str, Any]:
+    return {"driver": "local", "driver_opts": {"type": "none", "o": "bind", "device": device}}
+
+
+class Disks:
+    """A stub for the filesystem probe: the longest matching prefix decides the disk and its free GB."""
+
+    def __init__(self, **free_gb: int) -> None:
+        self.free_gb = free_gb  # prefix -> free GB; prefix "/tank" and "/docker" are two filesystems
+
+    def __call__(self, path: str) -> tuple[int, int]:
+        prefix = max((p for p in self.free_gb if path.startswith(p)), key=len, default=None)
+        if prefix is None:
+            raise FileNotFoundError(2, "No such file or directory")
+        return hash(prefix), self.free_gb[prefix] * 10**9
+
+
+def run_disk_check(config: dict[str, Any] | None, disks: Disks, *, local: bool = True, desktop: bool = False, existing: bool = False) -> list[Any]:
+    root = "/docker"
+    locations = helpers.resolve_locations(config, root, local, desktop)
+    findings: list[Any] = helpers.check_volumes(locations, root, local, desktop, existing, disks)
+    return findings
+
+
 @pytest.mark.parametrize(
     ("free_gb", "existing", "level"),
     [(80, False, "stop"), (150, False, "warn"), (250, False, "ok"), (15, True, "warn"), (80, True, "ok")],
 )
-def test_disk_minimums(free_gb: int, existing: bool, level: str) -> None:
-    assert helpers.check_disk(free_gb * 10**9, "/var/lib/docker", existing).level == level
+def test_default_volumes_share_the_docker_root_and_keep_the_old_minimums(free_gb: int, existing: bool, level: str) -> None:
+    (finding,) = run_disk_check(mounts(), Disks(**{"/docker": free_gb}), existing=existing)
+    assert finding.level == level
 
 
-def test_unmeasurable_disk_warns_with_the_sizes() -> None:
-    finding = helpers.check_disk(None, "/var/lib/docker", existing=False, why_unknown="remote")
+def test_the_shares_add_up_to_the_documented_minimum_and_recommendation() -> None:
+    shares = [*helpers.DATA_VOLUMES, helpers.DOCKER_ROOT_SHARE]
+    assert sum(item.minimum_gb for item in shares) == 100
+    assert sum(item.recommended_gb for item in shares) == 200
+    # The Discogs numbers come from docs/architecture.md: 48 GB PostgreSQL, 28 GB Neo4j, ~11.3 GB dump.
+    assert (volume("postgres_data").minimum_gb, volume("neo4j_data").minimum_gb, volume("discogs_data").minimum_gb) == (48, 28, 12)
+
+
+def test_a_relocated_override_bind_is_measured_where_it_lives() -> None:
+    config = mounts()
+    config["services"]["postgres"]["volumes"] = [{"type": "bind", "source": "/tank/pg", "target": "/var/lib/postgresql/data"}]
+    findings = run_disk_check(config, Disks(**{"/docker": 30, "/tank": 400}))
+    docker, tank = sorted(findings, key=lambda finding: "/tank" in finding.message)
+    assert tank.level == "ok"
+    assert "postgres_data" in tank.message
+    # postgres_data left the data root, so what is left there needs 100 - 48 = 52 GB: 30 GB is not enough.
+    assert docker.level == "stop"
+    assert "postgres_data" not in docker.message
+    assert "52 GB" in docker.message
+
+
+def test_named_volume_driver_options_move_the_volume_too() -> None:
+    config = mounts()
+    for name in ("postgres_data", "neo4j_data", "discogs_data", "musicbrainz_data"):
+        config["volumes"][name] = bind_volume(f"/tank/{name}")
+    # The data root keeps only 8 GB of images and 4 GB of small volumes; /tank holds the 88 GB of data.
+    findings = run_disk_check(config, Disks(**{"/docker": 15, "/tank": 120}))
+    levels = {("/tank" in finding.message): finding.level for finding in findings}
+    assert levels == {True: "warn", False: "ok"}
+    tank = next(finding for finding in findings if "/tank" in finding.message)
+    assert "recommended" in tank.message
+    assert "estimate" in tank.message
+
+
+def test_two_filesystems_are_each_judged_against_their_own_share() -> None:
+    config = mounts()
+    config["volumes"]["postgres_data"] = bind_volume("/tank/pg")
+    config["volumes"]["neo4j_data"] = bind_volume("/ssd/neo4j")
+    findings = run_disk_check(config, Disks(**{"/docker": 100, "/tank": 60, "/ssd": 20}))
+    by_disk = {("/tank" if "/tank" in finding.message else "/ssd" if "/ssd" in finding.message else "/docker"): finding for finding in findings}
+    assert by_disk["/tank"].level == "ok"  # PostgreSQL alone needs 48 GB
+    assert by_disk["/ssd"].level == "stop"  # 28 GB needed
+    assert by_disk["/docker"].level == "warn"  # the 24 GB minimum fits; MusicBrainz's estimate does not
+    assert "neo4j_data" in by_disk["/ssd"].message
+
+
+def test_volumes_on_one_filesystem_pool_their_shares() -> None:
+    config = mounts()
+    config["volumes"]["postgres_data"] = bind_volume("/tank/pg")
+    config["volumes"]["neo4j_data"] = bind_volume("/tank/neo4j")
+    findings = run_disk_check(config, Disks(**{"/docker": 500, "/tank": 70}))
+    tank = next(finding for finding in findings if "/tank" in finding.message)
+    # 48 + 28 = 76 GB needed together; 70 GB would pass either volume alone.
+    assert tank.level == "stop"
+    assert "76 GB" in tank.message
+
+
+@pytest.mark.parametrize(
+    "driver_opts",
+    [{"type": "nfs", "o": "addr=nas,rw", "device": ":/export"}, {"type": "none", "o": "ro", "device": "/x"}],
+)
+def test_network_and_non_bind_mounts_are_unmeasurable(driver_opts: dict[str, str]) -> None:
+    config = mounts()
+    config["volumes"]["postgres_data"] = {"driver": "local", "driver_opts": driver_opts}
+    findings = run_disk_check(config, Disks(**{"/docker": 500}))
+    unmeasured = next(finding for finding in findings if "Could not measure" in finding.message)
+    assert "postgres_data" in unmeasured.message
+    assert unmeasured.level == "warn"
+
+
+@pytest.mark.parametrize(("local", "desktop"), [(False, False), (True, True)])
+def test_an_unmeasurable_host_warns_with_the_sizes(local: bool, desktop: bool) -> None:
+    (finding,) = run_disk_check(mounts(), Disks(), local=local, desktop=desktop)
     assert finding.level == "warn"
+    assert "Could not measure free disk space" in finding.message
     assert "100 GB" in finding.message
+    assert "200 GB" in finding.message
 
 
-def test_disk_is_measured_only_where_it_can_be(tmp_path: Path) -> None:
-    def usage(_path: str) -> Any:
-        return shutil._ntuple_diskusage(10, 5, 5)
+def test_docker_desktop_still_measures_a_host_bind_mount() -> None:
+    config = mounts()
+    config["services"]["postgres"]["volumes"] = [{"type": "bind", "source": "/tank/pg", "target": "/var/lib/postgresql/data"}]
+    findings = run_disk_check(config, Disks(**{"/tank": 300}), desktop=True)
+    assert [finding.level for finding in findings if "Could not" not in finding.message] == ["ok"]
+    assert any("Could not measure" in finding.message and "postgres_data" not in finding.message for finding in findings)
 
-    assert helpers.measure_disk(str(tmp_path), local=True, desktop=False, usage=usage) == (5, "")
-    assert helpers.measure_disk(str(tmp_path), local=False, desktop=False)[0] is None
-    assert helpers.measure_disk(str(tmp_path), local=True, desktop=True)[0] is None
-    assert helpers.measure_disk(str(tmp_path / "missing"), local=True, desktop=False)[0] is None
 
-    def broken(_path: str) -> Any:
-        raise PermissionError(13, "Permission denied")
+def test_a_path_that_cannot_be_read_is_reported_not_raised() -> None:
+    config = mounts()
+    config["volumes"]["postgres_data"] = bind_volume("/nowhere/pg")
+    findings = run_disk_check(config, Disks(**{"/docker": 500}))
+    assert any("Could not measure" in finding.message and "/nowhere/pg" in finding.message for finding in findings)
 
-    assert helpers.measure_disk(str(tmp_path), local=True, desktop=False, usage=broken) == (None, f"{tmp_path}: Permission denied")
+
+def test_a_render_without_a_service_skips_its_volume() -> None:
+    config = mounts()
+    del config["services"]["extractor-musicbrainz"]
+    (finding,) = run_disk_check(config, Disks(**{"/docker": 500}))
+    assert "musicbrainz_data" not in finding.message
+
+
+def test_probe_path_walks_up_to_the_nearest_existing_directory(tmp_path: Path) -> None:
+    device, free = helpers.probe_path(str(tmp_path / "not" / "yet" / "created"))
+    assert device == tmp_path.stat().st_dev
+    assert free > 0
+
+
+def test_disk_check_command_reads_the_render_and_honours_force(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config = mounts()
+    config["volumes"]["postgres_data"] = bind_volume("/tank/pg")
+    render = tmp_path / "config.json"
+    render.write_text(json.dumps(config))
+    docker = helpers.Docker(FakeRunner(docker_info(DockerRootDir="/docker")))
+    low = Disks(**{"/docker": 500, "/tank": 10})
+    assert helpers.disk_check(config, force=False, docker=docker, environ={}, probe=low) == 3
+    assert "[stop]" in capsys.readouterr().out
+    assert helpers.disk_check(config, force=True, docker=docker, environ={}, probe=low) == 0
+    assert "going ahead below the disk minimums" in capsys.readouterr().out
+    assert helpers.main(["disk-check", str(tmp_path / "missing.json")], docker=docker, environ={}) == 1
+    assert helpers.disk_check(None, force=False, docker=helpers.Docker(FakeRunner(info={})), environ={}) == 1
 
 
 def test_configured_ports_follow_the_overlay_bind_groups() -> None:
@@ -431,7 +569,6 @@ def test_preflight_passes_a_ready_host(capsys: pytest.CaptureFixture[str]) -> No
     out = capsys.readouterr().out
     assert "[ok  ] Docker Engine 29.5.2" in out
     assert "[ok  ] Docker Compose 5.6.1" in out
-    assert "Could not measure free disk space" in out
 
 
 @pytest.mark.parametrize("runner", [FakeRunner(info={}), FakeRunner(compose=None)])
@@ -455,19 +592,6 @@ def test_low_memory_stops_unless_forced(capsys: pytest.CaptureFixture[str]) -> N
     assert "--force" in capsys.readouterr().out
     assert run_preflight(low, force=True) == 0
     assert "going ahead below the minimums" in capsys.readouterr().out
-
-
-def test_low_disk_on_a_fresh_host_stops_unless_forced(tmp_path: Path) -> None:
-    runner = FakeRunner(docker_info(DockerRootDir=str(tmp_path)))
-
-    def usage(_path: str) -> Any:
-        return shutil._ntuple_diskusage(500 * 10**9, 450 * 10**9, 50 * 10**9)
-
-    assert run_preflight(runner, usage=usage) == 3
-    assert run_preflight(runner, usage=usage, force=True) == 0
-    # Once the stack exists its data is already on disk, so 50 GB free is fine.
-    existing = FakeRunner(docker_info(DockerRootDir=str(tmp_path)), containers="groovemap-postgres\t")
-    assert run_preflight(existing, usage=usage) == 0
 
 
 def test_force_never_overrides_a_port_conflict(capsys: pytest.CaptureFixture[str]) -> None:
@@ -657,6 +781,7 @@ def test_fresh_host_runs_both_phases_in_order(deploy: Deploy) -> None:
     result = deploy.run(FAKE_GATE_WAIT="0")
     assert result.returncode == 0, result.stdout + result.stderr
     assert _compose_calls(deploy.calls) == [
+        f"docker compose {PROD} --profile * config --format json",  # the disk check's render
         f"docker compose {PROD} up -d --wait",
         "gate --prod --wait --interval 300",
         f"docker compose {PROD} up -d --wait",
@@ -679,8 +804,34 @@ def test_the_profile_is_off_while_phase_one_runs(deploy: Deploy) -> None:
     assert deploy.ups == [f"docker compose {PROD} up -d --wait"]
     assert not any(call.startswith("gate") for call in deploy.calls)
     assert "COMPOSE_PROFILES" not in deploy.env_values
+    assert "bash scripts/deploy.sh\n" in result.stdout
+    assert f"{sys.executable} scripts/discogs_import_status.py --prod" in result.stdout
+    assert "just" not in result.stdout
+
+
+def test_hints_print_the_just_form_when_started_through_just(deploy: Deploy) -> None:
+    result = deploy.run("--no-wait", DEPLOY_INVOKED_AS="just deploy")
+    assert result.returncode == 0, result.stderr
     assert "just deploy\n" in result.stdout
     assert "just discogs-import-status --prod" in result.stdout
+    assert "bash scripts/deploy.sh" not in result.stdout
+
+
+def test_help_and_usage_errors_name_the_form_the_user_typed(deploy: Deploy) -> None:
+    assert "Usage: bash scripts/deploy.sh [options]" in deploy.run("--help").stdout
+    assert "Usage: just deploy [options]" in deploy.run("--help", DEPLOY_INVOKED_AS="just deploy").stdout
+    failed = deploy.run("--bogus")
+    assert failed.returncode == 2
+    assert "Run 'bash scripts/deploy.sh --help'" in failed.stderr
+
+
+def test_a_python_older_than_3_10_stops_with_a_clear_message(deploy: Deploy) -> None:
+    (deploy.root / "bin" / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (deploy.root / "bin" / "python3").chmod(0o755)
+    result = deploy.run(DEPLOY_PYTHON="python3")
+    assert result.returncode == 1
+    assert "Python 3.10 or newer is needed" in result.stderr
+    assert not any(call.startswith("gate") or "compose" in call for call in deploy.calls)
 
 
 def test_rerun_during_the_import_resumes_the_wait(deploy: Deploy) -> None:
@@ -688,7 +839,7 @@ def test_rerun_during_the_import_resumes_the_wait(deploy: Deploy) -> None:
     env_before = (deploy.root / ".env").read_text()
     result = deploy.run(FAKE_RUNNING="abc", FAKE_GATE="3", FAKE_GATE_WAIT="0")
     assert result.returncode == 0, result.stderr
-    assert _compose_calls(deploy.calls)[:4] == [
+    assert _compose_calls(deploy.calls)[1:5] == [
         "gate --prod",
         f"docker compose {PROD} up -d --wait",
         "gate --prod --wait --interval 300",
@@ -702,7 +853,7 @@ def test_interrupting_the_wait_exits_130_and_says_how_to_resume(deploy: Deploy) 
     result = deploy.run("--interval", "60", "--no-admin", FAKE_GATE_WAIT="130")
     assert result.returncode == 130
     assert "COMPOSE_PROFILES" not in deploy.env_values
-    assert "just deploy --no-admin --interval 60" in result.stdout
+    assert "bash scripts/deploy.sh --no-admin --interval 60" in result.stdout
     assert not any("catalog-admin-setup" in call for call in deploy.calls)
 
 
@@ -829,6 +980,7 @@ def test_an_override_file_reaches_every_compose_call_and_the_gate(deploy: Deploy
     assert _compose_calls(deploy.calls) == [
         f"docker compose {PROD} --profile * config --format json",
         f"docker compose {PROD} {OVERRIDE} --profile * config --format json",
+        f"docker compose {PROD} {OVERRIDE} --profile * config --format json",  # the disk check's render
         f"docker compose {PROD} {OVERRIDE} up -d --wait",
         f"gate --prod {OVERRIDE} --wait --interval 300",
         f"docker compose {PROD} {OVERRIDE} up -d --wait",
@@ -839,7 +991,7 @@ def test_an_override_file_reaches_every_compose_call_and_the_gate(deploy: Deploy
 
 def test_no_wait_with_an_override_names_it_in_the_status_command(deploy: Deploy) -> None:
     (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
-    result = deploy.run("--no-wait", "-p", "lab", "--dev")
+    result = deploy.run("--no-wait", "-p", "lab", "--dev", DEPLOY_INVOKED_AS="just deploy")
     assert result.returncode == 0, result.stderr
     assert "just discogs-import-status -p lab -f docker-compose.override.yml\n" in result.stdout
     assert deploy.ups == [f"docker compose --project-name lab -f docker-compose.yml {OVERRIDE} up -d --wait"]
@@ -865,7 +1017,7 @@ def test_an_unreadable_override_stops_before_anything_starts(deploy: Deploy) -> 
 
 def test_recipe_runs_the_script_and_check_never_does() -> None:
     justfile = (ROOT / "Justfile").read_text()
-    assert 'deploy *args:\n    bash scripts/deploy.sh "$@"' in justfile
+    assert 'deploy *args:\n    DEPLOY_INVOKED_AS="just deploy" bash scripts/deploy.sh "$@"' in justfile
     check_line = next(line for line in justfile.splitlines() if line.startswith("check:"))
     assert "deploy" not in check_line
     for workflow in (ROOT / ".github/workflows").glob("*.yml"):

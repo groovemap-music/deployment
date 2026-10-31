@@ -29,8 +29,9 @@ DATA_BIND_ADDRESS=127.0.0.1
 
 The production console's session cookie is always `Secure`, so the console must be reached over
 HTTPS. Over plain `http://` the browser drops the cookie and sign-in silently returns to the
-login form. Don't work around that with `SESSION_COOKIE_SECURE=false`; put TLS in front
-instead. The TLS endpoint must:
+login form. Put TLS in front. Don't set `SESSION_COOKIE_SECURE` yourself; the only supported
+way to turn Secure off is `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env`, for a trusted LAN
+with no proxy (see [configuration](../../../docs/configuration.md#console-session-cookie-and-https)). The TLS endpoint must:
 
 - pass `Cookie` and `Set-Cookie` unchanged;
 - pass `X-GrooveMap-Console`, `Sec-Fetch-Site`, `Origin` and `Authorization`;

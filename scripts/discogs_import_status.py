@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
@@ -382,11 +382,22 @@ def evaluate(observation: Observation) -> Report:
 # --- reading store answers (pure) ------------------------------------------------------
 
 
+# Python 3.10's fromisoformat takes a fraction of exactly 3 or 6 digits and no trailing Z, but
+# PostgreSQL's JSON output drops trailing zeros ("...:43.89805+00:00").
+_FRACTION = re.compile(r"(?<=:\d\d)\.(\d{1,6})(?=Z|[+-]\d\d:?\d\d$|$)")
+
+
+def _pad_fraction(value: str) -> str:
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return _FRACTION.sub(lambda match: "." + match[1].ljust(6, "0"), value)
+
+
 def _timestamp(value: Any) -> datetime:
     if not isinstance(value, str):
         raise ProbeError(f"unreadable latch timestamp: {value!r}")
     try:
-        return datetime.fromisoformat(value)
+        return datetime.fromisoformat(_pad_fraction(value))
     except ValueError as error:
         raise ProbeError(f"unreadable latch timestamp: {value!r}") from error
 
@@ -639,7 +650,7 @@ def watch(
     out: TextIO,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> Report:
     """Poll until complete or until `timeout` (0 = never) would be exceeded."""
     started = clock()

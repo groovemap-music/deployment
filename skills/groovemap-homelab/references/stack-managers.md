@@ -95,7 +95,7 @@ everything else:
 - clone or update the checkout (`ansible.builtin.git`);
 - template `docker-compose.override.yml`, and set the host's `.env` keys with
   `ansible.builtin.lineinfile`, leaving every `*_IMAGE` line alone;
-- run `just env-init` only when `.env` is absent, and `just deploy --no-wait` with
+- run `just env-init` (it creates `.env` or refreshes the digests in place, keeping the other values), and `just deploy --no-wait` with
   `ansible.builtin.command` and `chdir` set to the checkout. Deploy is idempotent, so a re-run
   resumes or reconciles.
 

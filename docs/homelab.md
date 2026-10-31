@@ -7,24 +7,24 @@ Docker host to a fully loaded instance. The quick path comes first, the technica
 
 ## Quick path
 
-You need a Linux (or macOS) machine with Docker Engine and Docker Compose v2, git, about 16 GB
-of memory for Docker and about 100 GB of free disk (200 GB recommended). See
+You need a Linux (or macOS) machine with Docker Engine and Docker Compose v2, git, python3 3.10
+or newer (Debian 12 and Ubuntu 22.04 ship it), about 16 GB of memory for Docker and about 100 GB of free disk (200 GB recommended). See
 [Hardware and sizing](#hardware-and-sizing) for the numbers.
 
 ```bash
 git clone https://github.com/groovemap-music/deployment.git
 cd deployment
-mise install        # installs just and uv, pinned by the repository
-just deploy
+bash scripts/deploy.sh
 ```
 
-`just deploy` checks the host, writes `.env` and `secrets/`, sizes Neo4j for your memory,
+The script checks the host, writes `.env` and `secrets/`, sizes Neo4j for your memory,
 starts GrooveMap, waits for the Discogs import, then starts MusicBrainz. It prints your URLs and
 offers to create the first admin account. Expect the first load to take hours to about two
 days: releases alone take about 40 hours on the reference hardware
 ([dataset scale table in the architecture guide](architecture.md)). Ctrl-C, a closed terminal or a reboot loses
-nothing: the import keeps running in Docker, and running `just deploy` again resumes. Use
-`tmux` or `screen` anyway so you can watch it.
+nothing: the import keeps running in Docker, and running `bash scripts/deploy.sh` again resumes. Use
+`tmux` or `screen` anyway so you can watch it. If you use [mise](https://mise.jdx.dev/) and
+[just](https://just.systems/), both optional, `just deploy` runs the same script.
 
 Before you start, read these three notes:
 
@@ -53,7 +53,10 @@ workflow.
 ## Prerequisites
 
 - Docker Engine with Docker Compose v2. Deploy stops if Compose is older than v2.
-- git and [mise](https://mise.jdx.dev/), which pins `just` and `uv`.
+- git and python3 3.10 or newer. The deploy helpers use only the Python standard library, so
+  the distro's `python3` is enough. mise, `just` and `uv` are optional maintainer tooling; with
+  `uv` installed, the script uses it instead of `python3`. Set `DEPLOY_PYTHON` to pick another
+  interpreter.
 - A host that meets [the sizing minimums](#hardware-and-sizing).
 - Free host ports for the services you publish (see [Ports and bind addresses](#ports-and-bind-addresses)).
   Deploy refuses to start if a configured port is taken by something other than this stack.
@@ -63,13 +66,13 @@ workflow.
 ## Hardware and sizing
 
 `just deploy` enforces these minimums and warns below the recommended sizes. `--force` goes
-ahead anyway. The values come from `scripts/deploy_helpers.py`.
+ahead anyway; it also skips the memory minimum, so a relocated data volume does not need it. The values come from `scripts/deploy_helpers.py`.
 
 | Check | Minimum | Recommended |
 | --- | --- | --- |
 | Memory for Docker, production | 16 GB | 32 GB |
 | Memory for Docker, `--dev` | 8 GB | 16 GB |
-| Free disk on Docker's data root, new install | 100 GB | 200 GB |
+| Free disk, new install, summed over the disks the data volumes live on | 100 GB | 200 GB |
 
 On an existing deployment the disk check only warns below 20 GB free.
 
@@ -89,8 +92,14 @@ Neo4j is sized from the memory Docker reports: half of it goes to heap plus page
 buffers and 6 GB cache in `docker-compose.prod.yml` come on top. `just deploy` writes the Neo4j
 values to `.env` only where you have not set them, so you can edit them afterwards.
 
-The disk preflight measures only Docker's data root. If you move volumes elsewhere with the
-override (see [Data on a large disk](#data-on-a-large-disk)), check the target disk yourself.
+The disk check runs after `.env` and the override are in place and follows each data volume
+to the disk it lives on, including bind mounts and `driver_opts: {o: bind, device: ...}`
+volumes from `docker-compose.override.yml` (see [Data on a large disk](#data-on-a-large-disk)).
+Volumes that share a filesystem share its free space, so each disk needs the sum of its
+volumes' shares of the sizes above. The per-volume shares are in
+[configuration](configuration.md#disk-check-per-volume-shares). Docker Desktop's VM disk, a
+remote `DOCKER_HOST` and network filesystems cannot be measured from the host; deploy warns
+with the sizes instead, and you check those yourself.
 
 ### Architecture support
 
@@ -101,7 +110,7 @@ registered first. Multi-arch images are tracked as gm-automation-2ik.
 
 ## What `just deploy` does
 
-The step-by-step flags and exit codes are in the [quick start](quick-start.md#the-short-way-just-deploy).
+The step-by-step flags and exit codes are in the [quick start](quick-start.md#the-short-way-bash-scriptsdeploysh).
 In order, it:
 
 1. Runs the host checks above, stopping with exit code 3 before changing anything if a
@@ -246,35 +255,39 @@ the directory on an existing deployment: the stack would come up on new, empty v
 > run `just deploy`, which detects existing MusicBrainz containers or volumes and sets it
 > for you. Otherwise a plain `docker compose up -d` no longer manages the MusicBrainz services.
 
-To move to newly reviewed image digests, pull this repository and refresh `.env`. Be aware that
-`just env-init --force` regenerates `.env` from the template, keeping the old file as a
-timestamped backup (`.env.<timestamp>.bak`), and so drops host-specific values: `APP_BASE_URL`,
-bind addresses, port remaps, Neo4j sizing. The groovemap-homelab skill carries them across with
-`skills/groovemap-homelab/scripts/carry_env.py`: run from the checkout right after the pull,
+To move to newly reviewed image digests, pull this repository, refresh `.env` and redeploy:
 
 ```bash
-git rev-parse HEAD                         # note this before pulling
 git pull
-just env-init --force
-python3 skills/groovemap-homelab/scripts/carry_env.py --since <commit before the pull> .env.<timestamp>.bak
+just env-init      # or: python3 scripts/env-init.py
+just deploy        # or: bash scripts/deploy.sh
 ```
 
-It copies values that differ from the old template and never the `*_IMAGE` digests. A built-in
-merge mode for `just env-init` is coming; until then use this flow or re-apply the values by hand.
-Then run `just deploy` to bring the stack up to date.
+With an existing `.env`, `just env-init` rewrites only the `*_IMAGE` lines to the reviewed
+digests and appends any key the new `.env.example` has and your file lacks, under a comment.
+Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOST_PORT` remaps,
+`COMPOSE_PROFILES` and the Neo4j sizing that `just deploy` wrote. It keeps the previous file as
+`.env.<timestamp>.bak`, lists what it changed, and does nothing when `.env` is already current.
+`just env-init --force` instead regenerates `.env` from the template; it warns which of your
+values it drops, and the backup still has them.
 
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.
 
-- **Console sign-in needs HTTPS.** The operations console's session cookie is Secure in the
-  production overlay (`SESSION_COOKIE_SECURE` is reset there). Over plain http on a LAN IP,
-  sign-in silently returns to the login form. Put a TLS reverse proxy in front of the console
-  ([details](configuration.md#console-session-cookie-and-https)). Do not work around it by
-  turning the opt-out on.
-- **`just env-init --force` drops host-specific values.** See
+- **Console sign-in needs HTTPS, or an explicit opt-in.** The operations console's session
+  cookie is Secure in the production overlay, so over plain http on a LAN IP sign-in would
+  silently return to the login form. `just deploy` now says so before it prints the console
+  URL and offers two ways out: a TLS reverse proxy (recommended; see
+  [the reverse-proxy guide](../skills/groovemap-homelab/references/reverse-proxy.md)), or, on
+  a trusted LAN only, `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env`, which `just deploy`
+  offers to set (default no) and applies by recreating only `dashboard`
+  ([details](configuration.md#console-session-cookie-and-https)).
+- **`just env-init --force` drops host-specific values.** Plain `just env-init` keeps them; see
   [Upgrading](#upgrading-an-existing-deployment).
-- **The disk preflight measures only Docker's data root.** See [Hardware and sizing](#hardware-and-sizing).
+- **The disk check cannot measure everything.** Docker Desktop's VM disk, a remote `DOCKER_HOST`,
+  network filesystems and non-local volume drivers get a warning with the sizes, not a
+  measurement. See [Hardware and sizing](#hardware-and-sizing).
 - **Later cycles re-attach by hand** until catalog-api v0.5.0 is promoted. See
   [Later cycles](#later-cycles).
 - **MusicBrainz disk use is an estimate.**

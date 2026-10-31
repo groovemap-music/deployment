@@ -24,7 +24,7 @@ days to rebuild.
   free port. `--force` doesn't override a port conflict.
 - **"linux/amd64 only" on arm64:** explain the emulation cost to the user. With their consent,
   re-run with `--yes`. On Linux, register binfmt first (deploy prints the command).
-- **"Only N GB free under …":** see [storage.md](storage.md#the-disk-check-when-data-lives-elsewhere).
+- **"Only N GB free under …":** the named disk is short for the volumes listed on it; see [storage.md](storage.md#the-disk-check-when-data-lives-elsewhere).
 - **"Docker has about N GB of memory":** on Docker Desktop, raise the VM's memory. Elsewhere, the
   host is below the minimum. Going ahead with `--force` is the user's call, and it will be slow.
 - **"docker-compose.override.yml changes …":** remove that key from the override. The hint line
@@ -56,7 +56,8 @@ days to rebuild.
 - **404 from Traefik:** the router isn't loaded. Check `traefik.enable`, the entrypoint name,
   and Traefik's own logs.
 - **Console sign-in returns to the login form:** the console is reached over plain `http://`
-  (the `Secure` cookie is dropped), the proxy strips `Cookie` or `Set-Cookie`, or the `Host`
+  (the `Secure` cookie is dropped; fix it with a TLS proxy, or on a trusted LAN only set
+  `GROOVEMAP_ALLOW_INSECURE_CONSOLE=true` in `.env` and recreate `dashboard`), the proxy strips `Cookie` or `Set-Cookie`, or the `Host`
   header is rewritten. See the console requirements in [reverse-proxy.md](reverse-proxy.md).
 - **Console loads but live updates never arrive:** `/ws` isn't forwarded with `Upgrade`. In
   NPM, turn on Websockets Support. In nginx, add the `/ws` location.
