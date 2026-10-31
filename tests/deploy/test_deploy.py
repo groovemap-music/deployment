@@ -1605,6 +1605,110 @@ def test_an_override_that_bypasses_the_rules_stops_before_anything_starts(deploy
     assert not any(call.startswith("gate") for call in deploy.calls)
 
 
+def _real_override_render(tmp_path: Path, override: str, files: dict[str, str] | None = None) -> dict[str, Any]:
+    """`docker compose config` for the production stack with `override` (and any files it names) merged last."""
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("no docker binary to render the Compose files")
+    for name, text in (files or {}).items():
+        (tmp_path / name).write_text(text)
+    (tmp_path / "override.yml").write_text(override)
+    out = subprocess.run(
+        [docker, "compose", "--env-file", "config/validation.env", "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml",
+         "-f", str(tmp_path / "override.yml"), "--profile", "*", "config", "--format", "json"],
+        cwd=ROOT, capture_output=True, check=True, timeout=60, env={"PATH": str(Path(docker).parent), "HOME": str(Path.home())},
+    ).stdout  # fmt: skip
+    rendered: dict[str, Any] = json.loads(out)
+    return rendered
+
+
+def _stores(service: dict[str, Any]) -> dict[str, Any]:
+    return {"environment": {"POSTGRES_HOST": "postgres", "VALKEY_PORT": "6379"}, **service}
+
+
+def test_the_dedicated_stores_are_accepted() -> None:
+    before = _render(explore=_stores({}))
+    assert [finding.level for finding in helpers.check_override(before, json.loads(json.dumps(before)))] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DATABASE", "POSTGRES_USERNAME", "VALKEY_HOST", "VALKEY_PORT",
+        "POSTGRES_HOST_FILE", "POSTGRES_PORT_FILE", "POSTGRES_DATABASE_FILE", "POSTGRES_USERNAME_FILE", "VALKEY_HOST_FILE", "VALKEY_PORT_FILE",
+        "EMBEDDING_PIPELINE_POSTGRES_USERNAME_FILE",
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("service", ["explore", "postgres"])
+def test_override_may_not_point_a_service_at_an_external_store(service: str, variable: str) -> None:
+    before = _render(**{service: _stores({})})
+    after = _render(**{service: {"environment": {"POSTGRES_HOST": "postgres", "VALKEY_PORT": "6379", variable: "db.lan"}}})
+    findings = helpers.check_override(before, after)
+    stops = [finding for finding in findings if finding.level == "stop"]
+    assert len(stops) == 1, findings
+    assert f"changes {variable} on {service}" in stops[0].message
+    assert "External PostgreSQL and Valkey are not supported yet" in stops[0].hint
+    assert "gm-deployment-e1uh" in stops[0].hint
+    assert "docs/homelab.md" in stops[0].hint
+
+
+def test_override_may_still_change_the_published_store_ports_and_other_variables() -> None:
+    before = _render(explore=_stores({}))
+    after = _render(
+        explore=_stores({"environment": {"POSTGRES_HOST": "postgres", "VALKEY_PORT": "6379", "POSTGRES_HOST_PORT": "5444", "LOG_LEVEL": "debug"}})
+    )
+    assert [finding.level for finding in helpers.check_override(before, after)] == ["ok"]
+
+
+def test_override_may_not_swap_the_source_of_a_store_credential_secret() -> None:
+    plain = {"secrets": [{"source": "postgres_password", "target": "/run/secrets/postgres_password"}]}
+    swapped = {"secrets": [{"source": "other_password", "target": "/run/secrets/postgres_password"}]}
+    findings = helpers.check_override(_render(explore=plain), _render(explore=swapped))
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "changes the /run/secrets/postgres_password secret on explore" in findings[0].message
+    before = {**_render(), "secrets": {"valkey_password": {"file": "/a/valkey_password.txt"}}}
+    after = {**_render(), "secrets": {"valkey_password": {"file": "/elsewhere.txt"}}}
+    findings = helpers.check_override(before, after)
+    assert [finding.level for finding in findings] == ["stop"]
+    assert "changes the valkey_password secret" in findings[0].message
+
+
+def test_the_env_file_route_is_refused(tmp_path: Path, real_render: Path) -> None:
+    before = json.loads(real_render.read_text())
+    after = _real_override_render(
+        tmp_path, f"services:\n  api:\n    env_file: {tmp_path / 'stores.env'}\n", {"stores.env": "POSTGRES_PORT=6000\nVALKEY_PORT=7000\n"}
+    )
+    api = after["services"]["api"]
+    assert "env_file" not in api and api["environment"]["POSTGRES_PORT"] == "6000"  # Compose inlines env_file into environment
+    stops = [finding for finding in helpers.check_override(before, after) if finding.level == "stop"]
+    assert any("changes POSTGRES_PORT on api" in finding.message for finding in stops), stops
+
+
+def test_a_real_secret_source_swap_is_refused(tmp_path: Path, real_render: Path) -> None:
+    before = json.loads(real_render.read_text())
+    after = _real_override_render(tmp_path, f"secrets:\n  postgres_password:\n    file: {tmp_path / 'other.txt'}\n", {"other.txt": "x"})
+    stops = [finding for finding in helpers.check_override(before, after) if finding.level == "stop"]
+    assert any("changes the postgres_password secret" in finding.message for finding in stops), stops
+
+
+def test_an_external_store_override_stops_a_resumed_first_load_before_any_start(deploy: Deploy, real_render: Path) -> None:
+    config = json.loads(real_render.read_text())
+    after = json.loads(real_render.read_text())
+    after["services"]["api"]["environment"]["POSTGRES_HOST"] = "db.lan"
+    (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
+    created = "\n".join(sorted(_phase_one_volumes(config))) + "\n"
+    # Phase 1 is done and the gate is still waiting on the import.
+    result = deploy.run(
+        FAKE_RENDER_FILE=str(real_render), FAKE_RENDER_OVERRIDE=json.dumps(after), FAKE_VOLUMES=created, FAKE_RUNNING="abc", FAKE_GATE="3", FAKE_GATE_WAIT="3"
+    )  # fmt: skip
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "changes POSTGRES_HOST on api" in result.stdout
+    assert "gm-deployment-e1uh" in result.stdout
+    assert deploy.ups == []
+    assert not any(call.startswith("gate") for call in deploy.calls)
+    assert "COMPOSE_PROFILES" not in deploy.env_values
+
+
 def test_an_unreadable_override_stops_before_anything_starts(deploy: Deploy) -> None:
     (deploy.root / "docker-compose.override.yml").write_text("---\nservices: {}\n")
     result = deploy.run(FAKE_GATE_WAIT="0", FAKE_RENDER_OVERRIDE="not json")
