@@ -70,8 +70,8 @@ days to rebuild.
   evidence. Keep MusicBrainz disabled and check the effective image pins plus all four SQL latch
   records and four graph completion markers. discogs-sql-loader v0.3.0 did not write its latch;
   discogs-graph-enricher v0.3.0 also has a CI-discovered race that can leave two graph markers
-  missing after a concurrent cache-version reset. The source fix exists, but a reviewed graph
-  image is not published yet.
+  missing after a concurrent cache-version reset. The source fix is merged into its source epic,
+  but a reviewed graph image is not published yet.
 - **A completion latch or graph marker is missing:** do not restart the extractor, write a marker,
   or replay broker messages manually. After a reviewed graph-enricher release and healthy new
   consumers are deployed, recovery requires the operator's approval, a read-only baseline, an

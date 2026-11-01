@@ -695,8 +695,9 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   insert the latch manually or restart the extractor to try to recreate it.
 - **The reviewed `discogs-graph-enricher` v0.3.0 can lose two completion markers in a concurrent
   cache version reset.** Empty queues do not prove all four durable markers were written. The
-  source fix has passed source tests, but its v0.4.0 image is not yet published or promoted; keep
-  the gate closed until that release is reviewed and a new pass completes.
+  source fix is merged into its source epic and passed source tests, but its v0.4.0 image is not
+  yet published or promoted; keep the gate closed until that release is reviewed and a new pass
+  completes.
 - **An active first import is not a Compose-wide rollout window.** Take the read-only config and
   identity snapshot first, preserve the current extractor and loader IDs, and use a bounded,
   operator-approved tableinator-only promotion. Schedule full-stack recreation for after the
