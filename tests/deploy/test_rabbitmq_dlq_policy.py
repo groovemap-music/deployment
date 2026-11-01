@@ -235,6 +235,27 @@ class TestComposeServiceWiring:
         assert init_service["restart"] == "no"
         assert init_service["entrypoint"] == ["/scripts/rabbitmq-dlq-policy-init.sh"]
 
+    @pytest.mark.parametrize("missing_port", ["5672", "15672", ""])
+    def test_broker_health_waits_for_both_listeners_even_when_ping_passes(self, tmp_path: Path, missing_port: str) -> None:
+        health = self._services()["rabbitmq"]["healthcheck"]["test"]
+        stub = tmp_path / "rabbitmq-diagnostics"
+        stub.write_text(
+            "#!/bin/sh\n"
+            'echo "$*" >>"$DIAGNOSTICS_CALLS"\n'
+            'if [ "$2" = ping ]; then exit 0; fi\n'
+            'if [ "$2" = check_port_listener ]; then [ "$3" != "$MISSING_PORT" ]; exit $?; fi\n'
+            "exit 2\n"
+        )
+        stub.chmod(0o755)
+        calls = tmp_path / "calls"
+        env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "MISSING_PORT": missing_port, "DIAGNOSTICS_CALLS": str(calls)}
+        command = ["sh", "-c", health[1]] if health[0] == "CMD-SHELL" else health[1:]
+        result = subprocess.run(command, env=env, capture_output=True, text=True, check=False, timeout=10)
+        assert (result.returncode == 0) == (not missing_port)
+        if not missing_port:
+            assert "check_port_listener 5672" in calls.read_text()
+            assert "check_port_listener 15672" in calls.read_text()
+
     def test_cap_env_vars_default_without_requiring_operator_input(self) -> None:
         environment = self._services()["rabbitmq-dlq-policy-init"]["environment"]
         assert environment["RABBITMQ_DLQ_MAX_LENGTH"] == "${RABBITMQ_DLQ_MAX_LENGTH:-50000}"
