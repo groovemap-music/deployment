@@ -238,26 +238,20 @@ keeps the evidence (deploy, gate and status output, check results, the override,
 and container log tails on failure) as the `smoke-homelab-evidence` artifact for
 14 days.
 
-**Runtime and cost**: a run takes about 21 minutes of a standard `ubuntu-24.04`
-runner (4 vCPU, 16 GB) today: about a minute of tool setup, under two minutes of
-image pulls, two deploys of phase 1 of about a minute and a half each, and ten
-minutes waiting for a gate that cannot complete yet (below). With a gate that
-completes, expect 12 to 15 minutes. GitHub does not bill hosted runners for a
-public repository; a private one would pay for those minutes at the Linux rate.
-Pushes to the same branch cancel the run in progress.
+**Runtime and cost**: expect about 12 to 20 minutes on a standard `ubuntu-24.04`
+runner (4 vCPU, 16 GB), including image pulls, both monitoring modes, the fixture,
+phase 2 and negative cases. GitHub does not bill hosted runners for a public
+repository. Pushes to the same branch cancel the run in progress.
 
-**Known failures until upstream releases are promoted.** The smoke reports these
-as `FAIL` with a diagnosis, runs every other case, and exits 1:
-
-- *The gate never reaches 0.* The reviewed `discogs-sql-loader` 0.3.0 receives
-  `extraction_complete` for all four types but writes no
-  `public.loader_extraction_latch` row: the latch and the durable refresh landed
-  in that repository after 0.3.0, and no later release exists. Phase 2 is skipped
-  until a release with them is promoted in `scripts/check-images.py`.
-- *The console reports shared services as unreachable* (lux's failure 5). The
-  reviewed `operations-console` 0.2.0 predates configurable targets and probes
-  `postgres-exporter`, `node-exporter` and `cadvisor` by their compose names.
-  Promoting 0.3.0 (`gm-deployment-8nbg`) fixes it.
+The disposable smoke explicitly selects the operator-supplied SQL loader digest
+`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`,
+which includes the extraction latch and durable refresh absent from the deployment's
+reviewed 0.3.0. It asserts the running tableinator image matches this pin and keeps
+its image labels and fixture logs as evidence. This does not promote the digest
+into the deployment-wide reviewed set or change any installed environment.
+Run 41253011030 used the reviewed 0.3.0 digest `09f55827f972…`, so its gate
+could not complete despite four extraction-complete messages. Gate failures remain
+failures, with phase 2 skipped and diagnostics preserved.
 
 ## Live and performance checks
 

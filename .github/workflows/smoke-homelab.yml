@@ -23,6 +23,16 @@ on:
       - "Justfile"
       - ".github/workflows/smoke-homelab.yml"
   workflow_dispatch:
+    inputs:
+      smoke_host_uid:
+        description: Actual Linux operator UID (1000 baseline, 1001 tmpfs proof)
+        type: choice
+        options: ["1000", "1001"]
+        default: "1000"
+      sql_loader_image:
+        description: Digest-pinned SQL loader to test in the scratch stack
+        type: string
+        default: ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
 
 permissions:
   contents: read
@@ -71,6 +81,9 @@ jobs:
     if: needs.scope.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      SMOKE_HOST_UID: ${{ inputs.smoke_host_uid || '1000' }}
+      SMOKE_HOMELAB_SQL_LOADER_IMAGE: ${{ inputs.sql_loader_image || 'ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -108,15 +121,14 @@ jobs:
             df -h /
           fi
 
-      # lux's operator is UID 1000 and the stack runs as the deploying user (UID/GID in .env), so the
-      # smoke runs as a UID-1000 user too: the runner's own user is 1001, which the images' log volumes
-      # and home directories do not expect (reported separately; not lux's shape).
-      - name: Become UID 1000, lux's operator UID
+      # Match the actual operator and .env UID/GID. UID 1000 is lux's baseline;
+      # workflow_dispatch can select the runner's UID 1001 for the tmpfs regression.
+      - name: Become the selected operator UID
         shell: bash
         run: |
-          operator="$(getent passwd 1000 | cut -d: -f1)"
+          operator="$(getent passwd "$SMOKE_HOST_UID" | cut -d: -f1)"
           if [[ -z "$operator" ]]; then
-            sudo useradd --create-home --uid 1000 --user-group --shell /bin/bash homelab
+            sudo useradd --create-home --uid "$SMOKE_HOST_UID" --user-group --shell /bin/bash homelab
             operator=homelab
           fi
           sudo usermod --append --groups docker "$operator"
@@ -137,6 +149,8 @@ jobs:
         shell: bash
         run: |
           sudo -u "$OPERATOR" -H env "PATH=$PATH" \
+            "SMOKE_HOST_UID=$SMOKE_HOST_UID" \
+            "SMOKE_HOMELAB_SQL_LOADER_IMAGE=$SMOKE_HOMELAB_SQL_LOADER_IMAGE" \
             "UV_CACHE_DIR=$RUNNER_TEMP/smoke-homelab-uv-cache" \
             "SMOKE_HOMELAB_RUN=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             "SMOKE_HOMELAB_EVIDENCE_DIR=$RUNNER_TEMP/smoke-homelab-evidence" \

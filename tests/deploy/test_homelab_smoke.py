@@ -520,7 +520,7 @@ def test_the_workflow_runs_on_linux_with_pinned_tools_and_no_secrets() -> None:
     assert "secrets." not in text
     assert "47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0" in text  # Docker Compose 5.6.1, lux's version
     assert "just smoke-homelab" in text
-    assert "getent passwd 1000" in text  # lux's operator UID
+    assert 'getent passwd "$SMOKE_HOST_UID"' in text  # lux's operator UID
     # The label opt-in and the path filter agree on what counts as a change to the stack.
     for path in ("docker-compose", "scripts/", "config/", "skills/"):
         assert path in text

@@ -47,6 +47,9 @@ NETWORK="$PROJECT-homelab"
 MONITORING_NETWORK="$PROJECT-monitoring"
 SUBNET="${SMOKE_HOMELAB_SUBNET:-172.29.0.0/16}"
 GATE_TIMEOUT="${SMOKE_HOMELAB_GATE_TIMEOUT:-600}"
+# Operator-supplied release candidate with the durable extraction latch and refresh.
+# Keep explicit until promoted into the deployment-wide reviewed image set.
+SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b}"
 FIXTURE_MANIFEST=/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
 LABEL=com.docker.compose.project
 STARTED=$SECONDS
@@ -115,6 +118,11 @@ diagnose() {
 cleanup() {
   local status=$?
   set +e
+  # Preserve loader logs on success too: completion must be attributable to the real loaders.
+  mkdir -p "$EVIDENCE/logs"
+  for loader in tableinator graphinator; do
+    docker logs --timestamps "groovemap-$loader" >"$EVIDENCE/logs/groovemap-$loader.log" 2>&1 || true
+  done
   ((status == 0)) || diagnose
   say "Removing every container, volume and network labelled $LABEL=$PROJECT or $HOMELAB_PROJECT"
   remove_project "$PROJECT"
@@ -136,6 +144,7 @@ cleanup() {
 for tool in docker git python3 openssl just uv tar; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is not on PATH"
 done
+[[ "$SQL_LOADER_IMAGE" =~ ^ghcr\.io/groovemap-music/discogs-sql-loader@sha256:[0-9a-f]{64}$ ]] || die "SQL loader must be a digest-pinned ghcr.io/groovemap-music/discogs-sql-loader image"
 docker compose version >/dev/null 2>&1 || die "the docker compose plugin is not installed"
 arch="$(docker info --format '{{.Architecture}}')"
 [[ "$arch" == x86_64 ]] || die "the GrooveMap images are linux/amd64 only and this engine is $arch; run it on an amd64 host"
@@ -188,6 +197,7 @@ pass "homelab PostgreSQL provisioned with docs/homelab.md's SQL: non-superuser r
 
 # --- the operator's configuration ------------------------------------------------------
 
+[[ -z "${SMOKE_HOST_UID:-}" || "$(id -u)" == "$SMOKE_HOST_UID" ]] || die "SMOKE_HOST_UID must match the actual operator UID; run as that user"
 uid="$(id -u)"
 gid="$(id -g)"
 cd "$STACK"
@@ -200,6 +210,7 @@ set_env() {
 }
 python3 scripts/env-init.py >"$EVIDENCE/env-init.log"
 printf '\n# Homelab smoke (scripts/smoke-homelab.sh)\n' >>.env
+set_env DISCOGS_SQL_LOADER_IMAGE "$SQL_LOADER_IMAGE"
 set_env COMPOSE_PROJECT_NAME "$PROJECT"
 set_env UID "$uid"
 set_env GID "$gid"
@@ -333,6 +344,13 @@ check_stack() {
     cat "$EVIDENCE/check-stack-$name.log"
     fail "$name: the running stack differs from its render (see check-stack-$name.log)"
   }
+  local actual_image rendered_image
+  rendered_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["tableinator"]["image"])' "$EVIDENCE/rendered-$name.json")"
+  [[ "$rendered_image" == "$SQL_LOADER_IMAGE" ]] || fail "$name: rendered tableinator image $rendered_image differs from $SQL_LOADER_IMAGE"
+  actual_image="$(docker inspect --format '{{.Config.Image}}' groovemap-tableinator)"
+  record "$name tableinator image: $actual_image"
+  [[ "$actual_image" == "$SQL_LOADER_IMAGE" ]] || fail "$name: tableinator did not deploy the pinned SQL loader $SQL_LOADER_IMAGE"
+  docker image inspect "$actual_image" --format '{{json .RepoDigests}} {{json .Config.Labels}}' >"$EVIDENCE/tableinator-image-$name.log"
   pass "$name: every service up as rendered: one-shots completed, healthchecks healthy, read-only roots and users as configured, $clients ($(grep -c '^ok' "$EVIDENCE/check-stack-$name.log") checks)"
 }
 # The gate as an operator runs it, bounded by `seconds` (timeout's 124 when it runs out).
@@ -380,6 +398,20 @@ grep -qx 'redis_up 1' <<<"$metrics" || fail "valkey-exporter reports redis_up $(
 pass "valkey-exporter as $uid:$gid read its 0600 password file and authenticated (redis_up 1); Grafana healthy as $uid:$gid on a fresh volume"
 remove_project "$PROJECT"
 remove_project_resources "$PROJECT"
+
+# The image's historical named /logs volume is owned by UID 1000. Prove that
+# UID 1001 cannot use it even when tmpfs replaces /logs in the current stack.
+say "Negative case: UID 1001 cannot write the old named log volume"
+legacy_volume="${PROJECT}_legacy_logs"
+docker volume create --label "$LABEL=$PROJECT" "$legacy_volume" >/dev/null
+status=0
+docker run --rm --label "$LABEL=$PROJECT" --read-only --user 1001:1001 \
+  --mount "type=volume,src=$legacy_volume,dst=/logs" --entrypoint python "$SQL_LOADER_IMAGE" \
+  -c 'from pathlib import Path; Path("/logs/uid1001-negative.log").write_text("must fail")' \
+  >"$EVIDENCE/legacy-log-volume-1001.log" 2>&1 || status=$?
+((status != 0)) || fail "UID 1001 unexpectedly wrote the old named log volume"
+grep -q 'PermissionError' "$EVIDENCE/legacy-log-volume-1001.log" || fail "old log volume failed without PermissionError"
+pass "old named log volume: UID 1001 cannot write /logs (PermissionError, exit $status)"
 
 # --- phase 1, lux's shape --------------------------------------------------------------
 
@@ -512,10 +544,14 @@ gate complete "$GATE_TIMEOUT" --wait --interval 10 || status=$?
 if ((status != 0)); then
   received="$(docker logs groovemap-tableinator 2>&1 | grep -c 'Received extraction_complete' || true)"
   soft_fail "gate did not reach 0 within ${GATE_TIMEOUT}s (exit $status). Last poll: $(grep -E 'in progress|cannot determine' "$EVIDENCE/gate-complete.log" | tail -n 1)." \
-    "tableinator logged 'Received extraction_complete' $received time(s); a postgres latch with no loader='discogs' row after that means the SQL loader image writes no loader_extraction_latch (discogs-sql-loader 0.3.0 predates tableinator/extraction_latch.py)"
+    "tableinator image $SQL_LOADER_IMAGE logged 'Received extraction_complete' $received time(s); inspect gate-complete.log and logs/groovemap-tableinator.log for the failing latch or refresh"
   record "SKIP phase 2: it needs the gate at 0"
 else
   pass "gate (uv off PATH): exit 0 once both loaders signalled all four types and the refresh was stamped"
+  # Read-only evidence from the real loader's durable state; only the loader writes it.
+  "${homelab[@]}" exec -T homelab-postgres psql -X -A -t -v ON_ERROR_STOP=1 -U homelab_admin -d groovemap \
+    -c "SELECT row_to_json(latch) FROM public.loader_extraction_latch AS latch WHERE loader = 'discogs'" \
+    >"$EVIDENCE/discogs-latch.jsonl"
   status_report gate-complete "Discogs gate: COMPLETE (exit 0)" "phase 1 finished"
 
   # --- phase 2 -------------------------------------------------------------------------
@@ -531,6 +567,10 @@ else
   check_stack phase-2
   status_report phase-2 "phase 2: Discogs import complete, MusicBrainz enabled"
 fi
+
+for loader in tableinator graphinator; do
+  docker logs --timestamps "groovemap-$loader" >"$EVIDENCE/$loader-fixture.log" 2>&1
+done
 
 # --- a failing one-shot ----------------------------------------------------------------
 
