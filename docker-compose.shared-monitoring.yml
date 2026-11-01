@@ -1,0 +1,80 @@
+---
+# Shared monitoring overlay: GrooveMap reports to an existing Grafana, VictoriaMetrics,
+# VictoriaTraces, node-exporter and cAdvisor instead of running its own. Never apply it by hand:
+# `just deploy` adds it, after the external-store overlays and before docker-compose.override.yml,
+# when .env sets GROOVEMAP_MONITORING=shared, and records it in COMPOSE_FILE so a bare
+# `docker compose` uses it too. scripts/discogs_import_status.py adds it the same way. See
+# docs/homelab.md#shared-monitoring.
+#
+# - grafana, victoria-metrics, victoria-traces, node-exporter and cadvisor move into the
+#   `local-monitoring` profile, which nothing enables, so they are omitted rather than removed
+#   (the override check forbids removing a service). Their volumes are left alone.
+# - The collector stays: it is still the stack's one telemetry ingest point and still scrapes
+#   RabbitMQ, the Valkey exporter and itself. It no longer waits for the omitted stores. Its one
+#   configuration file (config/otel-collector.yaml) reads its write endpoints and the exporter scrape
+#   targets from COLLECTOR_* variables with the local services as defaults; this overlay sets only
+#   those variables. The healthcheck validates the same file in the same environment, so it checks
+#   exactly the configuration the collector runs, shared endpoints included.
+# - The console probes the shared services (<NAME>_MODE=shared and <NAME>_URL, the
+#   operations-console configurable targets). A release of the console that predates them ignores
+#   these variables and keeps probing the compose names, which then read as unreachable.
+# - PostgreSQL's exporter is not part of this overlay: it follows GROOVEMAP_POSTGRES. With an
+#   external PostgreSQL the external-postgres overlay omits the local exporter and probes and scrapes
+#   EXTERNAL_POSTGRES_EXPORTER_ADDRESS when it is set. Valkey's exporter stays with a dedicated Valkey.
+#
+# SHARED_VICTORIA_METRICS_URL and SHARED_VICTORIA_TRACES_URL are required base URLs; deploy checks
+# their shape before anything starts (scripts/stores.py monitoring_problems). The others are optional:
+# SHARED_GRAFANA_URL (the console server's address for the shared Grafana, default GRAFANA_URL), and
+# SHARED_NODE_EXPORTER_ADDRESS and SHARED_CADVISOR_ADDRESS (host:port; unset, nothing scrapes that
+# exporter and the console shows it as shared but not configured). A shared service that is a
+# container on another Docker network is reached by attaching dashboard and otel-collector
+# (MONITORING_CLIENTS in scripts/stores.py) to that network in docker-compose.override.yml.
+
+services:
+  grafana:
+    profiles:
+      - local-monitoring
+
+  victoria-metrics:
+    profiles:
+      - local-monitoring
+
+  victoria-traces:
+    profiles:
+      - local-monitoring
+
+  node-exporter:
+    profiles:
+      - local-monitoring
+
+  cadvisor:
+    profiles:
+      - local-monitoring
+
+  otel-collector:
+    environment:
+      COLLECTOR_METRICS_WRITE_URL: "${SHARED_VICTORIA_METRICS_URL:?Set SHARED_VICTORIA_METRICS_URL to the shared VictoriaMetrics base URL}/api/v1/write"
+      COLLECTOR_TRACES_WRITE_URL: "${SHARED_VICTORIA_TRACES_URL:?Set SHARED_VICTORIA_TRACES_URL to the shared VictoriaTraces base URL}/insert/opentelemetry/v1/traces"
+      COLLECTOR_NODE_EXPORTER_TARGETS: "[${SHARED_NODE_EXPORTER_ADDRESS:-}]"
+      COLLECTOR_CADVISOR_TARGETS: "[${SHARED_CADVISOR_ADDRESS:-}]"
+    # A server on this Docker host but outside Docker is reachable as host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: !reset {}
+
+  dashboard:
+    environment:
+      VICTORIA_METRICS_MODE: shared
+      VICTORIA_METRICS_URL: "${SHARED_VICTORIA_METRICS_URL:?Set SHARED_VICTORIA_METRICS_URL to the shared VictoriaMetrics base URL}"
+      VICTORIA_TRACES_MODE: shared
+      VICTORIA_TRACES_URL: "${SHARED_VICTORIA_TRACES_URL:?Set SHARED_VICTORIA_TRACES_URL to the shared VictoriaTraces base URL}"
+      # GRAFANA_URL and TRACES_URL stay the browser-facing link bases from .env: point GRAFANA_URL
+      # at the shared Grafana. This is the server-side address (alerts and the health row).
+      GRAFANA_MODE: shared
+      GRAFANA_API_URL: "${SHARED_GRAFANA_URL:-${GRAFANA_URL:-http://localhost:3000}}"
+      NODE_EXPORTER_MODE: shared
+      NODE_EXPORTER_URL: "${SHARED_NODE_EXPORTER_ADDRESS:+http://${SHARED_NODE_EXPORTER_ADDRESS}}"
+      CADVISOR_MODE: shared
+      CADVISOR_URL: "${SHARED_CADVISOR_ADDRESS:+http://${SHARED_CADVISOR_ADDRESS}}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -58,7 +58,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: up
+              expr: up{service_namespace="groovemap"}
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -94,7 +94,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: sum(rate(otelcol_exporter_send_failed_metric_points_total[15m]))
+              expr: sum(rate(otelcol_exporter_send_failed_metric_points_total{service_namespace="groovemap"}[15m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -130,8 +130,8 @@ groups:
               instant: true
               range: false
               expr: >-
-                100 * sum by (source) (rate(groovemap_extraction_files_total{outcome="failed"}[30m]))
-                / sum by (source) (rate(groovemap_extraction_files_total[30m]))
+                100 * sum by (source) (rate(groovemap_extraction_files_total{service_namespace="groovemap", outcome="failed"}[30m]))
+                / sum by (source) (rate(groovemap_extraction_files_total{service_namespace="groovemap"}[30m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -167,8 +167,8 @@ groups:
               instant: true
               range: false
               expr: >-
-                100 * sum by (service_name, source) (rate(groovemap_pipeline_messages_total{outcome="failed"}[15m]))
-                / sum by (service_name, source) (rate(groovemap_pipeline_messages_total[15m]))
+                100 * sum by (service_name, source) (rate(groovemap_pipeline_messages_total{service_namespace="groovemap", outcome="failed"}[15m]))
+                / sum by (service_name, source) (rate(groovemap_pipeline_messages_total{service_namespace="groovemap"}[15m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -202,7 +202,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: max by (service_name, system) (groovemap_pipeline_circuit_breaker_state)
+              expr: max by (service_name, system) (groovemap_pipeline_circuit_breaker_state{service_namespace="groovemap"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -239,8 +239,8 @@ groups:
               # Deep *and* still deepening. A bulk import legitimately parks a
               # large backlog; one that is not draining is the failure.
               expr: >-
-                sum by (queue) (rabbitmq_queue_messages_ready)
-                and on (queue) (sum by (queue) (delta(rabbitmq_queue_messages_ready[30m])) > 0)
+                sum by (queue) (rabbitmq_queue_messages_ready{service_namespace="groovemap"})
+                and on (queue) (sum by (queue) (delta(rabbitmq_queue_messages_ready{service_namespace="groovemap"}[30m])) > 0)
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -274,7 +274,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: sum by (source) (groovemap_pipeline_consumers_active)
+              expr: sum by (source) (groovemap_pipeline_consumers_active{service_namespace="groovemap"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -311,7 +311,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: time() - max by (computation) (groovemap_insights_last_success_seconds)
+              expr: time() - max by (computation) (groovemap_insights_last_success_seconds{service_namespace="groovemap"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -346,8 +346,8 @@ groups:
               instant: true
               range: false
               expr: >-
-                100 * sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[10m]))
-                / sum by (service_name) (rate(http_server_request_duration_seconds_count[10m]))
+                100 * sum by (service_name) (rate(http_server_request_duration_seconds_count{service_namespace="groovemap", http_response_status_code=~"5.."}[10m]))
+                / sum by (service_name) (rate(http_server_request_duration_seconds_count{service_namespace="groovemap"}[10m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -383,7 +383,7 @@ groups:
               range: false
               expr: >-
                 histogram_quantile(0.95, sum by (le, service_name)
-                (rate(http_server_request_duration_seconds_bucket[10m])))
+                (rate(http_server_request_duration_seconds_bucket{service_namespace="groovemap"}[10m])))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -419,7 +419,7 @@ groups:
               range: false
               expr: >-
                 histogram_quantile(0.99, sum by (le, service_name)
-                (rate(groovemap_runtime_event_loop_lag_seconds_bucket[10m])))
+                (rate(groovemap_runtime_event_loop_lag_seconds_bucket{service_namespace="groovemap"}[10m])))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -454,7 +454,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: 100 * sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)
+              expr: 100 * sum(pg_stat_database_numbackends{service_namespace="groovemap"}) / max(pg_settings_max_connections{service_namespace="groovemap"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -488,7 +488,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: 100 * valkey_memory_used_bytes / valkey_memory_max_bytes
+              expr: 100 * valkey_memory_used_bytes{service_namespace="groovemap"} / valkey_memory_max_bytes{service_namespace="groovemap"}
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -524,7 +524,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: sum(rate(valkey_errors_total{err="OOM"}[5m]))
+              expr: sum(rate(valkey_errors_total{service_namespace="groovemap", err="OOM"}[5m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -563,7 +563,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total[5m]))
+              expr: sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total{service_namespace="groovemap"}[5m]))
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -602,8 +602,8 @@ groups:
               instant: true
               range: false
               expr: >-
-                100 * rabbitmq_process_resident_memory_bytes
-                / rabbitmq_resident_memory_limit_bytes
+                100 * rabbitmq_process_resident_memory_bytes{service_namespace="groovemap"}
+                / rabbitmq_resident_memory_limit_bytes{service_namespace="groovemap"}
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -637,7 +637,7 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: min(groovemap_neo4j_up)
+              expr: min(groovemap_neo4j_up{service_namespace="groovemap"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -678,9 +678,9 @@ groups:
               # cgroup series, and `> 0` drops containers with no memory limit.
               expr: >-
                 100 * sum by (container_label_com_docker_compose_service)
-                (container_memory_working_set_bytes{container_label_com_docker_compose_service!=""})
+                (container_memory_working_set_bytes{service_namespace="groovemap", container_label_com_docker_compose_service!=""})
                 / sum by (container_label_com_docker_compose_service)
-                (container_spec_memory_limit_bytes{container_label_com_docker_compose_service!=""} > 0)
+                (container_spec_memory_limit_bytes{service_namespace="groovemap", container_label_com_docker_compose_service!=""} > 0)
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -715,8 +715,8 @@ groups:
               instant: true
               range: false
               expr: >-
-                100 * sum by (device) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"})
-                / sum by (device) (node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"})
+                100 * sum by (device) (node_filesystem_avail_bytes{service_namespace="groovemap", fstype!~"tmpfs|overlay|squashfs"})
+                / sum by (device) (node_filesystem_size_bytes{service_namespace="groovemap", fstype!~"tmpfs|overlay|squashfs"})
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__

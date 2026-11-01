@@ -15,7 +15,9 @@
 # PostgreSQL and Valkey are the stack's own containers unless .env sets GROOVEMAP_POSTGRES or
 # GROOVEMAP_VALKEY to external. Then every Compose call adds that store's overlay
 # (docker-compose.external-*.yml) after the production overlay, the gate adds it the same way,
-# and its read-only store-check one-shot must pass before anything starts.
+# and its read-only store-check one-shot must pass before anything starts. Likewise
+# GROOVEMAP_MONITORING=shared adds docker-compose.shared-monitoring.yml after them: the stack then
+# runs no Grafana, VictoriaMetrics, VictoriaTraces, node-exporter or cAdvisor of its own.
 #
 # The decisions (preflight minimums, Neo4j sizing, the override check, .env edits, endpoints)
 # live in scripts/deploy_helpers.py, which runs on the distro's own python3 (stdlib only). This starts containers, so it is operator-run only and never part
@@ -194,13 +196,26 @@ store_checks=()
 while read -r file service; do
   [[ -n "$file" ]] || continue
   store_files+=("$file")
-  store_checks+=("$service")
+  # The shared-monitoring overlay has no check one-shot.
+  if [[ -n "$service" ]]; then
+    store_checks+=("$service")
+  fi
 done < <(helper store-files)
 stack_container="$(helper stack-container)"
+# The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
+stack_running() { [[ -n "$(docker ps -q --filter "name=^${stack_container}\$")" ]]; }
 
 if [[ "$mode" == prod ]]; then
   note "Creating any missing secrets in secrets/ (existing ones are never replaced):"
+  # An existing secret is never regenerated: the bootstrap skips it, and this refuses to go on if
+  # one still came out different (a restored host keeps the keys its data was written with).
+  secrets_snapshot="$(mktemp)"
+  "${PYTHON[@]}" scripts/recovery_manifest.py snapshot "$secrets_snapshot"
   bash scripts/create-secrets.sh | indent
+  secrets_status=0
+  "${PYTHON[@]}" scripts/recovery_manifest.py verify "$secrets_snapshot" || secrets_status=$?
+  rm -f "$secrets_snapshot"
+  ((secrets_status == 0)) || exit "$secrets_status"
   helper configure --mode prod
 else
   note "The development stack uses the fixed local credentials and sizes in docker-compose.yml;"
@@ -208,7 +223,8 @@ else
 fi
 
 # The files every Compose call names, in order. The external-store overlays come right after the
-# production overlay; the gate reads the same GROOVEMAP_* settings and adds them itself.
+# production overlay, then the shared-monitoring one; the gate reads the same GROOVEMAP_* settings
+# and adds them itself.
 files=(docker-compose.yml)
 gate=("${PYTHON[@]}" scripts/discogs_import_status.py)
 [[ -n "$project" ]] && gate+=(--project-name "$project")
@@ -233,9 +249,9 @@ if [[ -f "$OVERRIDE" ]]; then
   compose_with "${files[@]}"
   gate+=(-f "$OVERRIDE")
 fi
-# With an external store a bare `docker compose` must use these files too, or it would start the
-# local stores and point the services at them: keep COMPOSE_FILE in .env equal to them. With both
-# stores local this removes only a COMPOSE_FILE deploy wrote.
+# With an external store or shared monitoring a bare `docker compose` must use these files too, or
+# it would start the local stores or monitoring and point the services at them: keep COMPOSE_FILE
+# in .env equal to them. With no overlay this removes only a COMPOSE_FILE deploy wrote.
 helper compose-file "${files[@]}"
 
 # The override may add host-specific settings, but not swap an image, flip the musicbrainz
@@ -306,18 +322,25 @@ fi
 if ((${#store_checks[@]})); then
   say "Checking the external stores"
   note "Each check only reads (scripts/store-check-*.sh); nothing starts until every one passes."
+  check_output="$(mktemp)"
+  trap 'rm -f "$RENDERED" "$check_output"' EXIT
+  # A stack that already runs holds some of the server's connections; the check counts them as headroom.
+  running_flag=()
+  stack_running && running_flag=(-e STORE_CHECK_STACK_RUNNING=1)
   for service in "${store_checks[@]}"; do
-    if ! "${compose[@]}" run --rm --no-deps -T "$service"; then
+    # The output is kept to tell a host that does not resolve (the check container is not on the
+    # store's network) from a refusal by the server itself.
+    if ! "${compose[@]}" run --rm --no-deps -T ${running_flag[@]+"${running_flag[@]}"} "$service" 2>&1 | tee "$check_output"; then
       echo "deploy: $service refused the external store (see above); nothing was started or changed" >&2
+      if ((render_ok)); then
+        helper store-check-failure "${service#store-check-}" "$check_output" "$RENDERED" || true
+      fi
       exit 3
     fi
   done
 fi
 
 # --- 3. where are we? ------------------------------------------------------------------
-
-# The stack's own postgres container, or neo4j when PostgreSQL is external (helper stack-container).
-stack_running() { [[ -n "$(docker ps -q --filter "name=^${stack_container}\$")" ]]; }
 
 # Evidence that MusicBrainz already ran here is MusicBrainz-exclusive only: its containers, a volume
 # no other service mounts, or a loader_extraction_latch row for it. Phase 1 itself creates

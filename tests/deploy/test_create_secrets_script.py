@@ -33,6 +33,7 @@ def test_generates_valkey_password_secret(tmp_path: Path) -> None:
     scratch_scripts.mkdir()
     scratch_script = scratch_scripts / "create-secrets.sh"
     shutil.copy(SCRIPT, scratch_script)
+    shutil.copy(SCRIPT.with_name("stores.py"), scratch_scripts / "stores.py")  # its GROOVEMAP_MONITORING reader
     scratch_script.chmod(0o755)
 
     result = subprocess.run(
@@ -70,6 +71,7 @@ def _run_in_scratch(tmp_path: Path) -> Path:
     scratch_scripts.mkdir(parents=True)
     scratch_script = scratch_scripts / "create-secrets.sh"
     shutil.copy(SCRIPT, scratch_script)
+    shutil.copy(SCRIPT.with_name("stores.py"), scratch_scripts / "stores.py")  # its GROOVEMAP_MONITORING reader
     scratch_script.chmod(0o755)
     result = subprocess.run([_BASH, str(scratch_script)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
@@ -130,3 +132,25 @@ def test_valkey_exporter_password_file_follows_an_existing_valkey_password(tmp_p
     assert (secrets_dir / "valkey_password.txt").read_text() == 'pa/ss+"word\\'
     mapping = json.loads((secrets_dir / "valkey_exporter_passwords.json").read_text())
     assert mapping == {"redis://valkey:6379": 'pa/ss+"word\\'}
+
+
+def test_no_existing_secret_is_ever_rewritten_by_a_rerun(tmp_path: Path) -> None:
+    """The headline keys included: JWT and the encryption master key cannot be regenerated safely."""
+    secrets_dir = _run_in_scratch(tmp_path)
+    names = sorted(path.name for path in secrets_dir.iterdir() if path.name != "valkey_exporter_passwords.json")
+    assert {"jwt_secret_key.txt", "encryption_master_key.txt"} <= set(names)
+    for name in names:
+        (secrets_dir / name).write_text(f"kept-{name}")
+    result = subprocess.run([_BASH, str(tmp_path / "scripts" / "create-secrets.sh")], capture_output=True, text=True, check=True, timeout=30)
+    assert {name: (secrets_dir / name).read_text() for name in names} == {name: f"kept-{name}" for name in names}
+    assert result.stdout.count("[skip]") == len(names)
+    assert " created" not in result.stdout
+
+
+def test_a_dangling_symlink_is_not_written_through(tmp_path: Path) -> None:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    target = tmp_path / "elsewhere"
+    (secrets_dir / "jwt_secret_key.txt").symlink_to(target)
+    _run_in_scratch(tmp_path)
+    assert not target.exists()

@@ -1,0 +1,172 @@
+---
+# The "homelab" PostgreSQL of the homelab-shape smoke (scripts/smoke-homelab.sh): a shared
+# PostgreSQL 18 that GrooveMap does not own, on its own bridge network, with TLS, like lux's.
+# It is a separate Compose project, never merged with docker-compose.yml; the smoke reaches it
+# from the stack only through the external network an override attaches.
+#
+# - The image is the stack's own pinned postgres (tests keep the two equal), so the smoke pulls
+#   nothing extra for it.
+# - The certificate and key are generated per run by the smoke (a throwaway CA, the server
+#   certificate for homelab-postgres) and bind-mounted read-only. PostgreSQL refuses a key that
+#   others can read and must own it, so the entrypoint, still root, copies both into the data
+#   volume as postgres with mode 0600 before handing over to the image's own entrypoint.
+# - The admin password comes from a file the smoke writes; GrooveMap never sees it. The admin
+#   provisions GrooveMap's role and database with docs/homelab.md's SQL (scripts/smoke_homelab.py
+#   provision-sql), as an operator would.
+#
+# The homelab's shared monitoring, which lux's GrooveMap reports to (GROOVEMAP_MONITORING=shared):
+# VictoriaMetrics, VictoriaTraces, Grafana, node-exporter, cAdvisor and a PostgreSQL exporter that
+# already watches the homelab server, on their own monitoring network. Each runs the image the
+# stack itself pins (tests keep them equal) with that image's defaults; the smoke only checks that
+# GrooveMap writes to them, scrapes them and probes them. None publishes a port.
+
+services:
+  homelab-postgres:
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    hostname: homelab-postgres
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        install -d -o postgres -g postgres -m 0700 /var/lib/postgresql/tls &&
+        install -o postgres -g postgres -m 0600 /tls-source/server.crt /tls-source/server.key /var/lib/postgresql/tls/ &&
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - max_connections=100
+    environment:
+      POSTGRES_USER: homelab_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/homelab_admin_password
+      POSTGRES_DB: postgres
+    secrets:
+      - homelab_admin_password
+    volumes:
+      - "${SMOKE_HOMELAB_TLS_DIR:?the smoke sets SMOKE_HOMELAB_TLS_DIR}:/tls-source:ro"
+      - homelab_postgres_data:/var/lib/postgresql
+    networks:
+      homelab:
+        aliases:
+          - homelab-postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "homelab_admin", "-d", "postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  homelab-postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: homelab-postgres:5432/postgres?sslmode=require
+      DATA_SOURCE_USER: homelab_admin
+      DATA_SOURCE_PASS_FILE: /run/secrets/homelab_admin_password
+    user: root
+    secrets:
+      - homelab_admin_password
+    networks:
+      homelab: {}
+      monitoring:
+        aliases:
+          - homelab-postgres-exporter
+    depends_on:
+      homelab-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9187/"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: "no"
+
+  homelab-victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
+    networks:
+      monitoring:
+        aliases:
+          - homelab-victoria-metrics
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8428/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: "no"
+
+  homelab-victoria-traces:
+    image: victoriametrics/victoria-traces:v0.12.1@sha256:609abddf298c9642496045296f30a3968b5a4b79b678373e2e7ef29c844f5578
+    networks:
+      monitoring:
+        aliases:
+          - homelab-victoria-traces
+    restart: "no"
+
+  homelab-grafana:
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/homelab_admin_password
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    user: root
+    secrets:
+      - homelab_admin_password
+    networks:
+      monitoring:
+        aliases:
+          - homelab-grafana
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+    restart: "no"
+
+  homelab-node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    networks:
+      monitoring:
+        aliases:
+          - homelab-node-exporter
+    restart: "no"
+
+  homelab-cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57
+    command: ["--docker_only=true", "--housekeeping_interval=15s"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      monitoring:
+        aliases:
+          - homelab-cadvisor
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: "no"
+
+secrets:
+  homelab_admin_password:
+    file: "${SMOKE_HOMELAB_ADMIN_PASSWORD_FILE:?the smoke sets SMOKE_HOMELAB_ADMIN_PASSWORD_FILE}"
+
+volumes:
+  homelab_postgres_data:
+
+networks:
+  homelab:
+    name: "${SMOKE_HOMELAB_NETWORK:?the smoke sets SMOKE_HOMELAB_NETWORK}"
+    driver: bridge
+  monitoring:
+    name: "${SMOKE_HOMELAB_MONITORING_NETWORK:?the smoke sets SMOKE_HOMELAB_MONITORING_NETWORK}"
+    driver: bridge

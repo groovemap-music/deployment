@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 
 from tests.deploy import test_deploy, test_discogs_import_status
 from tests.deploy.test_deploy import PROD, Deploy, helpers
@@ -277,8 +278,8 @@ def test_the_disk_check_skips_an_external_stores_volume(external_render: dict[st
 
     assert "postgres_data" in names(local_render)
     assert "postgres_data" not in names(external_render)
-    assert [volume.name for volume in helpers.external_store_volumes(external_render)] == ["postgres_data"]
-    assert helpers.external_store_volumes(local_render) == []
+    assert [volume.name for volume in helpers.omitted_volumes(external_render)] == ["postgres_data"]
+    assert helpers.omitted_volumes(local_render) == []
 
 
 def test_musicbrainz_evidence_is_the_same_in_external_mode(local_render: dict[str, Any], external_render: dict[str, Any]) -> None:
@@ -293,12 +294,12 @@ def test_musicbrainz_evidence_is_the_same_in_external_mode(local_render: dict[st
 
 def test_preflight_skips_the_host_ports_of_external_stores() -> None:
     variables = {port.variable for port in helpers.configured_ports("prod", {}, {})}
-    skipped = helpers.external_store_ports({"GROOVEMAP_POSTGRES": "external", "GROOVEMAP_VALKEY": "external"}, {})
+    skipped = helpers.omitted_service_ports({"GROOVEMAP_POSTGRES": "external", "GROOVEMAP_VALKEY": "external"}, {})
     assert skipped == ["POSTGRES_HOST_PORT", "VALKEY_HOST_PORT"]
     kept = {port.variable for port in helpers.configured_ports("prod", {}, {}, skipped)}
     assert variables - kept == {"POSTGRES_HOST_PORT", "VALKEY_HOST_PORT"}
-    assert helpers.external_store_ports({}, {}) == []
-    assert helpers.external_store_ports({"GROOVEMAP_POSTGRES": "bogus"}, {}) == []
+    assert helpers.omitted_service_ports({}, {}) == []
+    assert helpers.omitted_service_ports({"GROOVEMAP_POSTGRES": "bogus"}, {}) == []
 
 
 # --- settings and capability floors ------------------------------------------------------
@@ -402,9 +403,14 @@ def test_released_versions_match_the_comments_beside_the_digests() -> None:
     images.check_declarations()
 
 
+# What monitoring_findings adds to every run (tests/deploy/test_shared_monitoring.py covers it).
+MONITORING_FINDINGS = ("Monitoring: ", "PostgreSQL exporter: ", "The console will report ")
+
+
 def _store_findings(
     mode: str = "prod", env: dict[str, str] | None = None, *, tmp_path: Path, policy: Any = None, volumes: tuple[str, ...] = ()
 ) -> list[Any]:
+    """The store findings, without the monitoring ones that sit beside them."""
     findings: list[Any] = helpers.store_findings(
         mode,
         env_values=env if env is not None else BOTH,
@@ -413,7 +419,7 @@ def _store_findings(
         image_policy=policy or images,
         local_volumes=lambda: volumes,
     )
-    return findings
+    return [finding for finding in findings if not finding.message.startswith(MONITORING_FINDINGS)]
 
 
 class PromotedPolicy:
@@ -426,6 +432,7 @@ class PromotedPolicy:
     RELEASED_IMAGE_VERSIONS = images.RELEASED_IMAGE_VERSIONS
     RELEASED_IMAGE_DIGESTS = images.RELEASED_IMAGE_DIGESTS
     IMAGE_OWNERS = images.IMAGE_OWNERS
+    CONSOLE_TARGETS_FLOOR = images.CONSOLE_TARGETS_FLOOR
 
 
 class UnreleasedPolicy(PromotedPolicy):
@@ -711,7 +718,9 @@ def external(tmp_path: Path) -> Iterator[ExternalDeploy]:
 
 
 def _checks(deploy: Deploy) -> list[str]:
-    return [call for call in deploy.calls if " run --rm --no-deps -T store-check-" in call and " sh -c " not in call]
+    """The store-check runs, without the flag that tells the postgres check the stack already runs."""
+    calls = [call.replace(" -e STORE_CHECK_STACK_RUNNING=1", "") for call in deploy.calls]
+    return [call for call in calls if " run --rm --no-deps -T store-check-" in call and " sh -c " not in call]
 
 
 def test_external_happy_path_runs_both_phases_with_the_overlays_everywhere(external: ExternalDeploy) -> None:
@@ -869,6 +878,7 @@ case "$sql" in
   *pg_stat_ssl*) echo "${FAKE_TLS-TLSv1.3}" ;;
   *max_connections*) echo "${FAKE_USABLE:-97}" ;;
   *rolconnlimit*) echo "${FAKE_LIMITS:--1 -1}" ;;
+  *pg_stat_activity*) echo "${FAKE_IN_USE:-3 2 2 2}" ;;
   "SELECT pg_backend_pid();") echo "${FAKE_FIRST_PID-101}" ;;
   "SELECT pg_backend_pid()") echo "${FAKE_SECOND_PID:-102}" ;;
   *) echo "unexpected query: $sql" >&2; exit 3 ;;
@@ -1045,6 +1055,50 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
     assert "groovemap_app" not in result.stdout + result.stderr  # the role is never printed
 
 
+def test_the_postgres_check_reports_every_connection_number(tmp_path: Path) -> None:
+    result, _ = _run_check(tmp_path, "store-check-postgres.sh", {"FAKE_LIMITS": "100 -1", "FAKE_IN_USE": "30 12 14 9"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "connection headroom 67 of the 60 the services need (server 67 free (max_connections minus the reserved ones 97, 30 in use); "
+        "role limit 100 with 12 in use leaves 88; database unlimited (14 in use))"
+    ) in result.stdout
+
+
+def test_the_postgres_check_counts_groovemaps_own_connections_as_headroom_only_when_it_runs(tmp_path: Path) -> None:
+    fake = {"FAKE_IN_USE": "50 30 30 30"}  # 47 free on the server, 77 once GrooveMap's own 30 are given back
+    refused, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert refused.returncode == 1
+    assert "only 47 connections of headroom" in refused.stderr
+    running, _ = _run_check(tmp_path, "store-check-postgres.sh", fake | {"STORE_CHECK_STACK_RUNNING": "1"})
+    assert running.returncode == 0, running.stdout + running.stderr
+    assert "connection headroom 77 of the 60" in running.stdout
+    assert "30 of them GrooveMap's own" in running.stdout
+
+
+def test_a_compose_up_on_a_running_stack_counts_its_own_connections_too(tmp_path: Path) -> None:
+    """`docker compose up` runs the check again first, without deploy's flag: the stack's running clients tell it.
+
+    The homelab smoke found every re-run refused against lux's 60-connection role limit: 12 of the
+    stack's own connections left 48 of headroom.
+    """
+    fake = {"FAKE_LIMITS": "60 60", "FAKE_IN_USE": "12 12 12 12"}
+    refused, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert refused.returncode == 1
+    assert "only 48 connections of headroom" in refused.stderr
+    bin_dir = tmp_path / "bin"
+    getent = bin_dir / "getent"
+    getent.write_text('#!/bin/sh\n[ "$1" = hosts ] && [ "$2" = groovemap-tableinator ] && echo "172.20.0.9 $2"\n')
+    getent.chmod(0o755)
+    running, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert running.returncode == 0, running.stdout + running.stderr
+    assert "connection headroom 60 of the 60" in running.stdout
+    assert "12 of them GrooveMap's own" in running.stdout
+    # A peer name that does not resolve (the stack is down, or another host's stack holds them) gives nothing back.
+    getent.write_text("#!/bin/sh\nexit 2\n")
+    again, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert again.returncode == 1
+
+
 @pytest.mark.parametrize(
     ("fake", "reason"),
     [
@@ -1055,6 +1109,9 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
         ({"FAKE_USABLE": "40"}, "the server has 40 usable connections"),
         ({"FAKE_LIMITS": "20 -1"}, "a connection limit of 20 applies"),
         ({"FAKE_LIMITS": "-1 10"}, "a connection limit of 10 applies"),
+        ({"FAKE_IN_USE": "50 2 2 2"}, "only 47 connections of headroom"),
+        ({"FAKE_LIMITS": "70 -1", "FAKE_IN_USE": "3 20 3 3"}, "only 50 connections of headroom"),
+        ({"FAKE_LIMITS": "-1 80", "FAKE_IN_USE": "3 3 30 3"}, "only 50 connections of headroom"),
         ({"FAKE_FIRST_PID": "4242", "FAKE_SECOND_PID": "4242"}, "two concurrent sessions shared one server backend (pid 4242)"),
         ({"FAKE_FIRST_PID": ""}, "could not hold two sessions open at once"),
     ],
@@ -1066,6 +1123,9 @@ def test_the_postgres_check_passes_a_ready_server_and_only_reads_the_groovemap_d
         "small-server",
         "role-limit",
         "database-limit",
+        "server-connections-in-use",
+        "role-connections-in-use",
+        "database-connections-in-use",
         "pgbouncer-transaction-mode",
         "no-second-session",
     ],
@@ -1258,6 +1318,8 @@ def test_cleartext_postgres_to_a_server_off_this_machine_needs_the_opt_out(mode:
     assert _problems(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true") == []
     warnings = _warnings(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true")
     assert len(warnings) == 1 and "PostgreSQL at db.lan is reached in the clear" in warnings[0]
+    # Refused without the opt-out: no warning that claims the opt-out is set (the homelab smoke saw one).
+    assert _warnings(EXTERNAL_POSTGRES_SSLMODE=mode) == []
 
 
 def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> None:
@@ -1266,6 +1328,7 @@ def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> No
     assert "EXTERNAL_VALKEY_ALLOW_PLAINTEXT=true" in problems[0]
     assert _problems(EXTERNAL_VALKEY_TLS="false", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="yes") == []
     assert "Valkey at cache.lan is reached in the clear" in _warnings(EXTERNAL_VALKEY_TLS="0", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="true")[0]
+    assert _warnings(EXTERNAL_VALKEY_TLS="0") == []
 
 
 @pytest.mark.parametrize("host", ["host.docker.internal", "127.0.0.1", "localhost"])
@@ -1336,6 +1399,10 @@ def test_verify_full_reaches_every_postgresql_client(
         service = external_render["services"][name]
         assert service["environment"]["PGSSLMODE"] == "verify-full", name
         assert service["environment"]["PGSSLROOTCERT"] == "/run/secrets/postgres_ca", name
+        # Password authentication only: libpq must not look for a client certificate in an image HOME
+        # the host user (the services' UID) may not be able to enter.
+        assert service["environment"]["PGSSLCERTMODE"] == "disable", name
+        assert require_render["services"][name]["environment"]["PGSSLCERTMODE"] == "disable", name
         assert {"source": "postgres_ca", "target": "/run/secrets/postgres_ca"} in service["secrets"], name
         # `require` must not get a root file: libpq would then verify after all.
         assert require_render["services"][name]["environment"]["PGSSLMODE"] == "require"
@@ -1402,19 +1469,19 @@ def test_compose_file_follows_deploys_files_only_while_a_store_is_external(tmp_p
     env = tmp_path / ".env"
     env.write_text("APP_BASE_URL=https://x\n")
     files = ["docker-compose.yml", "docker-compose.prod.yml", POSTGRES_OVERLAY]
-    assert "Set COMPOSE_FILE=" in helpers.sync_compose_file(env, files, external=True, separator=":")
+    assert "Set COMPOSE_FILE=" in helpers.sync_compose_file(env, files, overlaid=True, separator=":")
     assert helpers.parse_env(env.read_text())["COMPOSE_FILE"] == f"docker-compose.yml:docker-compose.prod.yml:{POSTGRES_OVERLAY}"
     assert stores.COMPOSE_FILE_MARKER in env.read_text()
-    assert helpers.sync_compose_file(env, files, external=True, separator=":") == ""  # in sync: untouched
-    helpers.sync_compose_file(env, [*files, VALKEY_OVERLAY, "docker-compose.override.yml"], external=True, separator=";")
+    assert helpers.sync_compose_file(env, files, overlaid=True, separator=":") == ""  # in sync: untouched
+    helpers.sync_compose_file(env, [*files, VALKEY_OVERLAY, "docker-compose.override.yml"], overlaid=True, separator=";")
     text = env.read_text()
     assert text.count("COMPOSE_FILE=") == 1 and text.count(stores.COMPOSE_FILE_MARKER) == 1
     assert helpers.parse_env(text)["COMPOSE_FILE"].split(";")[-2:] == [VALKEY_OVERLAY, "docker-compose.override.yml"]
-    assert "Removed COMPOSE_FILE" in helpers.sync_compose_file(env, files[:2], external=False)
+    assert "Removed COMPOSE_FILE" in helpers.sync_compose_file(env, files[:2], overlaid=False)
     assert env.read_text() == "APP_BASE_URL=https://x\n"
     # An operator's own COMPOSE_FILE in local mode is theirs: nothing changes.
     env.write_text("COMPOSE_FILE=mine.yml\n")
-    assert helpers.sync_compose_file(env, files[:2], external=False) == ""
+    assert helpers.sync_compose_file(env, files[:2], overlaid=False) == ""
     assert env.read_text() == "COMPOSE_FILE=mine.yml\n"
 
 
@@ -1432,11 +1499,11 @@ def test_an_operators_own_compose_file_is_refused_in_external_mode(tmp_path: Pat
         return [finding.message for finding in findings if finding.level == "stop"]
 
     assert stops({}, env) == [
-        "COMPOSE_FILE in .env was not written by just deploy; with an external store deploy must own it, or a bare docker compose "
-        "could start the local stores and point the services at them"
+        "COMPOSE_FILE in .env was not written by just deploy; with an external store or shared monitoring deploy must own it, or a "
+        "bare docker compose could start the local stores or monitoring and point the services at them"
     ]
     assert stops({"COMPOSE_FILE": "x.yml"}, {**BOTH, **_reviewed_env()})[0].startswith("COMPOSE_FILE is set in your shell")
-    helpers.sync_compose_file(env_file, ["docker-compose.yml"], external=True)
+    helpers.sync_compose_file(env_file, ["docker-compose.yml"], overlaid=True)
     env_file.write_text(env_file.read_text().replace("COMPOSE_FILE=docker-compose.yml", "COMPOSE_FILE=mine.yml"))
     assert stops({}, env) == []  # deploy's own (marked) entry is deploy's to rewrite
 
@@ -1493,7 +1560,7 @@ def test_a_bare_render_from_env_equals_deploys_render_and_the_gates_files(tmp_pa
     files = ["docker-compose.yml", "docker-compose.prod.yml", POSTGRES_OVERLAY, VALKEY_OVERLAY, "docker-compose.override.yml"]
     env = tmp_path / ".env"
     env.write_text((ROOT / "config" / "validation.env").read_text() + "".join(f"{key}={value}\n" for key, value in BOTH.items()))
-    helpers.sync_compose_file(env, files, external=True)
+    helpers.sync_compose_file(env, files, overlaid=True)
     run_env = {"PATH": str(Path(docker).parent), "HOME": str(Path.home())}
 
     def render(*args: str) -> str:
@@ -1563,3 +1630,193 @@ def test_postgres_defaults_to_verify_full_everywhere_never_verify_ca(tmp_path: P
     assert defaults == {"verify-full"}
     assert 'sslmode="${PGSSLMODE:-verify-full}"' in (ROOT / "scripts" / "store-check-postgres.sh").read_text()
     assert stores.DEFAULT_SSLMODE == "verify-full"
+
+
+# --- every service that talks to an external store ---------------------------------------
+
+ASSET = ROOT / "skills" / "groovemap-homelab" / "assets" / "override-external-store-network.yml"
+SKILL_REFERENCES = ROOT / "skills" / "groovemap-homelab" / "references"
+STORE_ENV_KEYS = {
+    "postgres": ("POSTGRES_HOST", "PGHOST"),
+    "valkey": ("VALKEY_HOST", "VALKEY_HEALTH_ADDRESS"),
+}
+
+
+def _rendered_clients(render: dict[str, Any], store: str) -> set[str]:
+    """Services the overlays point at the external server: those with its host in their environment."""
+    marker = EXTERNAL_ENV[f"EXTERNAL_{store.upper()}_HOST"]
+    found = set()
+    for name, service in render["services"].items():
+        if "local-stores" in service.get("profiles", []):
+            continue
+        environment = service.get("environment", {})
+        if any(marker in str(environment.get(key, "")) for key in STORE_ENV_KEYS[store]):
+            found.add(name)
+    return found
+
+
+@pytest.mark.parametrize("store", stores.STORES)
+def test_the_client_list_is_exactly_the_services_the_overlays_point_at_the_store(external_render: dict[str, Any], store: str) -> None:
+    assert _rendered_clients(external_render, store) == set(stores.STORE_CLIENTS[store])
+    assert stores.STORE_CHECK_SERVICES[store] in stores.STORE_CLIENTS[store]
+    assert _store_dependents(external_render, store) <= set(stores.STORE_CLIENTS[store])
+
+
+def test_the_gate_and_latch_helper_path_runs_in_a_listed_client() -> None:
+    argv = stores.psql_argv(["docker", "compose"], "SELECT 1", stores.Stores("external", "local"))
+    assert stores.STORE_CHECK_SERVICES["postgres"] in argv
+    assert stores.STORE_CHECK_SERVICES["postgres"] in stores.STORE_CLIENTS["postgres"]
+
+
+def test_the_network_example_attaches_exactly_the_clients_of_each_store() -> None:
+    example = yaml.safe_load(ASSET.read_text())
+    attached = {store: {name for name, service in example["services"].items() if store in service["networks"]} for store in stores.STORES}
+    assert attached == {store: set(stores.STORE_CLIENTS[store]) for store in stores.STORES}
+    assert {name: network["external"] for name, network in example["networks"].items()} == {"postgres": True, "valkey": True}
+
+
+@pytest.mark.parametrize("document", ["override.md", "shared-services.md", "discovery.md"])
+def test_every_skill_reference_lists_every_store_client(document: str) -> None:
+    text = (SKILL_REFERENCES / document).read_text()
+    for store in stores.STORES:
+        missing = [name for name in stores.STORE_CLIENTS[store] if f"`{name}`" not in text]
+        assert not missing, f"{document} omits {store} clients {missing}"
+    assert "override-external-store-network.yml" in text or document == "discovery.md"
+
+
+def _asset_override_render() -> tuple[dict[str, Any], dict[str, Any]]:
+    both = (POSTGRES_OVERLAY, VALKEY_OVERLAY)
+    before = json.loads(_render(*both, env=EXTERNAL_ENV))
+    after = json.loads(_render(*both, str(ASSET), env=EXTERNAL_ENV))
+    return before, after
+
+
+def test_the_override_check_accepts_the_network_example_and_every_client_joins_both_networks() -> None:
+    before, after = _asset_override_render()
+    assert [finding.level for finding in helpers.check_override(before, after)] == ["ok"]
+    for store, network in (("postgres", "postgres_network"), ("valkey", "valkey_network")):
+        for name in stores.STORE_CLIENTS[store]:
+            assert network in helpers.service_networks(after, name), (store, name)
+            assert "groovemap" in set(after["services"][name]["networks"]), name  # merged, not replaced
+
+
+def test_the_data_tier_stays_pinned_and_rewiring_still_stops_beside_the_example() -> None:
+    before, after = _asset_override_render()
+    pinned = json.loads(json.dumps(after))
+    pinned["services"]["neo4j"]["networks"] = {**pinned["services"]["neo4j"]["networks"], "postgres": None}
+    assert any(finding.level == "stop" and "neo4j" in finding.message for finding in helpers.check_override(before, pinned))
+    rewired = json.loads(json.dumps(after))
+    rewired["services"]["store-check-postgres"]["environment"]["PGHOST"] = "elsewhere"
+    assert any(finding.level == "stop" for finding in helpers.check_override(before, rewired))
+
+
+# --- a check container that cannot reach the store's network -----------------------------
+
+UNRESOLVED = 'psql: error: could not translate host name "db.lan" to address: Name or service not known\n'
+
+
+def test_the_failure_message_names_the_store_host_service_and_networks(external_render: dict[str, Any]) -> None:
+    message = helpers.store_check_failure("postgres", UNRESOLVED, external_render, EXTERNAL_ENV, {})
+    assert message is not None
+    for expected in (
+        "PostgreSQL",
+        "db.lan",
+        "store-check-postgres",
+        "groovemap",
+        "attach store-check-postgres",
+        "override-external-store-network.yml",
+    ):
+        assert expected in message
+    for client in stores.STORE_CLIENTS["postgres"]:
+        assert client in message
+    valkey = helpers.store_check_failure(
+        "valkey", "Could not connect to Valkey at cache.lan:6379: Connection refused", external_render, EXTERNAL_ENV, {}
+    )
+    assert valkey is not None
+    assert "cache.lan" in valkey and "store-check-valkey" in valkey
+
+
+def test_only_a_resolve_or_connect_failure_gets_the_network_hint(external_render: dict[str, Any]) -> None:
+    for output in ("FATAL: password authentication failed for user", "refusing: PostgreSQL 16 is older than 18", "TLS certificate verify failed"):
+        assert helpers.store_check_failure("postgres", output, external_render, EXTERNAL_ENV, {}) is None
+
+
+def test_a_check_container_missing_the_stores_network_fails_closed_and_says_how_to_fix_it(external: ExternalDeploy, tmp_path: Path) -> None:
+    render = tmp_path / "render.json"
+    render.write_text(_render(POSTGRES_OVERLAY, VALKEY_OVERLAY, env=EXTERNAL_ENV))
+    result = external.run(FAKE_GATE="0", FAKE_GATE_WAIT="0", FAKE_STORE_CHECK="1", FAKE_STORE_CHECK_OUTPUT=UNRESOLVED, FAKE_RENDER_FILE=str(render))
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "store-check-postgres refused the external store" in result.stderr
+    assert "PostgreSQL host" in result.stderr and "did not resolve or accept a connection" in result.stderr
+    assert "store-check-postgres, which is on the network(s): " in result.stderr and "groovemap" in result.stderr
+    assert "attach store-check-postgres to that network" in result.stderr
+    assert external.ups == []
+    assert not any(call.startswith("gate") for call in external.calls)
+    assert "COMPOSE_PROFILES" not in external.env_values
+
+
+def test_a_refusal_by_the_server_itself_gets_no_network_hint(external: ExternalDeploy, tmp_path: Path) -> None:
+    render = tmp_path / "render.json"
+    render.write_text(_render(POSTGRES_OVERLAY, VALKEY_OVERLAY, env=EXTERNAL_ENV))
+    result = external.run(
+        FAKE_GATE="0",
+        FAKE_GATE_WAIT="0",
+        FAKE_STORE_CHECK="1",
+        FAKE_STORE_CHECK_OUTPUT="FATAL: password authentication failed\n",
+        FAKE_RENDER_FILE=str(render),
+    )
+    assert result.returncode == 3
+    assert "refused the external store" in result.stderr
+    assert "did not resolve" not in result.stderr
+
+
+# --- recorded decisions share one source with read_stores ------------------------------------
+
+
+def test_an_empty_shell_variable_overrides_env_and_uses_the_compose_default() -> None:
+    env_values = {"GROOVEMAP_POSTGRES": "external"}
+    environ = {"GROOVEMAP_POSTGRES": ""}
+    assert stores.read_stores(env_values, environ).postgres == "local"
+    assert ("PostgreSQL", "local", "the shell") in stores.recorded_decisions(env_values, environ)
+
+
+def test_an_empty_shell_variable_matches_the_compose_render_and_reported_decision(tmp_path: Path) -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("no docker binary to render a Compose interpolation fixture")
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GROOVEMAP_POSTGRES=external\n")
+    compose_file = tmp_path / "compose.yml"
+    compose_file.write_text(
+        "services:\n  api:\n    image: example.invalid/api:latest\n    environment:\n      STORE_MODE: ${GROOVEMAP_POSTGRES:-local}\n"
+    )
+    result = subprocess.run(
+        [docker, "compose", "--env-file", str(env_file), "-f", str(compose_file), "config", "--format", "json"],
+        cwd=tmp_path,
+        env={**os.environ, "GROOVEMAP_POSTGRES": ""},
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered = json.loads(result.stdout)
+    actual = rendered["services"]["api"]["environment"]["STORE_MODE"]
+
+    env_values = helpers.parse_env(env_file.read_text())
+    environ = {"GROOVEMAP_POSTGRES": ""}
+    decisions = stores.recorded_decisions(env_values, environ)
+    assert actual == stores.read_stores(env_values, environ).postgres == "local"
+    assert ("PostgreSQL", actual, "the shell") in decisions
+
+
+def test_a_shell_value_wins_over_env_in_both() -> None:
+    env_values = {"GROOVEMAP_VALKEY": "local"}
+    environ = {"GROOVEMAP_VALKEY": "external"}
+    assert stores.read_stores(env_values, environ).valkey == "external"
+    assert ("Valkey", "external", "the shell") in stores.recorded_decisions(env_values, environ)
+
+
+def test_an_invalid_mode_is_refused_not_displayed() -> None:
+    with pytest.raises(stores.StoreConfigError, match="GROOVEMAP_MONITORING"):
+        stores.recorded_decisions({"GROOVEMAP_MONITORING": "sometimes"}, {})

@@ -13,7 +13,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "One series per collector scrape job — `rabbitmq`, `postgres-exporter`, `valkey-exporter`, `otel-collector`, `cadvisor`, and `node-exporter`. The query is the bare `up` series, so a job added to the collector appears here without editing this panel. Anything below 1 means that target is unreachable.",
+      "description": "One series per collector scrape job — `rabbitmq`, `postgres-exporter`, `valkey-exporter`, `otel-collector`, `cadvisor`, and `node-exporter`. The query is every `up` series of this stack (only `service_namespace=\"groovemap\"` narrows it), so a job added to the collector appears here without editing this panel. An exporter that shared monitoring or an external store omits has no target and no series here. Anything below 1 means that target is unreachable.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -54,7 +54,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "up",
+          "expr": "up{service_namespace=\"groovemap\"}",
           "legendFormat": "{{job}}",
           "range": true,
           "refId": "A"
@@ -109,7 +109,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "pg_up",
+          "expr": "pg_up{service_namespace=\"groovemap\"}",
           "legendFormat": "pg_up",
           "range": true,
           "refId": "A"
@@ -164,7 +164,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "valkey_up",
+          "expr": "valkey_up{service_namespace=\"groovemap\"}",
           "legendFormat": "valkey_up",
           "range": true,
           "refId": "A"
@@ -219,7 +219,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_connections",
+          "expr": "rabbitmq_connections{service_namespace=\"groovemap\"}",
           "legendFormat": "connections",
           "range": true,
           "refId": "A"
@@ -230,7 +230,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_channels",
+          "expr": "rabbitmq_channels{service_namespace=\"groovemap\"}",
           "legendFormat": "channels",
           "range": true,
           "refId": "B"
@@ -317,7 +317,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (queue) (rabbitmq_queue_messages_ready{queue=~\"$queue\"})",
+          "expr": "sum by (queue) (rabbitmq_queue_messages_ready{service_namespace=\"groovemap\", queue=~\"$queue\"})",
           "legendFormat": "{{queue}} ready",
           "range": true,
           "refId": "A"
@@ -328,7 +328,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (queue) (rabbitmq_queue_messages_unacked{queue=~\"$queue\"})",
+          "expr": "sum by (queue) (rabbitmq_queue_messages_unacked{service_namespace=\"groovemap\", queue=~\"$queue\"})",
           "legendFormat": "{{queue}} unacked",
           "range": true,
           "refId": "B"
@@ -415,7 +415,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_received_total[$__rate_interval]))",
+          "expr": "sum(rate(rabbitmq_global_messages_received_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "published/s",
           "range": true,
           "refId": "A"
@@ -426,7 +426,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total[$__rate_interval]))",
+          "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "acknowledged/s",
           "range": true,
           "refId": "B"
@@ -513,7 +513,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_process_resident_memory_bytes",
+          "expr": "rabbitmq_process_resident_memory_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "resident",
           "range": true,
           "refId": "A"
@@ -524,7 +524,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_resident_memory_limit_bytes",
+          "expr": "rabbitmq_resident_memory_limit_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "limit",
           "range": true,
           "refId": "B"
@@ -611,7 +611,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rabbitmq_disk_space_available_bytes",
+          "expr": "rabbitmq_disk_space_available_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "available",
           "range": true,
           "refId": "A"
@@ -698,7 +698,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(pg_stat_database_numbackends)",
+          "expr": "sum(pg_stat_database_numbackends{service_namespace=\"groovemap\"})",
           "legendFormat": "in use",
           "range": true,
           "refId": "A"
@@ -709,7 +709,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(pg_settings_max_connections)",
+          "expr": "max(pg_settings_max_connections{service_namespace=\"groovemap\"})",
           "legendFormat": "max",
           "range": true,
           "refId": "B"
@@ -796,7 +796,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_xact_commit_total[$__rate_interval]))",
+          "expr": "sum(rate(pg_stat_database_xact_commit_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "commit/s",
           "range": true,
           "refId": "A"
@@ -807,7 +807,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_xact_rollback_total[$__rate_interval]))",
+          "expr": "sum(rate(pg_stat_database_xact_rollback_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "rollback/s",
           "range": true,
           "refId": "B"
@@ -896,7 +896,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_blks_hit_total[$__rate_interval])) / clamp_min(sum(rate(pg_stat_database_blks_hit_total[$__rate_interval])) + sum(rate(pg_stat_database_blks_read_total[$__rate_interval])), 0.001)",
+          "expr": "sum(rate(pg_stat_database_blks_hit_total{service_namespace=\"groovemap\"}[$__rate_interval])) / clamp_min(sum(rate(pg_stat_database_blks_hit_total{service_namespace=\"groovemap\"}[$__rate_interval])) + sum(rate(pg_stat_database_blks_read_total{service_namespace=\"groovemap\"}[$__rate_interval])), 0.001)",
           "legendFormat": "hit ratio",
           "range": true,
           "refId": "A"
@@ -983,7 +983,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(pg_stat_database_deadlocks_total[$__rate_interval]))",
+          "expr": "sum(rate(pg_stat_database_deadlocks_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "deadlocks/s",
           "range": true,
           "refId": "A"
@@ -1070,7 +1070,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (datname) (pg_database_size_bytes)",
+          "expr": "sum by (datname) (pg_database_size_bytes{service_namespace=\"groovemap\"})",
           "legendFormat": "{{datname}}",
           "range": true,
           "refId": "A"
@@ -1157,7 +1157,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "valkey_memory_used_bytes",
+          "expr": "valkey_memory_used_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "used",
           "range": true,
           "refId": "A"
@@ -1168,7 +1168,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "valkey_memory_max_bytes",
+          "expr": "valkey_memory_max_bytes{service_namespace=\"groovemap\"}",
           "legendFormat": "max",
           "range": true,
           "refId": "B"
@@ -1257,7 +1257,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(valkey_keyspace_hits_total[$__rate_interval]) / clamp_min(rate(valkey_keyspace_hits_total[$__rate_interval]) + rate(valkey_keyspace_misses_total[$__rate_interval]), 0.001)",
+          "expr": "rate(valkey_keyspace_hits_total{service_namespace=\"groovemap\"}[$__rate_interval]) / clamp_min(rate(valkey_keyspace_hits_total{service_namespace=\"groovemap\"}[$__rate_interval]) + rate(valkey_keyspace_misses_total{service_namespace=\"groovemap\"}[$__rate_interval]), 0.001)",
           "legendFormat": "hit ratio",
           "range": true,
           "refId": "A"
@@ -1344,7 +1344,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "valkey_connected_clients",
+          "expr": "valkey_connected_clients{service_namespace=\"groovemap\"}",
           "legendFormat": "connected",
           "range": true,
           "refId": "A"
@@ -1355,7 +1355,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "valkey_blocked_clients",
+          "expr": "valkey_blocked_clients{service_namespace=\"groovemap\"}",
           "legendFormat": "blocked",
           "range": true,
           "refId": "B"
@@ -1366,7 +1366,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(valkey_evicted_keys_total[$__rate_interval])",
+          "expr": "rate(valkey_evicted_keys_total{service_namespace=\"groovemap\"}[$__rate_interval])",
           "legendFormat": "evicted/s",
           "range": true,
           "refId": "C"
@@ -1453,7 +1453,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(valkey_commands_processed_total[$__rate_interval])",
+          "expr": "rate(valkey_commands_processed_total{service_namespace=\"groovemap\"}[$__rate_interval])",
           "legendFormat": "commands/s",
           "range": true,
           "refId": "A"
@@ -1540,7 +1540,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_metric_points_total[$__rate_interval]))",
+          "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_metric_points_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "{{receiver}}",
           "range": true,
           "refId": "A"
@@ -1627,7 +1627,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (exporter) (rate(otelcol_exporter_sent_metric_points_total[$__rate_interval]))",
+          "expr": "sum by (exporter) (rate(otelcol_exporter_sent_metric_points_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "{{exporter}}",
           "range": true,
           "refId": "A"
@@ -1714,7 +1714,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "refused at ingest",
           "range": true,
           "refId": "A"
@@ -1725,7 +1725,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total[$__rate_interval]))",
+          "expr": "sum(rate(otelcol_exporter_send_failed_metric_points_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "failed on export",
           "range": true,
           "refId": "B"
@@ -1812,7 +1812,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(valkey_errors_total{err=\"OOM\"}[$__rate_interval]))",
+          "expr": "sum(rate(valkey_errors_total{service_namespace=\"groovemap\", err=\"OOM\"}[$__rate_interval]))",
           "legendFormat": "rejected writes/s (OOM)",
           "range": true,
           "refId": "A"
@@ -1823,7 +1823,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total[$__rate_interval]))",
+          "expr": "sum by (service_name, cache) (rate(groovemap_api_cache_write_failures_total{service_namespace=\"groovemap\"}[$__rate_interval]))",
           "legendFormat": "{{service_name}} {{cache}} cache write failures/s",
           "range": true,
           "refId": "B"
@@ -1868,7 +1868,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(rabbitmq_queue_messages_ready, queue)",
+        "definition": "label_values(rabbitmq_queue_messages_ready{service_namespace=\"groovemap\"}, queue)",
         "hide": 0,
         "includeAll": true,
         "label": "Queue",
@@ -1877,7 +1877,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(rabbitmq_queue_messages_ready, queue)",
+          "query": "label_values(rabbitmq_queue_messages_ready{service_namespace=\"groovemap\"}, queue)",
           "refId": "queueVariable"
         },
         "refresh": 2,

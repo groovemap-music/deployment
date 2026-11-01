@@ -99,6 +99,29 @@ If a service reports authentication failure, confirm that the same approved
 credential is mounted into every required producer and consumer. Do not copy a
 secret into logs, tickets, shell history, or a committed `.env`.
 
+If a service crash-loops with `permission denied` on a file under `/run/secrets`, it runs as a
+user that cannot read the 0600 file. Every secret-reading service is configured to run as the
+owner of `secrets/`; a hand-edited `user:` in the override or a secret written by another account
+breaks that. Fix the owner or the override, never the mode.
+
+## Mixed stores, shared monitoring and one-shots
+
+- **A `store-check-postgres` or `store-check-valkey` failure that names a host it cannot
+  resolve** means the check container is not on the network the store lives on. The message names
+  the store, host, service and networks; attach the service as in
+  `skills/groovemap-homelab/assets/override-external-store-network.yml`. A refusal by the server
+  itself (authentication, TLS, version) is not a network problem.
+- **`up --wait` reports a one-shot as failed.** One-shots that exit 0 (such as
+  `rabbitmq-dlq-policy-init`) must have a dependent with `service_completed_successfully`;
+  `just check` fails a one-shot that has none.
+- **The console shows UNREACHABLE for a shared exporter.** In shared monitoring, the console probes
+  the `SHARED_*` targets and `EXTERNAL_POSTGRES_EXPORTER_ADDRESS`, not compose names; see
+  [Shared monitoring](homelab.md#shared-monitoring).
+- **An operator recipe fails with `uv: command not found`.** Operator recipes need only python3
+  3.10 or newer; update the checkout. Maintainer recipes (`just check`) need `uv` and say so.
+- **`just discogs-import-status` exits 3.** The import is in progress, not an error (0 complete,
+  2 cannot determine). `just status` summarizes the whole stack read-only.
+
 ## Dependency health
 
 With approved credentials, use non-mutating probes:

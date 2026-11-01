@@ -21,6 +21,15 @@
 #   pointing at secrets/postgres_ca.crt. No service sets sslmode itself, so nothing overrides it.
 #   `just deploy` refuses a cleartext mode to a server off this machine unless
 #   EXTERNAL_POSTGRES_ALLOW_PLAINTEXT=true.
+# - The local postgres-exporter is omitted, so neither the collector nor the console looks for it:
+#   with EXTERNAL_POSTGRES_EXPORTER_ADDRESS (host:port of an exporter that already watches the
+#   server) the collector scrapes it and the console probes it as shared; without it nothing is
+#   scraped and the console's row reads disabled. Either way it is never reported unreachable.
+# - GrooveMap authenticates with the role's password only, so every client sets PGSSLCERTMODE=disable
+#   (libpq 16+, which psycopg 3.3's binary wheels bundle). Otherwise libpq looks for a client certificate
+#   at $HOME/.postgresql/postgresql.crt, and the services run as the host user (UID/GID in .env), not
+#   the image's own: an image HOME that user cannot enter fails the connection with "could not open
+#   certificate file ... Permission denied" (found by the homelab smoke on a runner with UID 1001).
 #
 # Without the production overlay the secrets above do not exist, so this overlay only renders
 # on top of docker-compose.yml + docker-compose.prod.yml.
@@ -36,6 +45,7 @@ x-external-postgres-env: &external-postgres-env
   POSTGRES_PORT: "${EXTERNAL_POSTGRES_PORT:-5432}"
   POSTGRES_DATABASE: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
   PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+  PGSSLCERTMODE: disable
 
 # PGSSLROOTCERT only in verify-ca and verify-full: libpq would also verify in `require` if the root
 # file were set, and in the cleartext modes secrets/postgres_ca.crt is an empty placeholder. Any
@@ -77,6 +87,7 @@ services:
       PGAPPNAME: groovemap-store-check
       PGCONNECT_TIMEOUT: "10"
       PGSSLMODE: "${EXTERNAL_POSTGRES_SSLMODE:-verify-full}"
+      PGSSLCERTMODE: disable
       GROOVEMAP_ALLOW_PLAINTEXT: "${EXTERNAL_POSTGRES_ALLOW_PLAINTEXT:-false}"
       POSTGRES_DB: "${EXTERNAL_POSTGRES_DATABASE:-groovemap}"
       POSTGRES_USER_FILE: /run/secrets/postgres_username
@@ -152,10 +163,19 @@ services:
       postgres: !reset null
       <<: *store-check-postgres
 
+  # POSTGRES_EXPORTER_MODE comes from the env files: disabled, then shared when an exporter address
+  # is set (the later file wins). The second path names a file that does not exist without one,
+  # which `required: false` skips (an environment entry cannot be conditional).
   dashboard:
     environment:
       <<: *external-postgres-env
-    env_file: *postgres-ca-env-file
+      POSTGRES_EXPORTER_URL: "${EXTERNAL_POSTGRES_EXPORTER_ADDRESS:+http://${EXTERNAL_POSTGRES_EXPORTER_ADDRESS}}"
+    env_file:
+      - path: config/postgres-tls.${EXTERNAL_POSTGRES_SSLMODE:-verify-full}.env
+        required: false
+      - path: config/console-targets/postgres-exporter.disabled.env
+      - path: config/console-targets/postgres-exporter${EXTERNAL_POSTGRES_EXPORTER_ADDRESS:+.shared}.env
+        required: false
     secrets:
       - postgres_ca
     extra_hosts:
@@ -187,3 +207,10 @@ services:
     depends_on:
       postgres: !reset null
       <<: *store-check-postgres
+
+  # `[]` (no address) is a scrape job with no target: no scrape, no `up` series, no alert.
+  otel-collector:
+    environment:
+      COLLECTOR_POSTGRES_EXPORTER_TARGETS: "[${EXTERNAL_POSTGRES_EXPORTER_ADDRESS:-}]"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

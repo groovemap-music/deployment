@@ -70,7 +70,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "groovemap_neo4j_up",
+          "expr": "groovemap_neo4j_up{service_namespace=\"groovemap\"}",
           "legendFormat": "up",
           "range": true,
           "refId": "A"
@@ -125,7 +125,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "groovemap_neo4j_transactions_active",
+          "expr": "groovemap_neo4j_transactions_active{service_namespace=\"groovemap\"}",
           "legendFormat": "active",
           "range": true,
           "refId": "A"
@@ -180,7 +180,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(groovemap_neo4j_nodes)",
+          "expr": "sum(groovemap_neo4j_nodes{service_namespace=\"groovemap\"})",
           "legendFormat": "nodes",
           "range": true,
           "refId": "A"
@@ -235,7 +235,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(groovemap_neo4j_relationships)",
+          "expr": "sum(groovemap_neo4j_relationships{service_namespace=\"groovemap\"})",
           "legendFormat": "relationships",
           "range": true,
           "refId": "A"
@@ -322,7 +322,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (label) (groovemap_neo4j_nodes)",
+          "expr": "sum by (label) (groovemap_neo4j_nodes{service_namespace=\"groovemap\"})",
           "legendFormat": "{{label}}",
           "range": true,
           "refId": "A"
@@ -409,7 +409,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (type) (groovemap_neo4j_relationships)",
+          "expr": "sum by (type) (groovemap_neo4j_relationships{service_namespace=\"groovemap\"})",
           "legendFormat": "{{type}}",
           "range": true,
           "refId": "A"
@@ -496,7 +496,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "groovemap_neo4j_transactions_active",
+          "expr": "groovemap_neo4j_transactions_active{service_namespace=\"groovemap\"}",
           "legendFormat": "active",
           "range": true,
           "refId": "A"
@@ -583,7 +583,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (store) (groovemap_neo4j_store_size_bytes)",
+          "expr": "sum by (store) (groovemap_neo4j_store_size_bytes{service_namespace=\"groovemap\"})",
           "legendFormat": "{{store}}",
           "range": true,
           "refId": "A"
@@ -670,7 +670,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(db_client_operation_duration_seconds_bucket{db_system_name=\"neo4j\", service_name=~\"$service\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(db_client_operation_duration_seconds_bucket{service_namespace=\"groovemap\", db_system_name=\"neo4j\", service_name=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "{{service_name}}",
           "range": true,
           "refId": "A"
@@ -757,7 +757,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (db_operation_name) (rate(db_client_operation_duration_seconds_count{db_system_name=\"neo4j\", service_name=~\"$service\"}[$__rate_interval]))",
+          "expr": "sum by (db_operation_name) (rate(db_client_operation_duration_seconds_count{service_namespace=\"groovemap\", db_system_name=\"neo4j\", service_name=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{db_operation_name}}",
           "range": true,
           "refId": "A"
@@ -802,7 +802,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(db_client_operation_duration_seconds_count{db_system_name=\"neo4j\"}, service_name)",
+        "definition": "label_values(db_client_operation_duration_seconds_count{service_namespace=\"groovemap\", db_system_name=\"neo4j\"}, service_name)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
@@ -811,7 +811,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(db_client_operation_duration_seconds_count{db_system_name=\"neo4j\"}, service_name)",
+          "query": "label_values(db_client_operation_duration_seconds_count{service_namespace=\"groovemap\", db_system_name=\"neo4j\"}, service_name)",
           "refId": "serviceVariable"
         },
         "refresh": 2,

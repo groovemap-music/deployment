@@ -602,6 +602,12 @@ def observe(compose: Compose) -> Observation:
 # --- output ----------------------------------------------------------------------------
 
 
+IN_PROGRESS_NOTE = (
+    "Exit 3 is normal progress, not a failure: the import is still running. "
+    "Wait with --wait (add --interval N), or run this command again later; exit 0 means it has finished."
+)
+
+
 def render(report: Report) -> str:
     """The full per-signal report."""
     lines = [f"Discogs import: {report.status.label.upper()} (exit {int(report.status)})"]
@@ -615,6 +621,9 @@ def render(report: Report) -> str:
         lines.extend(f"  {queue.name.ljust(width)}  {queue.ready:>8}  {queue.unacked:>8}  {queue.consumers:>9}" for queue in report.queues)
     for warning in report.warnings:
         lines.append(f"warning: {warning}")
+    if report.status is Status.IN_PROGRESS:
+        lines.append("")
+        lines.append(IN_PROGRESS_NOTE)
     return "\n".join(lines)
 
 
@@ -677,7 +686,7 @@ def store_settings(args: argparse.Namespace, environ: Mapping[str, str]) -> tupl
 
 
 def compose_files(args: argparse.Namespace, configured: Any = None) -> list[str]:
-    """`--prod` names the files relative to the repository root, where the probes run, and adds the external-store overlays."""
+    """`--prod` names the files relative to the repository root, where the probes run, and adds the overlays `.env` selects (external stores, shared monitoring)."""
     files = [*PROD_COMPOSE_FILES, *(configured or stores.Stores()).overlays] if args.prod else []
     return files + [str(Path(path).resolve()) for path in args.files]
 

@@ -36,7 +36,7 @@ changes any of these on a GrooveMap service:
 
 It also stops, with no opt-in, if the override points a service at an external PostgreSQL or
 Valkey: a change on any service to `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`,
-`POSTGRES_USERNAME`, `VALKEY_HOST`, `VALKEY_PORT` or their `_FILE` variants (set directly or through
+`POSTGRES_USERNAME`, `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_HEALTH_ADDRESS`, libpq's `PGHOST`, `PGHOSTADDR`, `PGPORT` or `PGSERVICE` (the store check and the gate use them), or their `_FILE` variants (set directly or through
 `env_file`, which Compose inlines into the render), or to the source of a `postgres_*` or
 `valkey_*` secret. The hint says an existing store is reached "only through the supported
 external-stores mode" (`GROOVEMAP_POSTGRES` / `GROOVEMAP_VALKEY=external` in `.env`; see
@@ -115,6 +115,23 @@ A new service that omits `networks` lands on the project's default network, a se
 from `groovemap`, so it needs no opt-in. That only means no route over `groovemap`; it says
 nothing about the host or LAN, which the key and mount rules cover. Listing a service is a decision to let it reach (or expose)
 the stack, so a socat forwarder into postgres needs it. Each message names the service, the key or mount and the opt-in, for example `docker-compose.override.yml adds the pg-forward service and publishes ports`.
+
+## Attaching to an existing store's network
+
+With an external store (`GROOVEMAP_POSTGRES=external` or `GROOVEMAP_VALKEY=external`) that runs
+as a container on its own Docker network, `EXTERNAL_POSTGRES_HOST` / `EXTERNAL_VALKEY_HOST` is a
+name only that network resolves. Attach **every** service that connects to the store, not just
+the application, as `../assets/override-external-store-network.yml` does:
+
+- PostgreSQL clients: `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`. `store-check-postgres` is also where the Discogs gate and the
+  MusicBrainz latch probe run `psql`, so leaving it out breaks the deploy check, the gate and the
+  latch, even though the application connects.
+- Valkey clients: `api`, `dashboard`, `insights` and `store-check-valkey`.
+
+Adding `networks` to these services is allowed. The data-tier services (postgres, neo4j,
+rabbitmq, valkey, victoria-metrics, victoria-traces) stay pinned, and changing a host, port or
+secret still stops. If a check cannot resolve the host, `just deploy` stops with exit 3 and names
+the store, host, service and the networks that service is on.
 
 ## Merge behavior
 

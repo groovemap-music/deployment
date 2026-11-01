@@ -6,7 +6,8 @@
 # that apply VALKEY_KEY_PREFIX to every key). See docs/homelab.md#existing-postgresql-and-valkey.
 #
 # - valkey and valkey-exporter move into the `local-stores` profile, which nothing enables, so
-#   they are omitted rather than removed.
+#   they are omitted rather than removed. The collector's valkey-exporter job gets no target and the
+#   console's valkey-exporter row reads disabled, so the omitted exporter is never reported down.
 # - store-check-valkey, a one-shot from the same pinned image, verifies the server before api
 #   and insights connect (scripts/store-check-valkey.sh): version, authentication,
 #   maxmemory-policy noeviction, AOF, and a non-empty key prefix. It never touches a key.
@@ -115,5 +116,10 @@ services:
   dashboard:
     environment:
       VALKEY_HEALTH_ADDRESS: "${EXTERNAL_VALKEY_HOST:?Set EXTERNAL_VALKEY_HOST to the external Valkey host}:${EXTERNAL_VALKEY_PORT:-6379}"
+      VALKEY_EXPORTER_MODE: disabled
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  otel-collector:
+    environment:
+      COLLECTOR_VALKEY_EXPORTER_TARGETS: "[]"

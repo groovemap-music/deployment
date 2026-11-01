@@ -361,7 +361,7 @@ class TestAcceptancePanels:
 
     def test_valkey_write_alerts_use_the_catalogued_metrics(self) -> None:
         exprs = {rule["title"]: rule["data"][0]["model"]["expr"] for rule in _alert_rules()}
-        assert 'valkey_errors_total{err="OOM"}' in exprs["ValkeyWritesRejected"]
+        assert 'valkey_errors_total{service_namespace="groovemap", err="OOM"}' in exprs["ValkeyWritesRejected"]
         assert "groovemap_api_cache_write_failures_total" in exprs["ValkeyCacheWriteFailures"]
         catalog = (REPO_ROOT / "docs" / "observability.md").read_text()
         assert "| `groovemap.api.cache.write_failures` | `groovemap_api_cache_write_failures_total` |" in catalog
@@ -420,11 +420,11 @@ class TestAcceptancePanels:
         assert variable["allValue"] == ".+"
 
     def test_the_infrastructure_scrape_stat_covers_the_two_new_jobs(self) -> None:
-        """The stat queries the bare `up` series, so it counts every collector
-        scrape job; its description names them so a reader knows what to expect."""
+        """The stat queries every `up` series of the stack (only the scope narrows it), so it counts
+        every collector scrape job; its description names them so a reader knows what to expect."""
         dashboard = _dashboards()["infrastructure.json"]
         panel = next(panel for panel in dashboard["panels"] if panel["title"] == "Scrape targets up")
-        assert [target["expr"] for target in panel["targets"]] == ["up"]
+        assert [target["expr"] for target in panel["targets"]] == ['up{service_namespace="groovemap"}']
         for job in ("cadvisor", "node-exporter"):
             assert job in panel["description"], job
 
@@ -538,7 +538,7 @@ def _minimal_dashboard(**overrides: Any) -> dict[str, Any]:
         "panels": [
             {
                 "datasource": {"type": "prometheus", "uid": DATASOURCE_VARIABLE},
-                "targets": [{"expr": "sum(groovemap_pipeline_messages_total)", "refId": "A"}],
+                "targets": [{"expr": 'sum(groovemap_pipeline_messages_total{service_namespace="groovemap"})', "refId": "A"}],
             }
         ],
     }
@@ -608,7 +608,7 @@ def _trace_dashboard(panel_type: str = "table", uid: str = TRACE_DATASOURCE_VARI
             "datasource": {"type": "tempo", "uid": uid},
             "title": "Trace search",
             "type": panel_type,
-            "targets": [{"query": '{resource.service.name="api"}', "queryType": "traceql", "refId": "A"}],
+            "targets": [{"query": '{resource.service.namespace="groovemap" && resource.service.name="api"}', "queryType": "traceql", "refId": "A"}],
         }
     )
     dashboard.update(overrides)
@@ -705,7 +705,7 @@ groups:
           - refId: A
             datasourceUid: prometheus
             model:
-              expr: sum(groovemap_pipeline_messages_total)
+              expr: sum(groovemap_pipeline_messages_total{service_namespace="groovemap"})
               refId: A
           - refId: C
             datasourceUid: __expr__
@@ -849,7 +849,7 @@ class TestCheckerLintsTheAlertRules:
         assert any("names no condition" in problem for problem in problems)
 
     def test_a_rule_with_no_promql_query_is_rejected(self, tmp_path: Path) -> None:
-        body = ALERT_RULES.replace("              expr: sum(groovemap_pipeline_messages_total)\n", "")
+        body = ALERT_RULES.replace('              expr: sum(groovemap_pipeline_messages_total{service_namespace="groovemap"})\n', "")
         problems = checker.check_alerting(self.allowed, self._write(tmp_path, body))
         assert any("runs no PromQL query" in problem for problem in problems)
 

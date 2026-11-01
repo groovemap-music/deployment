@@ -159,6 +159,11 @@ to address the same stack by hand.
 
 ### Effective Compose inputs
 
+For these interpolated values, Compose reads the shell first, then `.env`, then the declared
+default. A shell variable that exists but is empty still takes precedence over `.env`; for a
+`${NAME:-default}` expression Compose chooses the default. Preflight and `just status` report the
+same effective value and its source, so their decision summaries match the rendered stack.
+
 The following groups are interpolated by the executable stack:
 
 | Inputs | Purpose |
@@ -653,6 +658,7 @@ are in [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valke
 | `EXTERNAL_POSTGRES_DATABASE` | `groovemap` | GrooveMap's own database, never `postgres` or a template |
 | `EXTERNAL_POSTGRES_SSLMODE` | `verify-full` | libpq `sslmode` for every PostgreSQL client (`PGSSLMODE`). `verify-full` and `verify-ca` check the server against `secrets/postgres_ca.crt` (`PGSSLROOTCERT`); `require` encrypts without verifying (a warning); `disable`, `allow` and `prefer` are cleartext |
 | `EXTERNAL_POSTGRES_ALLOW_PLAINTEXT` | `false` | `true` accepts a cleartext mode to a server off this machine; the password and every query can then be read and the server impersonated on the network path |
+| `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | none | `host:port` of a PostgreSQL exporter that already watches that server. Set: the collector scrapes it and the console probes `http://<address>/` as shared. Unset: nothing scrapes it and the console's row reads disabled. Either way the omitted local exporter is never reported unreachable |
 | `GROOVEMAP_VALKEY` | `local` | `local`: the stack's own `valkey`. `external`: the server below; `valkey` and `valkey-exporter` move to `local-stores` |
 | `EXTERNAL_VALKEY_HOST` | none, required | Host of the existing Valkey or Redis |
 | `EXTERNAL_VALKEY_PORT` | `6379` | Its port |
@@ -698,11 +704,54 @@ line with the reason:
   name, so it is used only in cleartext mode. `EXTERNAL_VALKEY_TLS_VERIFY_HOSTNAME=false` skips
   the host name, still verifies the chain, and warns.
 
-While a store is external, `just deploy` keeps `COMPOSE_FILE` in `.env` equal to the files it
-uses (base, production overlay, external overlays, `docker-compose.override.yml` when present,
-joined by the platform's path separator) under a marker comment, so a bare `docker compose`
-addresses the same stack. It refuses a `COMPOSE_FILE` it did not write, in `.env` or the shell,
-and removes its own once both stores are local again.
+While a store is external (or monitoring is shared, below), `just deploy` keeps `COMPOSE_FILE` in
+`.env` equal to the files it uses (base, production overlay, external overlays, the
+shared-monitoring overlay, `docker-compose.override.yml` when present, joined by the platform's
+path separator) under a marker comment, so a bare `docker compose` addresses the same stack. It
+refuses a `COMPOSE_FILE` it did not write, in `.env` or the shell, and removes its own once both
+stores are local and monitoring is local again.
+
+With an external Valkey the local `valkey-exporter` is omitted too: the collector's
+`valkey-exporter` job gets no target and the console's row reads disabled.
+
+### Shared monitoring
+
+`GROOVEMAP_MONITORING=shared` makes GrooveMap report to an existing Grafana, VictoriaMetrics,
+VictoriaTraces, node-exporter and cAdvisor instead of running its own. `just deploy` and
+`just discogs-import-status` read it from the shell, then `.env`, and add
+`docker-compose.shared-monitoring.yml` after the external-store overlays; it works with the
+production overlay and with `--dev`. Unset or `local`, nothing changes: the rendered stack is byte
+for byte the dedicated one. The procedure is in [Shared monitoring](homelab.md#shared-monitoring).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GROOVEMAP_MONITORING` | `local` | `local`: the stack's own monitoring services. `shared`: `grafana`, `victoria-metrics`, `victoria-traces`, `node-exporter` and `cadvisor` move to the never-enabled `local-monitoring` profile |
+| `SHARED_VICTORIA_METRICS_URL` | none, required | Base URL of the shared VictoriaMetrics (`http://` or `https://`, optional path, no trailing `/`). The collector remote-writes to `<url>/api/v1/write`; the console reads history and probes `<url>/health` |
+| `SHARED_VICTORIA_TRACES_URL` | none, required | Base URL of the shared VictoriaTraces. The collector pushes spans to `<url>/insert/opentelemetry/v1/traces`; the console probes `<url>/health` |
+| `SHARED_GRAFANA_URL` | `GRAFANA_URL` | The shared Grafana as the console's server reaches it (alerts and its health row), such as `http://grafana:3000` on the shared monitoring network. `GRAFANA_URL` stays the browser's address for deep links; point it at the shared Grafana |
+| `SHARED_NODE_EXPORTER_ADDRESS` | none | `host:port` of the shared node-exporter. Set: the collector scrapes it for GrooveMap's dashboards and the console probes it. Unset: neither, and the console lists it as shared but not configured |
+| `SHARED_CADVISOR_ADDRESS` | none | `host:port` of the shared cAdvisor, the same way |
+
+The collector keeps one configuration file, `config/otel-collector.yaml`. Its write endpoints and
+the scrape targets of the exporters an overlay may omit are `${env:COLLECTOR_*:-default}`
+references with the local services as defaults, and the overlays set only those container
+variables (`COLLECTOR_METRICS_WRITE_URL`, `COLLECTOR_TRACES_WRITE_URL`, and the
+`COLLECTOR_*_TARGETS` lists). The healthcheck validates the same file in the same environment,
+so a shared endpoint the collector cannot use turns it unhealthy. Never set `COLLECTOR_*` in
+`.env`; the overlays derive them. `just deploy` checks the shape of every `SHARED_*` value before
+anything starts.
+
+The console gets the operations-console configurable targets (`<NAME>_MODE` and its URL):
+`shared` with the URLs above for VictoriaMetrics, VictoriaTraces, Grafana, node-exporter and
+cAdvisor, and `disabled` or `shared` for an omitted PostgreSQL or Valkey exporter. The reviewed
+operations-console v0.3.0 reads them. A console that predates them ignores the variables, which is
+harmless, but keeps probing the omitted services by their compose names and shows them
+unreachable; `just deploy` warns while `.env` pins a console below `CONSOLE_TARGETS_FLOOR` in
+`scripts/check-images.py`.
+
+Shared endpoints must accept unauthenticated writes and reads from this host (the usual homelab
+setup on an internal Docker network); an `https://` endpoint must present a certificate the system
+roots trust. Authenticated or privately signed endpoints are not supported yet.
 
 ## JWT Configuration
 
@@ -988,7 +1037,7 @@ DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — HKDF master encryption key (derives OAuth + TOTP encryption keys)
 # Required for TOTP 2FA. Without it, OAuth tokens are stored unencrypted and 2FA is disabled.
-# Generate with: uv run python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+# Generate with: python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # In production, supply via ENCRYPTION_MASTER_KEY_FILE (Docker secret)
 ENCRYPTION_MASTER_KEY="your-master-key-here"
 

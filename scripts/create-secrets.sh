@@ -5,12 +5,35 @@
 # Usage: bash scripts/create-secrets.sh
 #
 # Behaviour:
-#   - Skips files that already exist (idempotent — safe to re-run)
+#   - Skips files that already exist (idempotent — safe to re-run). It never overwrites,
+#     rotates or deletes an existing secret: on a host being recovered, restore secrets/
+#     from the encrypted bundle first (docs/maintenance.md#recovery-bundle). The one
+#     exception is valkey_exporter_passwords.json, rebuilt from valkey_password.txt.
 #   - Sets secrets/ to mode 700 and each file to 600
 
 set -euo pipefail
 
-SECRETS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/secrets"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SECRETS_DIR="$ROOT/secrets"
+
+# GROOVEMAP_MONITORING (the shell, then .env, as Compose reads it), through the same reader deploy
+# uses (scripts/stores.py). An unreadable or unknown value stops here rather than guessing.
+monitoring_mode() {
+  python3 - "$ROOT/scripts/stores.py" "$ROOT/.env" <<'PY'
+import importlib.util, os, sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("groovemap_stores", sys.argv[1])
+stores = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = stores
+spec.loader.exec_module(stores)
+try:
+    print(stores.read_stores(stores.read_env(Path(sys.argv[2])), os.environ).monitoring)
+except stores.StoreConfigError as error:
+    sys.exit(f"create-secrets: {error}")
+PY
+}
+monitoring="$(monitoring_mode)"
 
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
@@ -19,7 +42,7 @@ write_secret() {
   local name="$1"
   local value="$2"
   local path="$SECRETS_DIR/$name"
-  if [ -f "$path" ]; then
+  if [ -e "$path" ] || [ -L "$path" ]; then
     echo "[skip] $name already exists"
   else
     printf '%s' "$value" >"$path"
@@ -94,13 +117,20 @@ write_secret "insights_internal_secret.txt" "$(openssl rand -hex 32)"
 
 # Grafana admin password. docker-compose.prod.yml disables anonymous access and
 # reads this file via GF_SECURITY_ADMIN_PASSWORD__FILE, so without it the
-# dashboards have no reachable login.
-write_secret "grafana_admin_password.txt" "$(random_password)"
+# dashboards have no reachable login. With shared monitoring this stack runs no
+# Grafana, so there is no local admin to give a password: nothing is written
+# (an existing file from an earlier local deployment is left alone, never deleted).
+if [ "$monitoring" = shared ]; then
+  echo "[skip] grafana_admin_password.txt: Grafana is shared (GROOVEMAP_MONITORING=shared); this stack runs no Grafana of its own"
+else
+  write_secret "grafana_admin_password.txt" "$(random_password)"
+fi
 
 # Grafana Viewer service-account token for the console's alerts — optional. The
 # file must exist regardless (docker-compose.prod.yml mounts it for the dashboard
 # service); empty content means alerts are off, with no note. Create the token per
-# docs/maintenance.md, then write it to the file or re-run with GRAFANA_VIEWER_TOKEN set.
+# docs/maintenance.md (on the shared Grafana when monitoring is shared), then write
+# it to the file or re-run with GRAFANA_VIEWER_TOKEN set.
 write_secret "grafana_viewer_token.txt" "${GRAFANA_VIEWER_TOKEN:-}"
 
 # Embedding pipeline login (ADR 0013's 2026-09-24 amendment) — a member of

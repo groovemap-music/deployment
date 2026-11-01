@@ -128,14 +128,16 @@ Reviewed console (`v0.3.0`), explorer (`v0.3.0`) and analytics (`v0.5.0`) images
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
 
-The three changed entries resolve from their released tags for `linux/amd64`
-(the platform published by these release workflows). Their reviewed rollback
-targets are the previous index digests: `DISCOGS_SQL_LOADER_IMAGE`
+The 2026-10-31 release review resolved its changed entries from their released
+tags for `linux/amd64` (the platform published by these workflows). At that
+time, the recorded rollback targets were the previous index digests:
+`DISCOGS_SQL_LOADER_IMAGE`
 `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c`,
 `DISCOGS_GRAPH_ENRICHER_IMAGE`
 `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b`,
 and `CATALOG_API_IMAGE`
 `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb`.
+Later image promotions below record their current rollback pins.
 
 These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
@@ -158,10 +160,13 @@ its repository.
 | `musicbrainz-ingestion:v0.3.0` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` | `v0.2.1` — `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 | `graph-explorer:v0.2.2` | `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` | `v0.1.1` — `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
 
-`discogs-graph-enricher` and `discogs-sql-loader` stay at `v0.3.0` (already the latest tags).
-Commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5` (SQL loader), the
-rollout's `HEALTH_PORT` override and exit-1 changes, are in no tag yet. Rollout constraint O5 says
-those releases are not coupled to anything, so nothing waits on them.
+At this 2026-10-31 snapshot, `discogs-graph-enricher` and `discogs-sql-loader` were still at
+`v0.3.0` (then the latest tags). Their later `v0.4.0` promotions and gate evidence are recorded
+below.
+At that snapshot, commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5`
+(SQL loader), the rollout's `HEALTH_PORT` override and exit-1 changes, were not in a release tag.
+The subsequent v0.4.0 promotions below include the consumer changes. Rollout constraint O5 meant
+those earlier releases were not coupled to anything.
 
 Rolling the MusicBrainz consumers or the console back is not independent: they are coupled to the
 Compose health ports and to the console's credentials (rollout constraints T1 and T2). Use the
@@ -246,14 +251,17 @@ repository's `refs/tags/v0.3.0`).
 
 Evidence:
 
-- `just smoke-released` passed on unmodified compose files with a `just env-init` environment.
-  Teardown was proven by label: no containers, volumes or networks remained for the
-  `groovemap-released-smoke` project.
 - The published-image theme test for the canonical Explore theme passed against these images.
-- `just smoke-media` and `just smoke-erasure` were waived for this interim promotion: neither
-  exercises the two changed images, and both passed on these exact images at `6af13ec`.
-- The console's own test pins its default `*_MODE` and `*_URL` targets to this deployment's, so the
-  platform-health comparison against `v0.2.0` was not re-run.
+- The combined-pin Linux run and unmodified released, media, erasure, and released-fixture smoke
+  evidence are recorded once under [the Discogs graph-enricher v0.4.0 promotion](#promotion-of-discogs-graph-enricher-v040-2026-11-01).
+  That run used the reviewed console and Explore v0.3.0 pins in this section and inspected the
+  enabled runtime services as healthy.
+- The console's own test pins its default `*_MODE` and `*_URL` targets to this deployment's, so a
+  before/after platform-health comparison against v0.2.0 was not run.
+
+`CONSOLE_TARGETS_FLOOR` keeps the reviewed console minimum at v0.3.0. When an external-monitoring
+overlay omits local exporters, an older console ignores the configured external targets and
+`just deploy` reports a warning; it does not stop the stack.
 
 Rolling back is a pin change to the rollback digest above for the affected image alone.
 
@@ -337,6 +345,12 @@ Additional unmodified candidate smokes with the same reviewed graph v0.4.0 and S
   containers, volumes and networks.
 - `just smoke-erasure`: 32/32 passed with unchanged API and store images; this scenario does not
   run the graph enricher, so the evidence remains applicable.
+
+The final runtime comparison covered 41 candidate runtime, configuration and smoke files against
+the rebased Linux-smoke branch. The only difference was `docker-compose.external-postgres.yml`'s
+`PGSSLCERTMODE` setting, which these dedicated-store smokes do not use; all tested Compose inputs,
+smoke scripts and complete reviewed image digest/version tables were byte-identical. This is why
+the unmodified supporting smoke results apply to the reviewed pins above.
 
 These fresh-run results do not reconstruct completion signals already acknowledged by v0.3.0. A
 pin-only upgrade leaves a gate fail-closed if those terminal events are gone; do not restart the
@@ -887,10 +901,14 @@ configuration.
 
 The operations console shows firing Grafana alerts in its attention bar only when it
 holds a read token. It is optional: with no token the console shows the problems it
-derives from its live feed and says nothing about Grafana. The console reads the token
-server-side from a file, so it never reaches the browser.
+derives from its live feed and says nothing about Grafana; its deep links into Grafana
+and its Grafana health row need no token. The console reads the token server-side from
+a file, so it never reaches the browser.
 
-1. In Grafana, open Administration > Users and access > Service accounts and add a
+Create the token on the Grafana that evaluates GrooveMap's alert rules: this stack's own
+Grafana, or the shared one when `GROOVEMAP_MONITORING=shared` (below).
+
+1. In that Grafana, open Administration > Users and access > Service accounts and add a
    service account (for example `operations-console`) with the **Viewer** role.
 2. Add a token to it. Choose an expiry you will remember to rotate; Grafana shows the
    token once.
@@ -900,8 +918,9 @@ server-side from a file, so it never reaches the browser.
    overwrites it.
 4. Set `GRAFANA_URL` in the production environment to the Grafana address operators'
    browsers can reach (the console builds its deep links on it). `TRACES_URL` defaults to
-   it. The console fetches alerts from the in-network `GRAFANA_API_URL`
-   (`http://grafana:3000`), which compose already sets.
+   it. The console fetches alerts from the server-side `GRAFANA_API_URL`: the in-network
+   `http://grafana:3000` for this stack's own Grafana, which compose already sets, or
+   `SHARED_GRAFANA_URL` for a shared one.
 5. Restart the `dashboard` service and open the console: `GET /api/alerts` reports
    `configured: true, available: true`.
 
@@ -911,6 +930,25 @@ cannot be read or decoded, or a token Grafana rejects or cannot be reached with,
 `configured: true, available: false` with a note. To rotate,
 create a new token, replace the file, restart `dashboard`, then delete the old token in
 Grafana. The development stack mounts no token, so alerts stay off there.
+
+### On this stack's own Grafana
+
+Sign in to it with the `admin` user and the password in `secrets/grafana_admin_password.txt`
+to create the service account.
+
+### On a shared Grafana
+
+With shared monitoring this stack runs no Grafana and has no Grafana login of its own, so
+nothing here holds a password for it. Ask whoever administers the shared Grafana to create the
+**Viewer** service account and its token (steps 1 and 2), in the organization that holds
+GrooveMap's imported alert rules, and hand you the token through your secret store; then
+continue at step 3. The file is the same `secrets/grafana_viewer_token.txt`, and the console
+reaches the shared Grafana at `SHARED_GRAFANA_URL` (or `GRAFANA_URL` when that is unset).
+
+A Viewer sees every firing alert of its organization, and the console lists all of them. Import
+GrooveMap into an organization of its own on the shared Grafana
+([Shared Grafana](observability.md#shared-grafana)) so the attention bar shows only GrooveMap's
+alerts; a Viewer of an organization other stacks share would show theirs too.
 
 ## Console sign-in over HTTPS
 
@@ -938,6 +976,42 @@ Record:
 
 Do not store backup archives in this repository. See
 [Database resilience](database-resilience.md) for failure-mode planning.
+
+### Shared PostgreSQL checklist
+
+Reusing an existing PostgreSQL does not add GrooveMap's database to its backup allowlist. Check,
+read-only, and record the answers next to the backup evidence above:
+
+1. Is GrooveMap's database (`EXTERNAL_POSTGRES_DATABASE`, default `groovemap`) in the backup's
+   protected-database list?
+2. Which schemas does the backup exclude? Keep the operator's policy. An excluded
+   `musicbrainz` schema is reconstructible, but a restore then has no MusicBrainz data until the
+   import runs again: plan for a long re-import (days of loading and about 100 GB of disk, an
+   estimate; MusicBrainz sizing is unmeasured, `gm-deployment-vc5s`).
+3. Does restore verification include the GrooveMap database, and when was it last restored to a
+   scratch target?
+4. Dedicated stores (Neo4j, RabbitMQ, Valkey, and PostgreSQL when not external): is each volume
+   backed up? Neo4j, RabbitMQ and Valkey contents are rebuilt by re-import. **User accounts,
+   collections, the identity ledger and the admin audit log are not reconstructible from dumps**,
+   so the PostgreSQL backup is the only copy.
+
+### Recovery bundle
+
+The bootstrap-generated secrets (JWT key, encryption master key, PostgreSQL, Neo4j, RabbitMQ and
+Valkey passwords) cannot be re-created: a new value leaves the restored data unreadable.
+`just recovery-manifest` lists what to capture without printing any value: `.env`,
+`docker-compose.override.yml`, each `secrets/` file by name, mode, owner and SHA-256 fingerprint,
+the deployment commit and its dirty state, the promoted image digests, and the external stores
+that need their own backups. It needs python3 3.10 or newer (uv is optional) and writes nothing.
+Put those files in one bundle and encrypt it (SOPS with age) before it leaves the host; keep it
+separate from the database backups and out of this repository.
+
+Rules: never reset an existing secret (`just secrets-bootstrap` skips existing files, and
+`just deploy` stops with exit 3 if one changed); never expose a value; never purge persistent keys
+or volumes (`docker compose down -v`, `docker volume rm`, deleting `secrets/`) after a failed
+staging. To recover, restore `secrets/` (directory 0700, files 0600), `.env` and the override from
+the decrypted bundle before any container starts and before `just secrets-bootstrap`, check out the
+pinned commit, restore the data, then run `just deploy --no-wait`.
 
 With an external PostgreSQL or Valkey (`GROOVEMAP_POSTGRES=external`, `GROOVEMAP_VALKEY=external`),
 that server's backups, upgrades, restarts and monitoring belong to its operator, and the

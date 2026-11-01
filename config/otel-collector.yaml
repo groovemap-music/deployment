@@ -12,6 +12,20 @@
 # of its own. Spans take the second pipeline below: they are pushed to
 # VictoriaTraces over OTLP/HTTP and, in the same pass, folded into RED span
 # metrics by the spanmetrics connector so they land in the metrics store too.
+#
+# This is the only collector configuration. The few values that differ between
+# deployments (the two write endpoints and the scrape targets of the exporters
+# an overlay may omit) are `${env:COLLECTOR_*:-default}` references, expanded by
+# the collector itself from its container environment. The default is the
+# stack's own service, so with no COLLECTOR_* variable set (the base and
+# production files set none) the effective configuration is exactly the local
+# one. The shared-monitoring and external-store overlays set only those
+# variables; the healthcheck's `validate` runs in the same container
+# environment, so it validates the same effective configuration the collector
+# runs. A *_TARGETS value is a YAML list of host:port, `[]` for none: a job with
+# no target scrapes nothing and writes no `up` series, so an exporter that is
+# not run is never reported down. Never add a second config file or
+# `configs.content` (Compose 5.6.1 refuses it for this read-only service).
 
 receivers:
   otlp:
@@ -44,11 +58,11 @@ receivers:
         - job_name: postgres-exporter
           scrape_interval: 15s
           static_configs:
-            - targets: ["postgres-exporter:9187"]
+            - targets: ${env:COLLECTOR_POSTGRES_EXPORTER_TARGETS:-[postgres-exporter:9187]}
         - job_name: valkey-exporter
           scrape_interval: 15s
           static_configs:
-            - targets: ["valkey-exporter:9121"]
+            - targets: ${env:COLLECTOR_VALKEY_EXPORTER_TARGETS:-[valkey-exporter:9121]}
           # oliver006/redis_exporter names every series redis_*, even against
           # Valkey. Rewrite them at scrape time so everything stored,
           # dashboarded, and alerted on is valkey_*. `$$` is the collector's
@@ -87,11 +101,11 @@ receivers:
         - job_name: cadvisor
           scrape_interval: 30s
           static_configs:
-            - targets: ["cadvisor:8080"]
+            - targets: ${env:COLLECTOR_CADVISOR_TARGETS:-[cadvisor:8080]}
         - job_name: node-exporter
           scrape_interval: 30s
           static_configs:
-            - targets: ["node-exporter:9100"]
+            - targets: ${env:COLLECTOR_NODE_EXPORTER_TARGETS:-[node-exporter:9100]}
 
 processors:
   # memory_limiter must be the FIRST processor in the pipeline so back-pressure
@@ -108,20 +122,33 @@ processors:
 exporters:
   prometheusremotewrite:
     http:
-      endpoint: http://victoria-metrics:8428/api/v1/write
+      endpoint: ${env:COLLECTOR_METRICS_WRITE_URL:-http://victoria-metrics:8428/api/v1/write}
       tls:
         # Plain HTTP over the internal `groovemap` bridge network. The exporter
-        # enables TLS by default, so this must be set explicitly.
+        # enables TLS by default, so this must be set explicitly. An https://
+        # shared endpoint is still verified against the system roots: with no CA
+        # configured, `insecure` only affects plain-HTTP endpoints.
         insecure: true
     # Promote OTEL resource attributes (service.name, service.namespace,
     # deployment.environment.name, service.version) to Prometheus labels.
     resource_to_telemetry_conversion:
       enabled: true
+    # The stack label every dashboard and alert query is scoped by, so a shared
+    # VictoriaMetrics and Grafana never mix another stack's series into
+    # GrooveMap's panels. Application series already carry service_namespace
+    # from OTEL_RESOURCE_ATTRIBUTES (a series' own label always wins over an
+    # external label); this stamps the same value on the scraped exporter series
+    # and the collector's own, which have no resource namespace. It is an
+    # external label rather than a resource attribute because the exporter folds
+    # a resource service.namespace into `job` (groovemap/rabbitmq), which would
+    # rename every scrape job. scripts/check-dashboards.py fails a query without it.
+    external_labels:
+      service_namespace: groovemap
 
   # VictoriaTraces ingests OTLP/HTTP natively on its own insert path. The
   # `http://` scheme already selects plaintext, so no tls block is needed.
   otlphttp/victoria_traces:
-    traces_endpoint: http://victoria-traces:10428/insert/opentelemetry/v1/traces
+    traces_endpoint: ${env:COLLECTOR_TRACES_WRITE_URL:-http://victoria-traces:10428/insert/opentelemetry/v1/traces}
 
 connectors:
   # RED metrics derived from spans, so latency and error rate exist for every

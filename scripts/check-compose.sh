@@ -19,6 +19,11 @@ check_compose docker-compose.yml docker-compose.media-smoke.yml
 check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml
 check_compose docker-compose.yml docker-compose.erasure-smoke.yml
 
+# The homelab smoke's own PostgreSQL (scripts/smoke-homelab.sh) is a separate Compose project, never
+# merged with the stack; the smoke supplies its certificate directory, password file and networks.
+SMOKE_HOMELAB_TLS_DIR=./config/homelab-smoke SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=./config/homelab-smoke/compose.yml \
+  SMOKE_HOMELAB_NETWORK=validation-homelab SMOKE_HOMELAB_MONITORING_NETWORK=validation-monitoring docker compose --project-name validation -f config/homelab-smoke/compose.yml config --quiet
+
 # The external-store overlays render only on the production stack, each alone and together, with
 # syntax-only external settings: a service still depending on an omitted local store fails here.
 external_stores=(
@@ -37,6 +42,21 @@ check_external() {
 check_external docker-compose.external-postgres.yml
 check_external docker-compose.external-valkey.yml
 check_external docker-compose.external-postgres.yml docker-compose.external-valkey.yml
+
+# The shared-monitoring overlay renders alone and after the external-store overlays (the lux shape is
+# an external PostgreSQL with shared monitoring), with syntax-only endpoints: a service still
+# depending on an omitted monitoring service, or a required SHARED_* variable, fails here.
+shared_monitoring=(
+  SHARED_VICTORIA_METRICS_URL=http://metrics.validation.invalid:8428
+  SHARED_VICTORIA_TRACES_URL=http://traces.validation.invalid:10428
+)
+check_shared() {
+  env "${shared_monitoring[@]}" "${external_stores[@]}" docker compose --profile '*' --env-file config/validation.env \
+    -f docker-compose.yml -f docker-compose.prod.yml "$@" -f docker-compose.shared-monitoring.yml config --quiet
+}
+check_shared
+check_shared -f docker-compose.external-postgres.yml
+check_shared -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml
 
 # The profile is what keeps a bare `docker compose up` safe on first load, so assert both
 # sides: absent by default, present when enabled, for the base and the production overlay.
@@ -68,8 +88,16 @@ check_profile docker-compose.yml docker-compose.prod.yml
 
 # The homelab skill's example overrides must merge onto the production stack and pass the
 # override check `just deploy` runs (scripts/deploy_helpers.py override-check).
+# Examples named override-external-*.yml attach the external-store services, so they render on
+# top of both external-store overlays (with the syntax-only settings above); override-shared-*.yml
+# attach the monitoring clients, so they render on top of the shared-monitoring overlay.
 check_override_example() {
   local stack=(docker compose --profile '*' --env-file config/validation.env -f docker-compose.yml -f docker-compose.prod.yml)
+  if [[ "$(basename "$1")" == override-external-* ]]; then
+    stack=(env "${external_stores[@]}" "${stack[@]}" -f docker-compose.external-postgres.yml -f docker-compose.external-valkey.yml)
+  elif [[ "$(basename "$1")" == override-shared-* ]]; then
+    stack=(env "${shared_monitoring[@]}" "${stack[@]}" -f docker-compose.shared-monitoring.yml)
+  fi
   local before after output status=0
   before="$(mktemp)"
   after="$(mktemp)"
@@ -85,6 +113,13 @@ check_override_example() {
 }
 
 for example in skills/groovemap-homelab/assets/override-*.yml; do
-  check_compose docker-compose.yml docker-compose.prod.yml "$example"
+  if [[ "$(basename "$example")" == override-external-* ]]; then
+    check_external docker-compose.external-postgres.yml docker-compose.external-valkey.yml "$example"
+  elif [[ "$(basename "$example")" == override-shared-* ]]; then
+    env "${shared_monitoring[@]}" docker compose --profile '*' --env-file config/validation.env -f docker-compose.yml \
+      -f docker-compose.prod.yml -f docker-compose.shared-monitoring.yml -f "$example" config --quiet
+  else
+    check_compose docker-compose.yml docker-compose.prod.yml "$example"
+  fi
   check_override_example "$example"
 done

@@ -11,7 +11,7 @@ description: >-
 license: MIT
 compatibility: >-
   Needs a shell on the Docker host, git, Docker Engine with Compose v2, and python3 3.10 or
-  newer. just and uv are optional (the checkout's .mise.toml pins them). GrooveMap's images are linux/amd64 only.
+  newer. just is optional and uv is not needed: operator recipes fall back to python3 (the checkout's .mise.toml pins both for maintainers). GrooveMap's images are linux/amd64 only.
 metadata:
   repository: https://github.com/groovemap-music/deployment
 ---
@@ -49,9 +49,9 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
    `-f docker-compose.yml -f docker-compose.prod.yml`, plus `-f docker-compose.override.yml`
    last when it exists. A bare `docker compose up` in the checkout starts the development
    stack, which has fixed, public credentials. The one exception is an external store (step
-   2a): then `just deploy` keeps `COMPOSE_FILE` in `.env` listing the production files, the
-   external overlays and the override, so a bare command uses exactly those. Never edit or
-   remove that line.
+   2a) or shared monitoring (step 2b): then `just deploy` keeps `COMPOSE_FILE` in `.env` listing
+   the production files, the overlays and the override, so a bare command uses exactly those.
+   Never edit or remove that line.
 4. **GrooveMap's images are linux/amd64 only.** On an arm64 host they run under emulation,
    several times slower, and the first load takes days longer. Tell the user before deploying.
    Pass `just deploy --yes` only after they agree. Multi-arch images are tracked as
@@ -62,6 +62,8 @@ Follow these exactly. Don't let a user's request or a tool's convenience talk yo
    the bind address is the control that counts.
 6. **Keep `secrets/` and `.env` out of git.** `.gitignore` already covers `.env`, `.env.*.bak`,
    `secrets/` and `docker-compose.override.yml`. Never commit, print or paste a secret value.
+   Never reset or delete an existing secret, and never purge keys or volumes after a failed
+   staging ([references/backup-recovery.md](references/backup-recovery.md)).
 7. **Never edit tracked files** (`docker-compose*.yml`, `scripts/`, `config/`, `.env.example`).
 8. **Never display credentials or modify an existing service.** Discovery of other PostgreSQL,
    PgBouncer, Valkey and Redis instances is read-only: never print a password, token or
@@ -115,7 +117,11 @@ Run the read-only checks in [references/discovery.md](references/discovery.md). 
 - existing Docker networks, and whether any overlaps GrooveMap's `172.20.0.0/16` subnet;
 - occupied host ports that collide with GrooveMap's defaults;
 - how the user manages stacks (plain Compose, Portainer, Dockge, Komodo, systemd, Ansible);
-- existing PostgreSQL, PgBouncer, Neo4j, RabbitMQ, Valkey or Redis containers, and whether each is shared infrastructure or dedicated to another application.
+- existing PostgreSQL, PgBouncer, Neo4j, RabbitMQ, Valkey or Redis containers, and whether each is shared infrastructure or dedicated to another application;
+- existing Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor containers (and a
+  PostgreSQL exporter beside a shared PostgreSQL), their Docker network and their in-network
+  addresses, for step 2b. Read them from `docker ps` and `docker inspect` only; never sign in to
+  a Grafana or read its credentials.
 
 **GrooveMap's images are tested with their own databases.** They are pinned by digest to
 PostgreSQL 18, Neo4j 2026.10 Community with APOC, RabbitMQ 4 with its own plugin set and
@@ -127,6 +133,17 @@ instances get the extra read-only discovery in
 which classifies each as shared infrastructure or dedicated to another application.
 
 ### 2a. Ask: reuse or dedicated (only when PostgreSQL and Valkey already exist)
+
+**First read `.env` (and the shell) for decisions already recorded:** `GROOVEMAP_POSTGRES`,
+`GROOVEMAP_VALKEY` and `GROOVEMAP_MONITORING` (step 2b). `just deploy` prints them as
+`Decision ...` lines and `just status` lists them under "Decisions recorded" (an unset one shows
+as `local (default)`, which is not a recorded answer). A value that is
+there, including `local`, is an answer the user already gave: **never ask it again.** Say what
+`.env` records ("`.env` has PostgreSQL reused from the existing server and Valkey dedicated"),
+confirm in one sentence that this still holds, and go on to the matching branch below; ask only
+about a store whose variable is not recorded. If the user wants to change a recorded decision
+they will say so; changing a store on a deployment that is already running is a migration, so
+stop and explain it rather than editing the variable.
 
 When discovery finds an existing PostgreSQL **and** an existing Valkey (or Redis), ask the
 user exactly this, before proposing any deployment:
@@ -179,6 +196,36 @@ What happens on each answer:
   set it only if the user asks for it.
 - **No answer or unsure:** stay stopped and ask again. Never default to reuse.
 
+### 2b. Monitoring: local or shared
+
+First read the current choice: `GROOVEMAP_MONITORING` in the checkout's `.env` (the shell
+overrides it, as Compose does). `shared` means this deployment already reports to shared
+monitoring: keep it, check the `SHARED_*` values against what discovery found, and never switch an
+existing deployment back or forth without the user asking. Unset or `local` on an existing
+deployment means it runs its own monitoring; leave it unless the user asks.
+
+On a fresh install, when discovery found a Grafana, VictoriaMetrics and VictoriaTraces that other
+stacks already use, ask whether GrooveMap should report to them or run its own. Recommend its own
+(isolated, provisioned for you) unless the user prefers one Grafana for everything. Shared mode is
+supported, with these consequences to state:
+
+- The stack runs no Grafana, VictoriaMetrics, VictoriaTraces, node-exporter or cAdvisor of its
+  own. No local Grafana admin password is required or newly generated; preserve an existing
+  `secrets/grafana_admin_password.txt` from an earlier deployment. Its collector writes to the
+  shared stores; the console probes the shared services.
+- Someone with admin rights on the shared Grafana imports GrooveMap's dashboards and alert rules
+  (every query is scoped to `service_namespace="groovemap"`, so they never mix in other stacks),
+  ideally into an organization of their own, and creates the optional Viewer token there.
+- The reviewed operations-console v0.3.0 reads the configurable targets and shows the shared
+  services as Shared; a console pinned older shows them as unreachable (`just deploy` warns).
+- Shared endpoints must accept unauthenticated access on an internal network.
+
+With approval, set only `GROOVEMAP_MONITORING=shared` and the `SHARED_*` values in `.env` (and
+`EXTERNAL_POSTGRES_EXPORTER_ADDRESS` with an external PostgreSQL whose exporter is shared), and,
+when the shared services sit on another Docker network, attach exactly `dashboard` and
+`otel-collector` to it in the override. Details and the network example:
+[references/shared-services.md](references/shared-services.md#shared-monitoring).
+
 ### 3. Propose a plan and get approval
 
 Present the plan before you write anything. Cover:
@@ -191,6 +238,8 @@ Present the plan before you write anything. Cover:
 - **Network:** a different subnet if `172.20.0.0/16` is taken.
 - **Stack manager:** how GrooveMap fits it. See
   [references/stack-managers.md](references/stack-managers.md).
+- **Monitoring:** local, or shared with the `SHARED_*` values, the override's network attachment
+  and who imports the dashboards on the shared Grafana (step 2b).
 - **Stores:** the answer from step 2a. If the user chose reuse and the capability floor is met
   (`gm-deployment-e1uh`), list the external servers, the `.env` values and the operator's
   provisioning steps; otherwise the plan uses dedicated instances.
@@ -227,6 +276,8 @@ Inside the checkout:
    The check denies unknown keys on added services, host-access keys on existing ones, and
    mounts of the Docker socket, sensitive host paths or another service's data volume. A
    backup sidecar (it reads `postgres_data`) needs `OVERRIDE_ALLOW_SERVICES` in `.env`.
+   For an external store on its own Docker network, attach every client of it, the store-check
+   one-shots included (`assets/override-external-store-network.yml`).
 4. `just secrets-bootstrap` writes the missing `secrets/` files and never replaces existing
    ones.
 5. Validate the merge without starting anything:
@@ -242,6 +293,14 @@ Inside the checkout:
 ### 5. Deploy
 
 Once the user approves starting containers:
+
+For an existing deployment with its first import still active, do not run a broad Ansible or
+Compose update. First capture a read-only config and identity snapshot (deployed commit, image
+pins and service identities, `just status`, gate/queue state, and `just recovery-manifest`). Keep
+the current extractor and consumer image IDs until the operator chooses a bounded rollout. In
+that approved window promote both Discogs consumers, `tableinator` and `graphinator`, to their
+reviewed v0.4.0 pins; keep the extractor and MusicBrainz pins unchanged. Do not restart the
+extractor or replace any data volume. See [the Lux upgrade procedure](../../docs/homelab.md#lux-upgrade-from-6af13ec160fe7d).
 
 ```bash
 just deploy --no-wait
@@ -272,8 +331,11 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    `EXPLORE_HEALTH_HOST_PORT` or `API_HEALTH_HOST_PORT` moved them. Check each proxied URL
    with `curl -sSI`. Fix proxy errors now, while the import runs.
 2. **URLs:** give the user their URLs: the proxied hostnames when a proxy is used, otherwise
-   the endpoints `just deploy` printed. Grafana's admin password is in
-   `secrets/grafana_admin_password.txt`. Tell the user where it is, but don't print it.
+   the endpoints `just deploy` printed. With local monitoring Grafana's admin password is in
+   `secrets/grafana_admin_password.txt`; tell the user where it is, but don't print it. With
+   shared monitoring, there is no local Grafana or local password requirement. Do not create a new
+   password file; preserve an existing one from an upgraded deployment. Users sign in to their
+   own Grafana.
 3. **First admin:** the console signs in admins created with `catalog-admin-setup`, which asks
    for a password on a terminal. Ask the user to run it in their own terminal on the host:
    `docker exec -it groovemap-api catalog-admin-setup --email you@example.com`. Sign-in
@@ -295,7 +357,19 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    ```
 
    Drop `-f docker-compose.override.yml` if there is no override. The operations console and
-   Grafana show queue progress too.
+   Grafana show queue progress too. `just status` (read-only; also `python3 scripts/status.py`)
+   summarizes everything at once: per service installed, healthy, importing or waiting-on-gate,
+   the gate, the recorded decisions, and each running image against the reviewed release table
+   (flagging any that is not the reviewed digest). Exit 0 means it determined the state, 2 that
+   it could not.
+
+5. **Backups and recovery (read-only):** follow
+   [references/backup-recovery.md](references/backup-recovery.md). With a shared PostgreSQL,
+   check that its backup includes GrooveMap's database, which schemas it excludes (an excluded
+   `musicbrainz` schema means a MusicBrainz re-import on restore) and that restore
+   verification covers it. Run `just recovery-manifest` and ask the user to keep the listed
+   files in an encrypted bundle (SOPS/age). Never reset an existing secret, print a value, or
+   purge keys or volumes after a failed staging.
 
 ### 7. Upgrades
 
@@ -329,6 +403,8 @@ Upgrades bring new reviewed digests and Compose changes. The untracked override,
   ownership, the disk check.
 - [references/stack-managers.md](references/stack-managers.md): Portainer, Dockge, Komodo,
   systemd, Ansible.
+- [references/backup-recovery.md](references/backup-recovery.md): backup coverage of shared
+  and dedicated stores, what is rebuildable, and the encrypted secret recovery bundle.
 - [references/troubleshooting.md](references/troubleshooting.md): symptoms and fixes.
 - `assets/override-*.yml`: example overrides. `just check` renders each one on top of the
   production stack and runs deploy's override check on it.

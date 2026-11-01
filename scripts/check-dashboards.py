@@ -2,6 +2,8 @@
 
 All PromQL shares one catalog policy. Dashboard datasource variables remain
 portable, while server-side alert rules use the provisioned concrete UIDs.
+Every dashboard, variable and alert query is scoped to the GrooveMap stack, so
+the same files work on a Grafana and VictoriaMetrics shared with other stacks.
 The checker reports every problem in one run and is part of ``source-check``.
 """
 
@@ -118,6 +120,19 @@ EXPORTER_METRICS = frozenset(
     }
 )
 
+# The stack scope. Every series GrooveMap writes carries service_namespace="groovemap": the
+# services set it in OTEL_RESOURCE_ATTRIBUTES, and the collector stamps it on everything it scrapes
+# (an external label in config/otel-collector.yaml). Every metric selector of a dashboard, a
+# dashboard variable or an alert rule must select it, and every TraceQL panel query must filter on
+# the span resource's service.namespace, so a shared Grafana never mixes another stack's series or
+# traces into GrooveMap's panels or pages anyone for another stack's targets.
+SCOPE_LABEL = "service_namespace"
+SCOPE_VALUE = "groovemap"
+SCOPE_MATCHER = f'{SCOPE_LABEL}="{SCOPE_VALUE}"'
+TRACEQL_SCOPE = f'resource.service.namespace="{SCOPE_VALUE}"'
+_SCOPE_MATCHER = re.compile(rf'(?:^|[{{,])\s*{SCOPE_LABEL}\s*=\s*"{SCOPE_VALUE}"\s*(?:[,}}]|$)')
+_LABEL_VALUES = re.compile(r"^\s*label_values\((?P<selector>.*),\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*$", re.DOTALL)
+
 # PromQL words that survive tokenisation but are not metric names. Function and
 # aggregation names are dropped earlier because they are followed by "(".
 PROMQL_KEYWORDS = frozenset(
@@ -139,6 +154,12 @@ PROMQL_KEYWORDS = frozenset(
         "unless",
         "without",
     }
+)
+
+# Aggregation operators. Their grouping clause may sit between the name and its parenthesis, even
+# across a line break in a folded alert expression, so they are never read as a metric selector.
+PROMQL_AGGREGATIONS = frozenset(
+    {"avg", "bottomk", "count", "count_values", "group", "limit_ratio", "limitk", "max", "min", "quantile", "stddev", "stdvar", "sum", "topk"}
 )
 
 _QUOTED = re.compile(r"""(["'`])(?:\\.|(?!\1).)*\1""")
@@ -194,6 +215,101 @@ def extract_metric_names(expr: str) -> set[str]:
             continue
         names.add(name)
     return names
+
+
+def _blank(match: re.Match[str]) -> str:
+    """The match replaced by spaces of the same length, so positions in the expression are kept."""
+    return " " * len(match.group())
+
+
+def metric_selectors(expr: str) -> list[tuple[int, int, str, str | None]]:
+    """Every vector selector in a PromQL expression: (start, end, metric name, label matchers or None).
+
+    `end` is where the selector's name ends, or after its closing brace when it has matchers. The
+    same stripping as `extract_metric_names` decides what is a metric (string literals, variables,
+    range selectors, grouping clauses and offsets are blanked out, keeping every position), and a
+    brace block with no name in front of it is a selector too, named "".
+    """
+    text = _QUOTED.sub(lambda match: match.group()[0] + "x" * (len(match.group()) - 2) + match.group()[-1], expr)
+    for pattern in (_TEMPLATE_VARIABLE, _RANGE_SELECTOR, _GROUPING_CLAUSE, _OFFSET_CLAUSE):
+        text = pattern.sub(_blank, text)
+    braces = [(match.start(), match.end()) for match in re.finditer(r"\{[^{}]*\}", text)]
+    selectors: list[tuple[int, int, str, str | None]] = []
+    named_braces = set()
+    for match in _IDENTIFIER.finditer(text):
+        if any(start < match.start() < end for start, end in braces):
+            continue
+        remainder = text[match.end() :]
+        stripped = remainder.lstrip()
+        if stripped.startswith("(") or match.group() in PROMQL_KEYWORDS | PROMQL_AGGREGATIONS:
+            continue
+        if stripped.startswith("{"):
+            brace = match.end() + len(remainder) - len(stripped)
+            close = next(end for start, end in braces if start == brace)
+            named_braces.add(brace)
+            selectors.append((match.start(), close, match.group(), expr[brace + 1 : close - 1]))
+        else:
+            selectors.append((match.start(), match.end(), match.group(), None))
+    selectors += [(start, end, "", expr[start + 1 : end - 1]) for start, end in braces if start not in named_braces]
+    return sorted(selectors)
+
+
+def unscoped_selectors(expr: str) -> list[str]:
+    """The selectors of a PromQL expression that do not select the stack scope (SCOPE_MATCHER)."""
+    return [
+        name or "{...}"
+        for _start, _end, name, matchers in metric_selectors(expr)
+        if matchers is None or not _SCOPE_MATCHER.search("{" + matchers + "}")
+    ]
+
+
+def scope_expression(expr: str) -> str:
+    """The expression with SCOPE_MATCHER added to every selector that lacks it (a no-op on a scoped one)."""
+    result = expr
+    for start, end, name, matchers in reversed(metric_selectors(expr)):
+        if matchers is None:
+            result = result[: start + len(name)] + "{" + SCOPE_MATCHER + "}" + result[start + len(name) :]
+        elif not _SCOPE_MATCHER.search("{" + matchers + "}"):
+            brace = end - len(matchers) - 2
+            joined = SCOPE_MATCHER + (", " + matchers if matchers.strip() else "")
+            result = result[: brace + 1] + joined + result[end - 1 :]
+    return result
+
+
+def variable_queries(dashboard: dict[str, Any]) -> list[str]:
+    """The PromQL of every query variable: its query (string or `{"query": ...}`) and its definition."""
+    queries = []
+    for variable in dashboard.get("templating", {}).get("list", []):
+        if variable.get("type") != "query":
+            continue
+        query = variable.get("query")
+        for text in (query.get("query") if isinstance(query, dict) else query, variable.get("definition")):
+            if isinstance(text, str) and text.strip():
+                queries.append(text)
+    return queries
+
+
+def check_scope(name: str, expressions: list[str]) -> list[str]:
+    """Every selector of every expression selects the stack scope; a label_values() query is judged by its selector."""
+    problems = []
+    for expression in expressions:
+        match = _LABEL_VALUES.match(expression)
+        for selector in unscoped_selectors(match["selector"] if match else expression):
+            problems.append(f"{name}: {selector} is not scoped to the stack; select {SCOPE_MATCHER} ({expression})")
+    return problems
+
+
+def traceql_queries(dashboard: dict[str, Any]) -> list[str]:
+    """The TraceQL of every trace query a panel runs."""
+    return [node["query"] for node in _walk(dashboard) if node.get("queryType") == "traceql" and isinstance(node.get("query"), str)]
+
+
+def check_traceql_scope(name: str, dashboard: dict[str, Any]) -> list[str]:
+    return [
+        f"{name}: TraceQL query is not scoped to the stack; filter on {TRACEQL_SCOPE} ({query})"
+        for query in traceql_queries(dashboard)
+        if TRACEQL_SCOPE not in query
+    ]
 
 
 def _catalog_section(text: str) -> str:
@@ -365,6 +481,8 @@ def check_dashboard(path: Path, dashboard: dict[str, Any], allowed_metrics: set[
         problems.append(f"{name}: has no panel queries")
 
     problems.extend(check_metric_expressions(name, expressions, allowed_metrics))
+    problems.extend(check_scope(name, expressions + variable_queries(dashboard)))
+    problems.extend(check_traceql_scope(name, dashboard))
 
     return problems
 
@@ -510,6 +628,9 @@ def check_alerting(allowed_metrics: set[str], alerting_file: Path | None = None)
     # Alert rules are provisioned server-side, so they name the datasource uid
     # directly; only their expressions are shared with the dashboards.
     problems.extend(check_metric_expressions(name, collect_expressions(document), allowed_metrics))
+    # A shared Grafana evaluates these rules against every stack's series; unscoped, a down target
+    # of another stack would page GrooveMap's operator.
+    problems.extend(check_scope(name, collect_expressions(document)))
 
     return problems
 

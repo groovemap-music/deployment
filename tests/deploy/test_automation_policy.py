@@ -25,7 +25,8 @@ def dry_run(*recipes: str) -> list[str]:
         capture_output=True,
         text=True,
     )
-    return result.stderr.splitlines()
+    # The maintainer-only uv guard (_require-uv) is not part of the validation graph under test.
+    return [line for line in result.stderr.splitlines() if not line.startswith("command -v uv ")]
 
 
 def test_ci_uses_immutable_public_automation() -> None:
@@ -124,16 +125,19 @@ def test_public_recipe_surface_remains_stable() -> None:
         "install-check",
         "license-check",
         "performance",
+        "recovery-manifest",
         "secret-scan",
         "secrets-bootstrap",
         "setup",
         "smoke",
         "smoke-erasure",
+        "smoke-homelab",
         "smoke-infra",
         "smoke-media",
         "smoke-released-fixture",
         "smoke-released",
         "source-check",
+        "status",
         "test",
         "typecheck",
     }
@@ -163,6 +167,7 @@ def test_live_network_and_stateful_recipes_stay_outside_check() -> None:
         "docker compose up -d --wait",
         "docker compose ps",
         "bash scripts/smoke-erasure.sh",
+        "bash scripts/smoke-homelab.sh",
         "bash scripts/smoke-media.sh",
         "bash scripts/smoke-released-fixture.sh",
         "bash scripts/smoke-infra.sh",

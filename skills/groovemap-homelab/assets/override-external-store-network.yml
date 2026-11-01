@@ -1,0 +1,56 @@
+---
+# Example docker-compose.override.yml: GrooveMap reuses an existing PostgreSQL and Valkey
+# (GROOVEMAP_POSTGRES=external and GROOVEMAP_VALKEY=external in .env) that run as containers on
+# their own Docker networks, so EXTERNAL_POSTGRES_HOST and EXTERNAL_VALKEY_HOST are the container
+# names or aliases on those networks (references/shared-services.md).
+#
+# Docker resolves a name only on a shared network, so EVERY service that talks to a store joins
+# that store's network, not just the application. That includes the store-check one-shots
+# (`just deploy` runs them first, and the Discogs gate and the MusicBrainz latch probe run their
+# psql inside store-check-postgres). A missing one fails closed, with a host that does not
+# resolve. tests/deploy/test_external_stores.py keeps these lists equal to the services the
+# overlays rewire (STORE_CLIENTS in scripts/stores.py).
+# Replace postgres_network and valkey_network with the names `docker network ls` shows. Drop the
+# half for a store that is not external or not on a Docker network (a host.docker.internal or LAN
+# address needs no attachment).
+services:
+  # PostgreSQL clients
+  api:
+    networks:
+      postgres: {}
+      valkey: {}
+  brainztableinator:
+    networks:
+      postgres: {}
+  dashboard:
+    networks:
+      postgres: {}
+      valkey: {}
+  embeddings:
+    networks:
+      postgres: {}
+  insights:
+    networks:
+      postgres: {}
+      valkey: {}
+  schema-init:
+    networks:
+      postgres: {}
+  store-check-postgres:
+    networks:
+      postgres: {}
+  tableinator:
+    networks:
+      postgres: {}
+  # Valkey clients (api, dashboard and insights are above)
+  store-check-valkey:
+    networks:
+      valkey: {}
+
+networks:
+  postgres:
+    external: true
+    name: postgres_network
+  valkey:
+    external: true
+    name: valkey_network

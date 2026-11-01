@@ -1,4 +1,4 @@
-"""Which stores the stack runs itself, and the one way the deploy gate and its probes reach PostgreSQL.
+"""Which stores and monitoring services the stack runs itself, and the one way the deploy gate and its probes reach PostgreSQL.
 
 `GROOVEMAP_POSTGRES` and `GROOVEMAP_VALKEY` (the shell, then .env, as Compose reads them) are
 `local`, the default, or `external`. A local store is the stack's own container, addressed exactly
@@ -7,6 +7,13 @@ production overlay: that overlay moves the local store into the `local-stores` p
 `store-check-<store>` one-shot from the same pinned image, and rewires the services to the
 external server. Without either variable set to `external` no overlay is added, so the rendered
 stack is byte for byte what it was before external stores existed.
+
+`GROOVEMAP_MONITORING` is `local`, the default, or `shared`. Shared monitoring adds
+`docker-compose.shared-monitoring.yml` after the store overlays: it moves Grafana, VictoriaMetrics,
+VictoriaTraces, node-exporter and cAdvisor into the `local-monitoring` profile and points the
+collector's exporters and the console's probes at the operator's shared services (SHARED_* in
+.env). PostgreSQL's exporter follows the PostgreSQL mode instead: the external-postgres overlay
+omits the local one and probes and scrapes EXTERNAL_POSTGRES_EXPORTER_ADDRESS when it is set.
 
 Every PostgreSQL query of the deploy gate (scripts/discogs_import_status.py) and of deploy's
 MusicBrainz latch probe (scripts/deploy_helpers.py) goes through `psql_argv`:
@@ -39,12 +46,58 @@ STORES = ("postgres", "valkey")
 MODE_VARIABLES = {"postgres": "GROOVEMAP_POSTGRES", "valkey": "GROOVEMAP_VALKEY"}
 OVERLAYS = {"postgres": "docker-compose.external-postgres.yml", "valkey": "docker-compose.external-valkey.yml"}
 STORE_CHECK_SERVICES = {"postgres": "store-check-postgres", "valkey": "store-check-valkey"}
+# Every service that connects to each external store, in the overlay that rewires it. This is the one
+# place the list lives: the homelab skill's override example and references are tested against it,
+# and the overlays are tested to render exactly this set. A service on a different Docker network
+# from the store cannot resolve its host, so an operator who attaches the store to an existing
+# network must attach all of them. store-check-<store> is the deploy-time check, and
+# store-check-postgres is also where the gate's and the latch probe's psql run (`psql_argv`).
+STORE_CLIENTS = {
+    "postgres": (
+        "api",
+        "brainztableinator",
+        "dashboard",
+        "embeddings",
+        "insights",
+        "schema-init",
+        "store-check-postgres",
+        "tableinator",
+    ),
+    "valkey": ("api", "dashboard", "insights", "store-check-valkey"),
+}
 # The profile an overlay moves a local store (and its exporter) into; nothing ever enables it.
 LOCAL_STORES_PROFILE = "local-stores"
 LOCAL_STORE_SERVICES = {"postgres": ("postgres", "postgres-exporter"), "valkey": ("valkey", "valkey-exporter")}
 # The container whose presence says this stack has been started: its own postgres, or, with an
 # external PostgreSQL, neo4j (which the gate needs as well).
 STACK_CONTAINERS = {LOCAL: "groovemap-postgres", EXTERNAL: "groovemap-neo4j"}
+
+# Shared monitoring. The overlay is added after the store overlays; its profile, like local-stores,
+# is never enabled, so the services are omitted rather than removed (the override check forbids
+# removing a service). The collector and the console stay local and are the only services that
+# reach a shared monitoring endpoint (or an external PostgreSQL exporter): an operator whose shared
+# services are containers on another Docker network attaches exactly these to it.
+SHARED = "shared"
+MONITORING_MODES = (LOCAL, SHARED)
+MONITORING_VARIABLE = "GROOVEMAP_MONITORING"
+MONITORING_OVERLAY = "docker-compose.shared-monitoring.yml"
+LOCAL_MONITORING_PROFILE = "local-monitoring"
+SHARED_MONITORING_SERVICES = ("cadvisor", "grafana", "node-exporter", "victoria-metrics", "victoria-traces")
+MONITORING_CLIENTS = ("dashboard", "otel-collector")
+# Base URLs: the collector appends its write paths, the console its probe paths. Required.
+SHARED_URLS = {
+    "SHARED_VICTORIA_METRICS_URL": "VictoriaMetrics (the collector remote-writes to <url>/api/v1/write; the console reads history from it)",
+    "SHARED_VICTORIA_TRACES_URL": "VictoriaTraces (the collector pushes spans to <url>/insert/opentelemetry/v1/traces)",
+}
+# Optional. SHARED_GRAFANA_URL is the console server's address for the shared Grafana (alerts and its
+# health row); unset, it is GRAFANA_URL, the browser's. The exporters are host:port scrape targets:
+# set, the collector scrapes them and the console probes http://<address>; unset, nothing scrapes
+# them and the console shows them as shared but not configured.
+SHARED_OPTIONAL_URL = "SHARED_GRAFANA_URL"
+SHARED_ADDRESSES = {"SHARED_NODE_EXPORTER_ADDRESS": "shared node-exporter", "SHARED_CADVISOR_ADDRESS": "shared cAdvisor"}
+POSTGRES_EXPORTER_ADDRESS = "EXTERNAL_POSTGRES_EXPORTER_ADDRESS"
+URL = re.compile(r"\Ahttps?://[A-Za-z0-9_.\-]+(?::\d{1,5})?(?:/[A-Za-z0-9_.~\-/]*)?\Z")
+ADDRESS = re.compile(r"\A[A-Za-z0-9_.\-]+:\d{1,5}\Z")
 
 # The credentials each external store reads from secrets/, written by the operator (create-secrets.sh
 # would otherwise invent a random one that the server does not know).
@@ -72,11 +125,16 @@ LOCAL_HOSTS = frozenset({"host.docker.internal", "localhost", "::1", "[::1]"})
 STRICT_TRUE = frozenset({"true", "1", "yes", "on"})
 STRICT_FALSE = frozenset({"false", "0", "no", "off"})
 
-# Bare-Compose safety: with an external store, deploy writes COMPOSE_FILE (Compose reads it from .env)
-# so `docker compose up/ps/logs/exec` with no -f uses exactly deploy's files, overlays included, and
-# can never start the local stores and point the services at them. The marker says deploy owns it.
+# Bare-Compose safety: with any overlay (an external store or shared monitoring), deploy writes
+# COMPOSE_FILE (Compose reads it from .env) so `docker compose up/ps/logs/exec` with no -f uses
+# exactly deploy's files, overlays included, and can never start the local stores or monitoring and
+# point the services at them. The marker says deploy owns it; the older wording is still recognized.
 COMPOSE_FILE_VARIABLE = "COMPOSE_FILE"
-COMPOSE_FILE_MARKER = "# COMPOSE_FILE is written by just deploy while a store is external, so bare docker compose uses its files. Do not edit."
+COMPOSE_FILE_MARKER = "# COMPOSE_FILE is written by just deploy while an overlay is in use, so bare docker compose uses its files. Do not edit."
+COMPOSE_FILE_MARKERS = (
+    COMPOSE_FILE_MARKER,
+    "# COMPOSE_FILE is written by just deploy while a store is external, so bare docker compose uses its files. Do not edit.",
+)
 # Databases GrooveMap never uses on a shared server: the maintenance database and the templates.
 RESERVED_DATABASES = frozenset({"postgres", "template0", "template1"})
 DATABASE_NAME = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
@@ -126,16 +184,22 @@ def read_env(path: Path) -> dict[str, str]:
     return parse_env(path.read_text()) if path.exists() else {}
 
 
+def compose_file_marked(text: str) -> bool:
+    """True when .env text carries deploy's COMPOSE_FILE marker (either wording), so deploy owns that COMPOSE_FILE."""
+    return any(marker in text.splitlines() for marker in COMPOSE_FILE_MARKERS)
+
+
 class StoreConfigError(ValueError):
     """The store settings are not ones this deployment can run with."""
 
 
 @dataclass(frozen=True)
 class Stores:
-    """Where each store lives: LOCAL (the stack's own container) or EXTERNAL."""
+    """Where each store lives, LOCAL (the stack's own container) or EXTERNAL, and whether monitoring is LOCAL or SHARED."""
 
     postgres: str = LOCAL
     valkey: str = LOCAL
+    monitoring: str = LOCAL
 
     def mode(self, store: str) -> str:
         return self.postgres if store == "postgres" else self.valkey
@@ -147,16 +211,31 @@ class Stores:
     @property
     def overlays(self) -> list[str]:
         """The overlay files to add, in order, after the production overlay and before the operator's override."""
-        return [OVERLAYS[store] for store in self.external]
+        return [OVERLAYS[store] for store in self.external] + ([MONITORING_OVERLAY] if self.shared_monitoring else [])
+
+    @property
+    def shared_monitoring(self) -> bool:
+        return self.monitoring == SHARED
 
     @property
     def stack_container(self) -> str:
         return STACK_CONTAINERS[self.postgres]
 
 
+def _source(key: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> tuple[str, str]:
+    """Return the Compose-precedence value and its source (shell, then .env)."""
+    if key in environ:
+        # Compose gives a shell variable precedence even when it is empty. `${VAR:-default}`
+        # then chooses its default; it does not fall through to the value in .env.
+        return environ[key].strip(), "the shell"
+    recorded = env_values.get(key, "").strip()
+    if recorded:
+        return recorded, ".env"
+    return "", "default"
+
+
 def _effective(key: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> str:
-    """Compose's precedence: the shell environment, then .env."""
-    return environ.get(key, env_values.get(key, "")).strip()
+    return _source(key, env_values, environ)[0]
 
 
 def read_stores(env_values: Mapping[str, str], environ: Mapping[str, str]) -> Stores:
@@ -167,7 +246,28 @@ def read_stores(env_values: Mapping[str, str], environ: Mapping[str, str]) -> St
         if value not in MODES:
             raise StoreConfigError(f"{variable}={value!r} is not a store mode; use local (the stack's own {store}) or external")
         modes[store] = value
-    return Stores(**modes)
+    monitoring = _effective(MONITORING_VARIABLE, env_values, environ) or LOCAL
+    if monitoring not in MONITORING_MODES:
+        raise StoreConfigError(
+            f"{MONITORING_VARIABLE}={monitoring!r} is not a monitoring mode; use local (the stack's own Grafana, VictoriaMetrics, "
+            "VictoriaTraces, node-exporter and cAdvisor) or shared"
+        )
+    return Stores(**modes, monitoring=monitoring)
+
+
+def recorded_decisions(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[tuple[str, str, str]]:
+    """(decision, value, where it was recorded) for each reuse decision: PostgreSQL, Valkey and monitoring.
+
+    The value is the one read_stores validated, so a setting it refuses raises StoreConfigError here
+    too instead of being displayed. `where` is ".env", "the shell", or "default" when nothing records
+    it (the stack then runs its own container(s)). Anything recorded, including `local`, is an
+    answer the operator already gave.
+    """
+    configured = read_stores(env_values, environ)
+    names = {"postgres": "PostgreSQL", "valkey": "Valkey"}
+    variables = [(names[store], MODE_VARIABLES[store], configured.mode(store)) for store in STORES]
+    variables.append(("Monitoring", MONITORING_VARIABLE, configured.monitoring))
+    return [(name, value, _source(variable, env_values, environ)[1]) for name, variable, value in variables]
 
 
 def is_local_host(host: str) -> bool:
@@ -239,6 +339,9 @@ def transport_warnings(stores: Stores, env_values: Mapping[str, str], environ: M
         host = _effective(f"EXTERNAL_{store.upper()}_HOST", env_values, environ)
         name = "PostgreSQL" if store == "postgres" else "Valkey"
         if not encrypts(store, env_values, environ) and not is_local_host(host):
+            # Without the opt-out this is a stop (transport_problems), which says so itself.
+            if not strict_flag(ALLOW_PLAINTEXT[store], env_values, environ, default=False):
+                continue
             what = "PostgreSQL role's" if store == "postgres" else "Valkey"
             warnings.append(
                 f"{name} at {host} is reached in the clear ({ALLOW_PLAINTEXT[store]}=true): {PLAINTEXT_RISK.format(host=host, what=what)}"
@@ -297,6 +400,47 @@ def setting_problems(stores: Stores, env_values: Mapping[str, str], environ: Map
         elif not KEY_PREFIX.match(prefix) or not prefix.strip(":"):
             problems.append(f"EXTERNAL_VALKEY_KEY_PREFIX={prefix!r} may only use letters, digits and _-.: and must be more than colons")
     return problems + transport_problems(stores, env_values, environ)
+
+
+def monitoring_problems(stores: Stores, env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[str]:
+    """What is wrong with the shared-monitoring and external PostgreSQL exporter settings (empty when they are usable).
+
+    The overlays put these values into the collector's configuration and the console's probes, so
+    each one is checked for shape here: a URL that would build a broken write path, or an address
+    the collector would read as YAML, stops deploy instead of a collector that never turns healthy.
+    """
+    problems = []
+
+    def get(key: str) -> str:
+        return _effective(key, env_values, environ)
+
+    def url(key: str, required: bool) -> None:
+        value = get(key)
+        if not value:
+            if required:
+                problems.append(f"{key} is not set; name the base URL of the shared {SHARED_URLS[key]}")
+        elif not URL.match(value) or value.endswith("/"):
+            problems.append(f"{key}={value!r} is not a base URL: http:// or https://, a host, an optional port and path, and no trailing /")
+
+    def address(key: str, what: str) -> None:
+        value = get(key)
+        if value and not (ADDRESS.match(value) and 0 < int(value.rpartition(":")[2]) < 65536):
+            problems.append(f"{key}={value!r} is not the host:port of the {what} (no scheme or path)")
+
+    if stores.shared_monitoring:
+        for key in SHARED_URLS:
+            url(key, required=True)
+        url(SHARED_OPTIONAL_URL, required=False)
+        for key, what in SHARED_ADDRESSES.items():
+            address(key, what)
+    if stores.postgres == EXTERNAL:
+        address(POSTGRES_EXPORTER_ADDRESS, "PostgreSQL exporter")
+    elif get(POSTGRES_EXPORTER_ADDRESS):
+        problems.append(
+            f"{POSTGRES_EXPORTER_ADDRESS} is set but PostgreSQL is the stack's own (GROOVEMAP_POSTGRES=local), whose exporter runs here; "
+            "remove it, or set GROOVEMAP_POSTGRES=external"
+        )
+    return problems
 
 
 def version_tuple(version: str) -> tuple[int, ...] | None:

@@ -272,8 +272,18 @@ services:
   # The exporters read the same credentials as the application services, via
   # the same file-backed secrets. postgres_exporter reads the *_FILE variant when it is set; the plain values are unset here
   # anyway so a stale dev credential cannot win.
+  #
+  # Each of these images runs as a fixed non-root user (postgres_exporter: nobody;
+  # redis_exporter: 59000; Grafana: 472, read from the pinned image configs), and
+  # scripts/create-secrets.sh writes the secrets 0600 for the invoking user. So each runs as
+  # that user, `${UID:-1000}:${GID:-1000}` like the application services, rather than
+  # loosening the files or remapping them. The images that start as root (postgres, rabbitmq,
+  # neo4j, valkey) read their secrets as root before dropping privileges. The inventory in
+  # tests/deploy/test_secret_identities.py records every image's user so a new pin or secret
+  # cannot regress this.
   postgres-exporter:
     restart: always
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       DATA_SOURCE_PASS:  # unset base value so _FILE takes effect
       DATA_SOURCE_PASS_FILE: /run/secrets/postgres_password
@@ -287,6 +297,7 @@ services:
   # file's REDIS_ADDR (redis://valkey:6379) for the password to be applied.
   valkey-exporter:
     restart: always
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       REDIS_PASSWORD_FILE: /run/secrets/valkey_exporter_passwords
     secrets:
@@ -321,8 +332,14 @@ services:
   otel-collector:
     restart: always
 
+  # Grafana reads GF_SECURITY_ADMIN_PASSWORD__FILE as its own process (UID 472 in the image),
+  # so it runs as the secrets' owner. The image makes /var/lib/grafana writable by an arbitrary
+  # UID; a grafana_data volume first created by the dev stack holds files owned by 472 and has
+  # to be re-owned (never deleted: it holds grafana.db) before the production overlay can write
+  # to it. See docs/homelab.md#grafana-now-runs-as-your-user.
   grafana:
     restart: always
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       # Anonymous Viewer access is a dev-only convenience.
       GF_AUTH_ANONYMOUS_ENABLED: "false"

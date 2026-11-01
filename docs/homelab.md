@@ -54,9 +54,13 @@ workflow.
 
 - Docker Engine with Docker Compose v2. Deploy stops if Compose is older than v2.
 - git and python3 3.10 or newer. The deploy helpers use only the Python standard library, so
-  the distro's `python3` is enough. mise, `just` and `uv` are optional maintainer tooling; with
-  `uv` installed, the script uses it instead of `python3`. Set `DEPLOY_PYTHON` to pick another
-  interpreter.
+  the distro's `python3` is enough. `just` is an optional convenience: every operator recipe
+  (`just deploy`, `env-init`, `discogs-import-status`, `embeddings-*`) also runs without `uv`, on
+  `python3`. With `uv` installed they use it instead. Set `DEPLOY_PYTHON` to pick another
+  interpreter. Only maintainer recipes (`check`, `test`, `typecheck`, `audit`, `smoke-*`) need
+  `uv`, and they stop with a message saying so. `discogs-import-status` exits 0 when the import is
+  complete, 3 while it is still running (normal progress, not a failure: use `--wait` or run it
+  again later) and 2 when it cannot tell; `just` passes these codes through unchanged.
 - A host that meets [the sizing minimums](#hardware-and-sizing).
 - Free host ports for the services you publish (see [Ports and bind addresses](#ports-and-bind-addresses)).
   Deploy refuses to start if a configured port is taken by something other than this stack.
@@ -188,10 +192,11 @@ The [architecture guide](architecture.md) has the data flow.
 | `docker-compose.prod.yml` | Production overlay: Docker file secrets, hardening, Neo4j and PostgreSQL sizing, loopback binding for unauthenticated backends, Grafana without anonymous access |
 | `docker-compose.override.yml` | Yours, untracked, optional: host-specific settings. `.gitignore` already lists it |
 | `docker-compose.external-postgres.yml`, `docker-compose.external-valkey.yml` | Added by `just deploy` and the gate when `.env` selects an existing PostgreSQL or Valkey ([Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey)); never apply them by hand otherwise |
+| `docker-compose.shared-monitoring.yml` | Added by `just deploy` and the gate when `.env` sets `GROOVEMAP_MONITORING=shared` ([Shared monitoring](#shared-monitoring)); never apply it by hand otherwise |
 
 Production is always `-f docker-compose.yml -f docker-compose.prod.yml`, then any
-external-store overlay `.env` selects, and `-f docker-compose.override.yml` last when you have
-one. Compose reads the override by itself only when no `-f` is given, so name it explicitly.
+external-store overlay `.env` selects, then the shared-monitoring overlay, and
+`-f docker-compose.override.yml` last when you have one. Compose reads the override by itself only when no `-f` is given, so name it explicitly.
 
 ### Profiles
 
@@ -282,6 +287,37 @@ Every other line stays byte for byte: `APP_BASE_URL`, the bind addresses, `*_HOS
 `just env-init --force` instead regenerates `.env` from the template; it warns which of your
 values it drops, and the backup still has them.
 `.env` is created private (mode 0600); a rewrite and its backup keep the mode the file already has.
+
+### Grafana now runs as your user
+
+The production overlay runs Grafana as `${UID:-1000}:${GID:-1000}`, the owner of the 0600 files
+in `secrets/`. The image's own user is UID 472, which cannot read them. A `grafana_data` volume
+created before this change holds files owned by 472, and Grafana as your user cannot write
+them: it exits with `permission denied` on `/var/lib/grafana/grafana.db`. A fresh volume needs
+nothing.
+
+To tell, with the stack's project name (the `.env` `COMPOSE_PROJECT_NAME`, else the checkout
+directory name) in `<project>`:
+
+```bash
+docker run --rm --entrypoint ls -v <project>_grafana_data:/v grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f -ln /v
+```
+
+Owner `472` on `grafana.db` means the volume predates this change. Re-own it in place; this
+changes ownership only and keeps every file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop grafana
+docker run --rm --user root --entrypoint chown -v <project>_grafana_data:/v \
+  grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f \
+  -R "$(id -u):$(id -g)" /v
+just deploy
+```
+
+Run it against the `grafana_data` volume only. If the listing shows the volume is empty, it
+holds nothing and `docker volume rm` of that one volume is also safe; never remove a volume
+that has data. Dashboards are provisioned from `config/grafana/`, but users, preferences and
+API tokens live in `grafana.db`.
 
 ## Existing PostgreSQL and Valkey
 
@@ -415,15 +451,224 @@ an external PostgreSQL in a project that already has a `postgres_data` volume, b
 is there and the gate would read an empty server. Move the data first, or stay local.
 
 **What becomes yours.** Backups, upgrades, restarts, disk space and monitoring of an external
-store are its operator's responsibility. The disk check skips it, `postgres-exporter` and
-`valkey-exporter` do not run (their scrape jobs read as down on the infrastructure dashboard),
-and the maintenance scripts that exec into the local `postgres` (`reset-password.sh`,
+store are its operator's responsibility. The disk check skips it, and `postgres-exporter` and
+`valkey-exporter` do not run: their scrape jobs get no target and the console's rows read disabled,
+so nothing reports them down. To keep watching an external PostgreSQL through an exporter that
+already watches it, set `EXTERNAL_POSTGRES_EXPORTER_ADDRESS=host:port`: the collector scrapes it
+for the infrastructure dashboard and the console probes it as shared. The maintenance scripts that exec into the local `postgres` (`reset-password.sh`,
 `provision-embedding-pipeline-login.sh`, `cleanup-implausible-years.sh`) do not apply; run
 their SQL against your server instead. An override may still never rewire `POSTGRES_*`,
 `VALKEY_*` or the store secrets: the supported mode is the only route
 ([the override check](#the-override-and-its-safety-check)). Secrets stay in encrypted storage,
 and nothing is applied on a shared server without your explicit approval. Details:
 [shared-services.md](../skills/groovemap-homelab/references/shared-services.md).
+
+## Shared monitoring
+
+A homelab that already runs Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor
+for other stacks can have GrooveMap report to them instead of running its own copies. Set
+`GROOVEMAP_MONITORING=shared` in `.env`; `just deploy` adds `docker-compose.shared-monitoring.yml`
+(after any external-store overlay) and records it in `COMPOSE_FILE`, exactly as for
+[existing stores](#existing-postgresql-and-valkey). Valkey, Neo4j and RabbitMQ are unaffected,
+and so is the collector: it stays the one place every GrooveMap service sends telemetry to.
+
+What changes in shared mode:
+
+- `grafana`, `victoria-metrics`, `victoria-traces`, `node-exporter` and `cadvisor` move into the
+  never-enabled `local-monitoring` profile, so they do not start; nothing waits for them. Their
+  volumes are left alone, and their host ports are neither published nor checked.
+- The collector remote-writes metrics to the shared VictoriaMetrics, pushes spans to the shared
+  VictoriaTraces and scrapes the shared node-exporter and cAdvisor, from the same
+  `config/otel-collector.yaml` (it reads the endpoints from its environment). Its healthcheck
+  validates that configuration in the same environment, so an endpoint it cannot use turns it
+  unhealthy instead of silently dropping telemetry.
+- The operations console probes the shared services and shows them as Shared with their
+  endpoints, instead of UNREACHABLE for the services this stack no longer runs.
+- Every GrooveMap series carries `service_namespace="groovemap"`, and every dashboard and alert
+  query selects it, so GrooveMap's panels on the shared Grafana never mix in another stack's series.
+- `just secrets-bootstrap` writes no Grafana admin password: this stack has no Grafana to sign in to.
+- `just status` lists `Monitoring shared` under the recorded decisions and shows the five omitted
+  services as `shared`, not `not installed`.
+
+### Procedure
+
+1. Find the shared services' addresses as seen from a container: names on a shared Docker network
+   (such as `http://victoria-metrics:8428`), LAN addresses, or `host.docker.internal` for one
+   published on this Docker host. The agent skill can discover them read-only.
+2. Set them in `.env` (all variables in [configuration.md](configuration.md#shared-monitoring)):
+
+   ```bash
+   GROOVEMAP_MONITORING=shared
+   SHARED_VICTORIA_METRICS_URL=http://victoria-metrics:8428   # required
+   SHARED_VICTORIA_TRACES_URL=http://victoria-traces:10428    # required
+   SHARED_GRAFANA_URL=http://grafana:3000                     # the console server's address for it
+   SHARED_NODE_EXPORTER_ADDRESS=node-exporter:9100            # optional host:port
+   SHARED_CADVISOR_ADDRESS=cadvisor:8080                      # optional host:port
+   GRAFANA_URL=https://grafana.example.net                    # the shared Grafana, as browsers reach it
+   ```
+
+   With an existing PostgreSQL watched by a shared exporter, add
+   `EXTERNAL_POSTGRES_EXPORTER_ADDRESS=pg-exporter:9187`; without it the console shows the
+   PostgreSQL exporter as disabled. An unset node-exporter or cAdvisor address leaves that
+   exporter unscraped (GrooveMap's Containers & host dashboard then has no host data) and the
+   console lists it as shared but not configured.
+3. If the shared services are containers on another Docker network, attach exactly `dashboard`
+   and `otel-collector` to it in `docker-compose.override.yml`
+   ([example](../skills/groovemap-homelab/assets/override-shared-monitoring-network.yml)). No other
+   GrooveMap service talks to them. The override check accepts this.
+4. Import GrooveMap's dashboards and alert rules into the shared Grafana:
+   [Shared Grafana](observability.md#shared-grafana). Optionally create a Viewer token there for
+   the console's alerts: [Grafana Viewer token](maintenance.md#on-a-shared-grafana).
+5. Run `just deploy`. Before anything starts it checks every `SHARED_*` value's shape and stops
+   on a missing or malformed one; it warns about what it cannot monitor and prints the shared
+   Grafana instead of a local login.
+
+**The console needs its configurable-targets release.** The reviewed operations-console is v0.3.0,
+the first release that reads the `<NAME>_MODE` targets the overlay sets, so the omitted services show
+as shared. An older console ignores them, which is harmless, but keeps probing the omitted services by
+their compose names and shows them unreachable; `just deploy` warns when `.env` runs one
+(`CONSOLE_TARGETS_FLOOR` in `scripts/check-images.py`).
+
+**History.** Series written before this change lack the stack label on the exporter and collector
+series, so the scoped infrastructure panels start at the upgrade (application series always had it).
+Switching an existing deployment to shared monitoring does not move its local VictoriaMetrics or
+Grafana data; the volumes stay, and switching back to `local` brings them back.
+
+**Not supported yet:** shared endpoints that need authentication, and `https://` endpoints signed
+by a private CA. Use an internal network both stacks share.
+
+**Switching back.** Remove `GROOVEMAP_MONITORING` (or set it to `local`) and run `just deploy`:
+the local services start again, deploy removes its `COMPOSE_FILE`, and
+`just secrets-bootstrap` creates the local Grafana admin password if it is missing.
+
+## Lux upgrade from 6af13ec/160fe7d
+
+A host that installed GrooveMap at deployment `6af13ec` (or `160fe7d`) with mixed stores (an
+external PostgreSQL with TLS, a dedicated Valkey) and shared monitoring carried local
+workarounds for eight failures. Every fix has regression coverage, with the mapping and Linux
+smoke status tracked in the [failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test),
+including the SQL loader latch and graph completion-marker races found in CI. This procedure never
+removes volumes or regenerates secrets. The optional late-import recovery below triggers a full
+Discogs reprocess against the existing stores and requires explicit operator approval.
+
+**Ansible owns the deployment checkout and its `.env` and override.** Make the release and
+configuration changes in the Ansible-managed deployment; do not edit those managed files by hand
+or run `env-init` in a way that overwrites Ansible-owned values. Keep the existing secrets and
+host settings; `EXTERNAL_POSTGRES_SSLMODE` remains `verify-full`.
+
+**Snapshot first; do not interrupt an active import.** Before changing the checkout or running an
+update, have Ansible capture a read-only baseline: deployed commit, effective configuration and
+image pins, current service/container identities, `just status`, the Discogs gate and queue state,
+and `just recovery-manifest`. Keep the existing extractor and consumer image IDs until an operator
+chooses a bounded rollout. Do not run a broad Ansible deployment or Compose update while the
+import is active. In a bounded, operator-approved window, promote both Discogs consumers together:
+`tableinator` (SQL loader) and `graphinator` (graph enricher) to their reviewed v0.4.0 pins. Keep
+the extractor and all MusicBrainz image pins unchanged. Existing log volumes remain in place. A
+separate pending change covers UID-owned `/logs` tmpfs; defer any Compose-wide recreation for it to
+a maintenance window after the import.
+
+Remove the local mitigations from the Ansible role only after the updated checkout passes the
+verification below:
+
+- **The store-check network attach.** The example override
+  (`skills/groovemap-homelab/assets/override-external-store-network.yml`) now attaches
+  `store-check-postgres` and `store-check-valkey` along with the app clients. Take the example's
+  service list; a check that cannot resolve the store now names the store, host, service and
+  networks.
+- **The collector config workaround.** The collector loads the read-only config file mounted at
+  `/etc/otelcol-contrib/config.yaml`; its command and healthcheck both validate that same file, and
+  endpoint values are substituted from the container environment. Drop any `configs.content` or
+  healthcheck override.
+- **A `uv` install.** Operator recipes (`deploy`, `env-init`, `discogs-import-status`,
+  `status`, `recovery-manifest`, the embeddings steps) run on `python3` 3.10 or newer when `uv` is
+  absent; exit codes 0, 3 and 2 pass through unchanged. `uv` is for maintainers.
+- **`SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` values.** Rendering and `up` no longer need them; only
+  `just embeddings-run` does.
+- **Exporter and secret ownership workarounds.** Every service that reads a 0600 secret runs as the
+  owner of `secrets/`, so a `chown`/`chmod` of the derived Valkey exporter password or a `user:`
+  override on an exporter is no longer needed.
+- **A hand-written Discogs latch or a gate you stopped waiting on.** discogs-sql-loader v0.3.0
+  did not write the completion latch. v0.4.0
+  (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes it when it
+  receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
+  acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
+  fail-closed, do not restart the extractor or insert a latch row manually. The
+  `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
+  its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
+  v0.4.0 pin (`sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`) together
+  with the SQL loader v0.4.0 pin; the combined Linux smoke passed the full gate. A pin-only upgrade
+  still cannot recreate signals already acknowledged by v0.3.0. See
+  [late Discogs recovery](#late-discogs-recovery).
+- **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
+  depend on `rabbitmq-dlq-policy-init` completing successfully.
+
+**New `.env` keys** (all optional; see [Configuration](configuration.md)):
+
+| Key | Purpose |
+| --- | --- |
+| `GROOVEMAP_MONITORING` | `local` (default) or `shared`; see [Shared monitoring](#shared-monitoring) |
+| `SHARED_VICTORIA_METRICS_URL`, `SHARED_VICTORIA_TRACES_URL` | Required with `shared`: where the collector writes |
+| `SHARED_GRAFANA_URL`, `SHARED_NODE_EXPORTER_ADDRESS`, `SHARED_CADVISOR_ADDRESS` | The console's and collector's view of the shared services |
+| `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | `host:port` of the exporter that watches an external PostgreSQL |
+
+For an unmanaged deployment, `just env-init` appends any missing keys under a comment and keeps
+every other line. On lux, add needed values through Ansible's managed configuration; do not run
+`env-init` against the Ansible-owned `.env`.
+
+**Verify.**
+
+1. Have Ansible capture the read-only config and identity baseline above, then update the
+   deployment checkout. Preserve the existing `.env`, override and secrets; do not regenerate
+   secrets or replace host-specific values.
+2. Choose and approve a bounded rollout of both Discogs consumers: `tableinator` and `graphinator`
+   at the reviewed v0.4.0 pins. Keep the extractor and MusicBrainz pins unchanged, and do not run
+   the full deployment while Discogs is active.
+3. After the import is complete and the operator chooses the maintenance window, apply the
+   remaining deployment changes through Ansible. Preflight reports each effective store and
+   monitoring decision and stops before changing anything on a setting it cannot honour.
+4. `just status` (read-only; exit 0, or 2 when Docker or a setting cannot be read) lists the
+   effective store and monitoring decisions with their sources, the services that are shared or
+   external rather than missing, the reviewed image digests and the Discogs gate. Exit 3 from
+   `just discogs-import-status` means the import is still in progress, not an error.
+5. Check the Lux gate with `just discogs-import-status --prod -f docker-compose.override.yml`.
+   Exit 0 means complete, exit 3 means importing, and exit 2 means the result cannot be
+   determined. Exit 3 is normal progress; exit 2 is not evidence of completion, so keep
+   MusicBrainz gated and report the problem.
+6. If v0.3.0 already acknowledged the extraction-complete signals, or the graph marker is partial
+   despite drained queues, keep the gate closed. Do not restart the extractor or insert a latch or
+   marker row. Follow the operator-controlled [late Discogs recovery](#late-discogs-recovery)
+   procedure only after its preconditions are met.
+7. `just recovery-manifest`, then keep the listed files in an encrypted bundle, and check the
+   [shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist).
+
+### Late Discogs recovery
+
+This is an operator-controlled **full new Discogs pass**, not a latch repair or a replay of only
+the missing terminal messages. Use it only after a read-only baseline is captured, the recovery
+bundle is encrypted, storage and database headroom are confirmed, the extractor is idle, the new
+loader and graph-enricher consumers are healthy, and the operator explicitly approves the write.
+Ansible remains the source of truth for the checkout, `.env`, and override. Keep MusicBrainz
+disabled throughout.
+
+Use the authenticated Catalog API admin endpoint `POST /api/admin/extractions/trigger` with the
+JSON body `{"source":"discogs"}`. Catalog API v0.6.0 routes this through the supported
+`discogs-ingestion` trigger with `force_reprocess=true`, records the extraction and audit entry,
+and returns `202` when accepted. The producer returns `409` if an extraction is already running;
+stop and re-check state instead of retrying concurrently. Do not call container restart commands,
+write latch or marker rows, replay broker messages manually, or delete volumes to manufacture a
+fresh run.
+
+A forced reprocess creates new producer state and may download and process the selected dump
+again. It is not a queue-only replay and its duration is not bounded by the missing-latch failure.
+After it finishes, verify the single SQL latch row for the selected version contains all four
+signals (`artists`, `labels`, `masters`, `releases`) and a non-null `refreshed_at`, all four durable
+graph completion markers are present, and queues are drained. Then require
+`just discogs-import-status --prod -f docker-compose.override.yml` to exit 0 before enabling
+MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
+
+A `grafana_data` volume created earlier needs the one-time re-own in
+[Grafana now runs as your user](#grafana-now-runs-as-your-user); existing `*_logs` volumes are
+left untouched. UID-owned `/logs` tmpfs is a separate pending change, not part of this recovery.
 
 ## Known limitations
 
@@ -448,9 +693,31 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   external-stores mode is supported: the capability floors are met by the reviewed release set,
   and `just deploy` still refuses a store whose settings, secrets, TLS or server checks fail.
   See [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
+- **Shared monitoring needs operations-console v0.3.0 or newer for truthful health rows.** The
+  reviewed set pins v0.3.0; an older console ignores the configurable targets and shows shared
+  services as unreachable. `just deploy` warns below the reviewed floor; see
+  [Shared monitoring](#shared-monitoring).
+- **A late Discogs-consumer upgrade cannot reconstruct acknowledged completion signals.** If
+  v0.3.0 acknowledged the extraction-complete events before v0.4.0 was deployed, the latch stays
+  absent and the gate must remain closed until an operator approves a full new Discogs pass. Never
+  insert the latch manually or restart the extractor to try to recreate it.
+- **The reviewed `discogs-graph-enricher` v0.3.0 can lose two completion markers in a concurrent
+  cache version reset.** Empty queues do not prove all four durable markers were written. The
+  source fix is released as v0.4.0 and promoted at
+  `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`; the combined Linux
+  smoke proved all four markers and drained queues for a fresh fixture pass. This does not recover
+  an earlier acknowledged terminal signal.
+- **An active first import is not a Compose-wide rollout window.** Take the read-only config and
+  identity snapshot first, preserve the current extractor and MusicBrainz IDs, and use a bounded,
+  operator-approved `tableinator` plus `graphinator` promotion. Schedule full-stack recreation for
+  after the import; do not destroy or replace its data volumes. The UID-owned `/logs` tmpfs change
+  remains separate until its dedicated bead lands.
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations
+
+For the regressions found installing on a real host and the tests that now prevent each, see the
+[failure-to-regression-test table](testing-guide.md#lux-regressions-failure-to-regression-test).
 
 Backups are environment-specific and must be tested: see
 [Backups and restore drills](maintenance.md#backups-and-restore-drills) and
@@ -459,3 +726,12 @@ Backups are environment-specific and must be tested: see
 [Troubleshooting](troubleshooting.md); routine updates by [Maintenance](maintenance.md).
 An external PostgreSQL or Valkey is backed up by its own operator, not by this stack
 ([what becomes yours](#existing-postgresql-and-valkey)).
+
+**Reusing a shared PostgreSQL does not add GrooveMap's database to its backups.** Check that the
+backup's protected-database list includes it, which schemas are excluded (an excluded
+`musicbrainz` schema is fine to keep, but a restore needs a MusicBrainz re-import, a long job that
+is unmeasured until `gm-deployment-vc5s`) and that restore verification covers it. The
+[shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist) has the questions.
+`just recovery-manifest` lists the files to keep in an encrypted bundle (SOPS/age) with the
+generated secrets: see [Recovery bundle](maintenance.md#recovery-bundle). Never reset existing
+secrets, and never purge keys or volumes after a failed staging.

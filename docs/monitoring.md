@@ -15,6 +15,16 @@ docker compose logs --tail=100
 docker compose logs --tail=100 api
 ```
 
+For one read-only summary of the whole deployment, run `just status` (or
+`python3 scripts/status.py`): per service installed, healthy, importing or waiting on the
+Discogs gate, the store and monitoring decisions resolved with Compose's shell-over-`.env`
+precedence, and each running image against the reviewed release table. A present but empty shell
+variable selects the Compose default; it does not fall through to `.env`. Services that are
+external or shared appear as such rather than missing. Exit 0 means the state was determined, 2
+that it could not be. While a store is
+external, plain `docker compose` commands in the checkout follow the files `just deploy` keeps in
+`COMPOSE_FILE`, so they see the same stack.
+
 Add timestamps when correlating events:
 
 ```bash
@@ -111,6 +121,14 @@ VictoriaTraces, read back through the Tempo datasource in the same Grafana. The 
 conventions, and the canonical metric catalog live in
 [Observability](observability.md).
 
+With `GROOVEMAP_MONITORING=shared` this stack runs no Grafana, VictoriaMetrics,
+VictoriaTraces, node-exporter or cAdvisor: the collector writes to the shared ones
+and GrooveMap's dashboards live in the shared Grafana, every query scoped to
+`service_namespace="groovemap"`. Look there, at `GRAFANA_URL`, instead of
+<http://localhost:3000>; there is no local Grafana login. See
+[Shared monitoring](homelab.md#shared-monitoring) and
+[Shared Grafana](observability.md#shared-grafana).
+
 ## Operations console and analytics
 
 The operations console is published at <http://localhost:8003> in the base
@@ -121,9 +139,11 @@ The dashboard service reads history from `VICTORIA_METRICS_URL` (in-network
 `GRAFANA_URL` and `TRACES_URL`; the base file defaults both to
 <http://localhost:3000>. The console's server-side Grafana calls use
 `GRAFANA_API_URL` (`http://grafana:3000`, in-network); in production only `GRAFANA_URL`
-must be the browser-reachable address. The optional alerts token is the
-`grafana_viewer_token` secret (see
-[maintenance](maintenance.md#grafana-viewer-token-for-the-console)).
+must be the browser-reachable address. In shared mode the console reads
+VictoriaMetrics, VictoriaTraces and Grafana at the `SHARED_*` URLs and shows those
+services as Shared in Platform Health. The optional alerts token is the
+`grafana_viewer_token` secret, created on whichever Grafana evaluates GrooveMap's
+alerts (see [maintenance](maintenance.md#grafana-viewer-token-for-the-console)).
 Precomputed analytics behavior belongs to
 [`analytics-engine`](https://github.com/groovemap-music/analytics-engine).
 

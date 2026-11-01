@@ -26,9 +26,14 @@ Minimums, and where they come from:
   as large as Discogs, as musicbrainz_data's share.
 - Disk, existing deployment: the data is already on disk, so only warn below 20 GB free on any of those filesystems.
 
-Memory is what Docker reports (`docker info` MemTotal), which on Docker Desktop is the VM's
-share, not the host's. A machine sold as 16 GB reports a little less, so the check rounds up to
-whole gigabytes before comparing.
+Memory is judged twice. Total is what Docker reports (`docker info` MemTotal), which on Docker
+Desktop is the VM's share, not the host's; a machine sold as 16 GB reports a little less, so total
+rounds up to whole gigabytes before comparing. Available is what is free now, read from the
+source that fits the engine, and the message names which one it used: the host's MemAvailable
+(/proc/meminfo) for a local Linux engine, the Docker Desktop VM's total minus what its running
+containers use (`docker stats`), and nothing for a remote engine, which has total only. Below the
+minimum, available memory refuses just like total does, except when GrooveMap already runs here:
+then the running stack holds that memory, so a shortfall only warns.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ import ipaddress
 import json
 import math
 import os
+import platform
 import posixpath
 import re
 import shutil
@@ -47,6 +53,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -139,9 +146,12 @@ OVERRIDE_DATA_TIER_ISOLATED = (
     ("labels", "reverse-proxy labels (Traefik TCP routers included) could publish the data tier; route only explore, dashboard and grafana"),
     ("extra_hosts", "hosts entries could redirect the data tier's peers"),
 )
-# How a service finds PostgreSQL and Valkey (the optional prefix covers EMBEDDING_PIPELINE_POSTGRES_*).
+# How a service finds PostgreSQL and Valkey (the optional prefix covers EMBEDDING_PIPELINE_POSTGRES_*), including libpq's
+# own PG* variables that the store check, the gate and the latch probe use, and the console's Valkey health address.
 # POSTGRES_HOST_PORT and VALKEY_HOST_PORT publish a port on the host and are not matched.
-STORE_CONNECTION = re.compile(r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABASE|USERNAME)|VALKEY_(?:HOST|PORT))(?:_FILE)?$")
+STORE_CONNECTION = re.compile(
+    r"^(?:[A-Z0-9]+_)*(?:POSTGRES_(?:HOST|PORT|DATABASE|USERNAME)|VALKEY_(?:HOST|PORT|HEALTH_ADDRESS)|PG(?:HOST|HOSTADDR|PORT|SERVICE))(?:_FILE)?$"
+)
 STORE_SECRET = re.compile(r"^(?:postgres|valkey)_")
 EXTERNAL_STORES_EPIC = "gm-deployment-e1uh"
 EXTERNAL_STORES_HINT = (
@@ -429,7 +439,8 @@ def check_architecture(arch: str, desktop: bool, amd64_emulation: bool | None) -
     return Finding("confirm", message, hint)
 
 
-def check_memory(mem_bytes: int, mode: str, desktop: bool) -> Finding:
+def check_memory(mem_bytes: int, mode: str, desktop: bool, available_bytes: int | None = None, source: str = "", existing: bool = False) -> Finding:
+    """Judge total memory, and available memory when `source` could read it. `existing`: GrooveMap already runs here."""
     refuse, recommended = RAM_MINIMUMS[mode]
     total = nominal_gb(mem_bytes)
     stack = "production stack" if mode == "prod" else "development stack"
@@ -437,12 +448,32 @@ def check_memory(mem_bytes: int, mode: str, desktop: bool) -> Finding:
     if total < refuse:
         return Finding(
             "stop",
-            f"Docker has about {total} GB of memory; the {stack} needs at least {refuse} GB ({recommended} GB recommended).{where}",
+            f"Docker has about {total} GB of memory (total, from docker info); the {stack} needs at least {refuse} GB ({recommended} GB recommended).{where}",
             forcible=True,
         )
-    if total < recommended:
-        return Finding("warn", f"Docker has about {total} GB of memory; {recommended} GB is recommended, so the import will be slower.{where}")
-    return Finding("ok", f"Memory: about {total} GB")
+    if available_bytes is None:
+        if total < recommended:
+            return Finding("warn", f"Docker has about {total} GB of memory; {recommended} GB is recommended, so the import will be slower.{where}")
+        return Finding(
+            "ok", f"Memory: about {total} GB total (docker info); available memory cannot be read for this engine, so only the total was checked"
+        )
+    available = available_bytes / GIB
+    figures = f"{total} GB total (docker info), {available:.1f} GiB available ({source})"
+    if available < refuse:
+        if existing:
+            return Finding(
+                "warn",
+                f"Memory: {figures}, below the {refuse} GB minimum for the {stack}, but GrooveMap is already running here and holds part of it.",
+            )
+        return Finding(
+            "stop",
+            f"Memory: {figures}. The {stack} needs at least {refuse} GB available ({recommended} GB recommended); something else is using the rest.{where}",
+            "Stop what else runs on this host, or free memory, then re-run.",
+            forcible=True,
+        )
+    if total < recommended or available < recommended:
+        return Finding("warn", f"Memory: {figures}; {recommended} GB is recommended, so the import will be slower.{where}")
+    return Finding("ok", f"Memory: {figures}")
 
 
 def check_free(free_bytes: int, label: str, volumes: Sequence[DataVolume], existing: bool) -> Finding:
@@ -492,6 +523,8 @@ class Port:
 
 # The published port of each store; an external store's container never starts, so it publishes nothing.
 STORE_PORTS = {"postgres": "POSTGRES_HOST_PORT", "valkey": "VALKEY_HOST_PORT"}
+# The same for the monitoring services shared monitoring omits (node-exporter and cAdvisor publish none).
+MONITORING_PORTS = ("GRAFANA_HOST_PORT", "VICTORIA_METRICS_HOST_PORT", "VICTORIA_TRACES_HOST_PORT")
 
 
 def configured_ports(mode: str, env_values: Mapping[str, str], environ: Mapping[str, str], skip: Iterable[str] = ()) -> list[Port]:
@@ -511,13 +544,13 @@ def configured_ports(mode: str, env_values: Mapping[str, str], environ: Mapping[
     return ports
 
 
-def external_store_ports(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[str]:
-    """The *_HOST_PORT variables of the stores that are external (none when the store settings are unreadable)."""
+def omitted_service_ports(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[str]:
+    """The *_HOST_PORT variables of the services an overlay omits: external stores, shared monitoring (none when unreadable)."""
     try:
         configured = stores.read_stores(env_values, environ)
     except stores.StoreConfigError:
         return []
-    return [STORE_PORTS[store] for store in configured.external]
+    return [STORE_PORTS[store] for store in configured.external] + (list(MONITORING_PORTS) if configured.shared_monitoring else [])
 
 
 def check_ports(ports: Iterable[Port], own: set[int], in_use: Callable[[str, int], bool]) -> list[Finding]:
@@ -1003,12 +1036,17 @@ def check_override(
     return findings
 
 
-PUBLISHED = re.compile(r":(\d+)->")
+# Docker collapses consecutive ports into a range ("127.0.0.1:8004-8005->8004-8005/tcp"), so a
+# re-run would otherwise take the stack's own api and explore ports for someone else's.
+PUBLISHED = re.compile(r":(\d+)(?:-(\d+))?->")
 
 
 def published_ports(ports_column: str) -> set[int]:
-    """Host ports out of `docker ps --format {{.Ports}}` ("0.0.0.0:5433->5432/tcp, ...")."""
-    return {int(port) for port in PUBLISHED.findall(ports_column)}
+    """Host ports out of `docker ps --format {{.Ports}}` ("0.0.0.0:5433->5432/tcp, 0.0.0.0:8004-8005->8004-8005/tcp, ...")."""
+    ports: set[int] = set()
+    for first, last in PUBLISHED.findall(ports_column):
+        ports.update(range(int(first), int(last or first) + 1))
+    return ports
 
 
 # --- is there already a MusicBrainz deployment? ---------------------------------------
@@ -1093,6 +1131,57 @@ class Docker:
         return self.lines("ps", *(["-a"] if all_states else []), "--filter", f"name=^{CONTAINER_PREFIX}", "--format", "{{.Names}}\t{{.Ports}}")
 
 
+MEMINFO = Path("/proc/meminfo")
+SIZE_UNITS = {"b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3, "kib": 1024, "mib": 1024**2, "gib": GIB, "tib": 1024**4}
+SIZE_VALUE = re.compile(r"^\s*(?P<amount>\d+(?:\.\d+)?)\s*(?P<unit>[kmgt]?i?b)\s*$", re.IGNORECASE)
+
+
+def linux_mem_available(meminfo: Path = MEMINFO) -> int | None:
+    """MemAvailable in bytes from /proc/meminfo, or None where there is no such file or line."""
+    try:
+        text = meminfo.read_text()
+    except OSError:
+        return None
+    match = re.search(r"^MemAvailable:\s+(\d+)\s*kB\s*$", text, re.MULTILINE)
+    return int(match[1]) * 1024 if match else None
+
+
+def parse_size(text: str) -> int | None:
+    """`1.5GiB`, `512MiB`, `0B` (docker stats) in bytes; None for anything else."""
+    match = SIZE_VALUE.match(text)
+    return int(float(match["amount"]) * SIZE_UNITS[match["unit"].lower()]) if match else None
+
+
+def containers_memory_used(docker: Docker) -> int | None:
+    """What the running containers use, summed from `docker stats`; None when it cannot be read."""
+    completed = docker.run("stats", "--no-stream", "--format", "{{.MemUsage}}")
+    if completed is None or completed.returncode != 0:
+        return None
+    used = 0
+    for line in completed.stdout.splitlines():
+        if line.strip():
+            size = parse_size(line.split("/", 1)[0])
+            if size is None:
+                return None
+            used += size
+    return used
+
+
+def available_memory(
+    total_bytes: int, docker: Docker, *, local: bool, desktop: bool, linux: bool, meminfo: Callable[[], int | None]
+) -> tuple[int | None, str]:
+    """(available bytes, which source said so), or (None, "") when this engine cannot tell."""
+    if desktop:
+        used = containers_memory_used(docker)
+        if used is None:
+            return None, ""
+        return max(total_bytes - used, 0), "Docker Desktop VM total minus its running containers' use, from docker stats"
+    if local and linux:
+        free = meminfo()
+        return (free, "the host's MemAvailable, /proc/meminfo") if free is not None else (None, "")
+    return None, ""
+
+
 def local_engine(environ: Mapping[str, str]) -> bool:
     host = environ.get("DOCKER_HOST", "")
     return not host or host.startswith(("unix://", "npipe://"))
@@ -1127,7 +1216,7 @@ def resolve_locations(config: Mapping[str, Any] | None, root_dir: str, local: bo
     services = (config or {}).get("services") or {}
     top_level = (config or {}).get("volumes") or {}
     locations = []
-    skipped = external_store_volumes(config)
+    skipped = omitted_volumes(config)
     for volume in DATA_VOLUMES:
         mount: Mapping[str, Any] = {"type": "volume", "source": volume.name}
         if volume in skipped:
@@ -1142,10 +1231,19 @@ def resolve_locations(config: Mapping[str, Any] | None, root_dir: str, local: bo
     return locations
 
 
-def external_store_volumes(config: Mapping[str, Any] | None) -> list[DataVolume]:
-    """Data volumes of a store this stack does not run: its service sits in the local-stores profile (an external-store overlay)."""
-    services = (config or {}).get("services") or {}
-    return [volume for volume in DATA_VOLUMES if stores.LOCAL_STORES_PROFILE in ((services.get(volume.service) or {}).get("profiles") or [])]
+# The profiles an overlay moves a service it omits into, and what that makes the service.
+OMITTED_PROFILES = {stores.LOCAL_STORES_PROFILE: "external", stores.LOCAL_MONITORING_PROFILE: "shared"}
+
+
+def omitted_volumes(config: Mapping[str, Any] | None) -> list[DataVolume]:
+    """Data volumes of a service this stack does not run: it sits in an overlay's local-stores or local-monitoring profile."""
+    return [volume for volume in DATA_VOLUMES if _omitted_as(config, volume)]
+
+
+def _omitted_as(config: Mapping[str, Any] | None, volume: DataVolume) -> str:
+    """ "external" or "shared" when the volume's service is omitted by an overlay, else ""."""
+    profiles = (((config or {}).get("services") or {}).get(volume.service) or {}).get("profiles") or []
+    return next((what for profile, what in OMITTED_PROFILES.items() if profile in profiles), "")
 
 
 def _locate(volume: DataVolume, mount: Mapping[str, Any], definition: Mapping[str, Any], root_dir: str, local: bool, desktop: bool) -> Location:
@@ -1217,8 +1315,22 @@ def check_volumes(
 
 # --- external stores (scripts/stores.py) ------------------------------------------------
 
+
+def decision_findings(env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[Finding]:
+    """The reuse decisions already recorded in .env (or the shell), reported so nobody is asked them again."""
+    try:
+        decisions = stores.recorded_decisions(env_values, environ)
+    except stores.StoreConfigError:
+        return []  # the store findings stop on the same setting, with the fix
+    return [
+        Finding("ok", f"Decision {name}: {value} ({where})" + ("; recorded, not asked again" if where != "default" else ""))
+        for name, value, where in decisions
+    ]
+
+
 STORE_NAMES = {"postgres": "PostgreSQL", "valkey": "Valkey"}
 STORES_DOCS = "docs/homelab.md, Existing PostgreSQL and Valkey"
+MONITORING_DOCS = "docs/homelab.md, Shared monitoring"
 
 
 def load_image_policy() -> Any:
@@ -1233,6 +1345,50 @@ def describe_store(store: str, env_values: Mapping[str, str], environ: Mapping[s
     host = effective("EXTERNAL_VALKEY_HOST", env_values, environ)
     port = effective("EXTERNAL_VALKEY_PORT", env_values, environ, "6379")
     return f"{host}:{port} database {effective('EXTERNAL_VALKEY_DB', env_values, environ, '0')}, keys under {effective('EXTERNAL_VALKEY_KEY_PREFIX', env_values, environ)}"
+
+
+# What a store-check one-shot prints when its server host does not resolve or cannot be reached:
+# libpq's and valkey-cli's / openssl's wording. Authentication, TLS and version failures are not
+# here: attaching a network would not fix them.
+UNREACHABLE_STORE = re.compile(
+    r"could not translate host name|name or service not known|temporary failure in name resolution|nodename nor servname"
+    r"|bad address|could not resolve|getaddrinfo|no such host|server misbehaving"
+    r"|connection refused|connection timed out|timeout expired|no route to host|network is unreachable|could not connect|can't connect",
+    re.IGNORECASE,
+)
+
+
+def service_networks(rendered: Mapping[str, Any], service: str) -> list[str]:
+    """The Docker networks a rendered service is attached to, by the name Docker knows them by."""
+    attached = (rendered.get("services", {}).get(service) or {}).get("networks") or {}
+    names = attached if isinstance(attached, list) else list(attached)
+    top = rendered.get("networks") or {}
+    return sorted((top.get(name) or {}).get("name") or name for name in names)
+
+
+def store_host(store: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> str:
+    return effective(f"EXTERNAL_{store.upper()}_HOST", env_values, environ)
+
+
+def store_check_failure(
+    store: str, output: str, rendered: Mapping[str, Any], env_values: Mapping[str, str], environ: Mapping[str, str]
+) -> str | None:
+    """Explain a store-check failure caused by the check container not reaching the store's network.
+
+    None when the output is not a resolve or connect failure (the check's own message stands).
+    """
+    if not UNREACHABLE_STORE.search(output):
+        return None
+    service = stores.STORE_CHECK_SERVICES[store]
+    host = store_host(store, env_values, environ)
+    networks = ", ".join(service_networks(rendered, service)) or "none"
+    clients = ", ".join(stores.STORE_CLIENTS[store])
+    return (
+        f"{STORE_NAMES[store]} host {host} did not resolve or accept a connection from {service}, which is on the network(s): {networks}.\n"
+        f"  If {host} is a container on another Docker network, attach {service} to that network in {OVERRIDE_FILE}: the check and "
+        f"the gate's database probes run in it, and every other {STORE_NAMES[store]} client needs the same attachment ({clients}).\n"
+        f"  Example: skills/groovemap-homelab/assets/override-external-store-network.yml. Otherwise check the host, port and firewall."
+    )
 
 
 def store_findings(
@@ -1256,13 +1412,12 @@ def store_findings(
     try:
         configured = stores.read_stores(env_values, environ)
     except stores.StoreConfigError as error:
-        return [Finding("stop", str(error), f"Set it to local or external in .env ({STORES_DOCS}).")]
+        return [Finding("stop", str(error), f"Set it to one of the modes named in .env ({STORES_DOCS}; {MONITORING_DOCS}).")]
     findings = [
         Finding("ok", f"{STORE_NAMES[store]}: the stack's own {store} container") for store in stores.STORES if store not in configured.external
     ]
-    if not configured.external:
-        return findings
-    if mode != "prod":
+    findings += monitoring_findings(configured, env_values=env_values, environ=environ, image_policy=image_policy)
+    if configured.external and mode != "prod":
         return [
             *findings,
             Finding(
@@ -1271,6 +1426,32 @@ def store_findings(
                 "Run without --dev, or set GROOVEMAP_POSTGRES and GROOVEMAP_VALKEY back to local.",
             ),
         ]
+    findings += _external_store_findings(configured, env_values=env_values, environ=environ, secrets_dir=secrets_dir, image_policy=image_policy)
+    findings += compose_file_findings(configured, env_values, environ)
+    if "postgres" in configured.external and "postgres_data" in set(local_volumes()):
+        findings.append(
+            Finding(
+                "stop",
+                "This project already has a postgres_data volume: it ran the stack's own PostgreSQL, so its data is there, not on the external server",
+                "Switching an existing deployment to an external PostgreSQL is a data migration this deploy does not do. Move the data first, "
+                "or keep GROOVEMAP_POSTGRES=local.",
+            )
+        )
+    if not any(finding.level == "stop" for finding in findings):
+        findings += [
+            Finding("ok", f"{STORE_NAMES[store]}: external, {describe_store(store, env_values, environ)} (verified next by store-check-{store})")
+            for store in configured.external
+        ]
+    return findings
+
+
+def _external_store_findings(
+    configured: Any, *, env_values: Mapping[str, str], environ: Mapping[str, str], secrets_dir: Path, image_policy: Any
+) -> list[Finding]:
+    """Settings, capability floors, credentials and CA of each external store (empty when none is external)."""
+    findings: list[Finding] = []
+    if not configured.external:
+        return findings
     for problem in stores.setting_problems(configured, env_values, environ):
         findings.append(Finding("stop", problem, f"Fix it in .env ({STORES_DOCS})."))
     for store in configured.external:
@@ -1313,45 +1494,121 @@ def store_findings(
                 )
             )
     findings += [Finding("warn", warning) for warning in stores.transport_warnings(configured, env_values, environ)]
+    return findings
+
+
+def compose_file_findings(configured: Any, env_values: Mapping[str, str], environ: Mapping[str, str]) -> list[Finding]:
+    """With any overlay, deploy must own COMPOSE_FILE in .env, so a bare docker compose uses the overlays too."""
     variable = stores.COMPOSE_FILE_VARIABLE
+    if not configured.overlays:
+        return []
     if variable in environ:
-        findings.append(
+        return [
             Finding(
                 "stop",
-                f"{variable} is set in your shell; with an external store, just deploy keeps it in .env so bare docker compose uses its files",
+                f"{variable} is set in your shell; with an external store or shared monitoring, just deploy keeps it in .env so bare docker "
+                "compose uses its files",
                 f"Unset {variable} in the shell and re-run.",
             )
-        )
-    elif env_values.get(variable) and not compose_file_managed():
-        findings.append(
+        ]
+    if env_values.get(variable) and not compose_file_managed():
+        return [
             Finding(
                 "stop",
-                f"{variable} in .env was not written by just deploy; with an external store deploy must own it, or a bare docker compose "
-                "could start the local stores and point the services at them",
+                f"{variable} in .env was not written by just deploy; with an external store or shared monitoring deploy must own it, or a "
+                "bare docker compose could start the local stores or monitoring and point the services at them",
                 f"Remove {variable} from .env (an override belongs in docker-compose.override.yml, which deploy adds to it) and re-run.",
             )
-        )
-    if "postgres" in configured.external and "postgres_data" in set(local_volumes()):
+        ]
+    return []
+
+
+def console_targets_floor(image_policy: Any, env_values: Mapping[str, str], environ: Mapping[str, str]) -> str | None:
+    """Why the console in use ignores its configurable targets (None when it reads them)."""
+    for variable, floor in image_policy.CONSOLE_TARGETS_FLOOR.items():
+        repository = image_policy.IMAGE_OWNERS.get(variable, variable)
+        needed, released = stores.version_tuple(floor), image_policy.RELEASED_IMAGE_VERSIONS.get(variable, "")
+        have = stores.version_tuple(released)
+        if needed is None or have is None or have < needed:
+            return f"the reviewed {repository} (v{released or '?'}) predates its configurable Platform Health targets"
+        pinned = effective(variable, env_values, environ).rpartition("@sha256:")[2]
+        if pinned != image_policy.RELEASED_IMAGE_DIGESTS.get(variable):
+            return f"{variable} in .env is not the reviewed {repository} v{released}, so it may predate its configurable Platform Health targets"
+    return None
+
+
+def _is_loopback_url(url: str) -> bool:
+    """True when `url` names this container itself from inside one (localhost, ::1, 127.0.0.0/8); host.docker.internal is the host."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host in ("localhost", "::1") or bool(re.fullmatch(r"127(?:\.\d{1,3}){3}", host))
+
+
+def monitoring_findings(configured: Any, *, env_values: Mapping[str, str], environ: Mapping[str, str], image_policy: Any) -> list[Finding]:
+    """What the monitoring settings mean for this run: shared endpoints, the PostgreSQL exporter, and what the console will show."""
+    findings = [
+        Finding("stop", problem, f"Fix it in .env ({MONITORING_DOCS}).") for problem in stores.monitoring_problems(configured, env_values, environ)
+    ]
+    if findings:
+        return findings
+    omitted = []
+    if configured.shared_monitoring:
+        metrics = effective("SHARED_VICTORIA_METRICS_URL", env_values, environ)
+        traces = effective("SHARED_VICTORIA_TRACES_URL", env_values, environ)
+        grafana = effective(stores.SHARED_OPTIONAL_URL, env_values, environ) or effective("GRAFANA_URL", env_values, environ, "http://localhost:3000")
         findings.append(
-            Finding(
-                "stop",
-                "This project already has a postgres_data volume: it ran the stack's own PostgreSQL, so its data is there, not on the external server",
-                "Switching an existing deployment to an external PostgreSQL is a data migration this deploy does not do. Move the data first, "
-                "or keep GROOVEMAP_POSTGRES=local.",
+            Finding("ok", f"Monitoring: shared; metrics to {metrics}, traces to {traces}, Grafana at {grafana} (this stack runs none of them)")
+        )
+        if not effective(stores.SHARED_OPTIONAL_URL, env_values, environ) and _is_loopback_url(grafana):
+            findings.append(
+                Finding(
+                    "warn",
+                    f"The console's server would reach the shared Grafana at {grafana}, but localhost inside its container is the console itself",
+                    f"Set {stores.SHARED_OPTIONAL_URL} to the address the console's container reaches the shared Grafana at "
+                    f"(for example http://grafana:3000 on the shared monitoring network). GRAFANA_URL stays the browser's address.",
+                )
+            )
+        for variable, what in stores.SHARED_ADDRESSES.items():
+            if not effective(variable, env_values, environ):
+                findings.append(
+                    Finding(
+                        "warn",
+                        f"{variable} is not set: nothing scrapes the {what} for GrooveMap, so its host series are missing from GrooveMap's "
+                        "dashboards and the console lists it as shared but not configured",
+                    )
+                )
+        omitted.append("Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor")
+    else:
+        findings.append(Finding("ok", "Monitoring: the stack's own Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor"))
+    if configured.postgres == stores.EXTERNAL:
+        exporter = effective(stores.POSTGRES_EXPORTER_ADDRESS, env_values, environ)
+        findings.append(
+            Finding("ok", f"PostgreSQL exporter: shared, {exporter} (scraped by the collector, probed by the console)")
+            if exporter
+            else Finding(
+                "ok",
+                f"PostgreSQL exporter: none ({stores.POSTGRES_EXPORTER_ADDRESS} is unset), so nothing scrapes it and the console shows it disabled",
             )
         )
-    if not any(finding.level == "stop" for finding in findings):
-        findings += [
-            Finding("ok", f"{STORE_NAMES[store]}: external, {describe_store(store, env_values, environ)} (verified next by store-check-{store})")
-            for store in configured.external
-        ]
+        omitted.append("the PostgreSQL exporter")
+    if configured.valkey == stores.EXTERNAL:
+        omitted.append("the Valkey exporter")
+    reason = console_targets_floor(image_policy, env_values, environ) if omitted else None
+    if reason:
+        findings.append(
+            Finding(
+                "warn",
+                f"The console will report {', '.join(omitted)} as unreachable: {reason}, so it ignores the shared/disabled settings and "
+                "keeps probing the local services this stack does not run",
+                "Harmless (nothing else reads those settings); it goes away when the console release with configurable targets is promoted.",
+            )
+        )
     return findings
 
 
 def compose_file_managed(env_path: Path | None = None) -> bool:
     """True when COMPOSE_FILE in .env carries deploy's marker, so deploy may rewrite or remove it."""
     path = env_path or ENV_FILE
-    return path.exists() and stores.COMPOSE_FILE_MARKER in path.read_text()
+    return path.exists() and stores.compose_file_marked(path.read_text())
 
 
 def leave_ca_placeholders(env_values: Mapping[str, str], environ: Mapping[str, str], secrets_dir: Path) -> list[str]:
@@ -1367,28 +1624,28 @@ def leave_ca_placeholders(env_values: Mapping[str, str], environ: Mapping[str, s
     return written
 
 
-def sync_compose_file(env_path: Path, files: Sequence[str], external: bool, separator: str = os.pathsep) -> str:
-    """Keep COMPOSE_FILE in .env equal to deploy's files while a store is external, and absent otherwise.
+def sync_compose_file(env_path: Path, files: Sequence[str], overlaid: bool, separator: str = os.pathsep) -> str:
+    """Keep COMPOSE_FILE in .env equal to deploy's files while an overlay is in use, and absent otherwise.
 
-    Returns what changed ("" when nothing did). With both stores local only a COMPOSE_FILE deploy
-    wrote (its marker) is removed; store_findings stops before this on one the operator set while
-    a store is external.
+    `overlaid` is true with an external store or shared monitoring. Returns what changed ("" when
+    nothing did). With no overlay only a COMPOSE_FILE deploy wrote (its marker, either wording) is
+    removed; store_findings stops before this on one the operator set while an overlay is in use.
     """
     text = env_path.read_text() if env_path.exists() else ""
-    managed = stores.COMPOSE_FILE_MARKER in text
+    managed = stores.compose_file_marked(text)
     current = parse_env(text).get(stores.COMPOSE_FILE_VARIABLE)
     value = separator.join(files)
-    if (external and managed and current == value) or (not external and not managed):
+    if (overlaid and managed and current == value and stores.COMPOSE_FILE_MARKER in text.splitlines()) or (not overlaid and not managed):
         return ""
     kept = [
         line
         for line in text.splitlines()
-        if line != stores.COMPOSE_FILE_MARKER and not ((match := ASSIGNMENT.match(line)) and match["key"] == stores.COMPOSE_FILE_VARIABLE)
+        if line not in stores.COMPOSE_FILE_MARKERS and not ((match := ASSIGNMENT.match(line)) and match["key"] == stores.COMPOSE_FILE_VARIABLE)
     ]
     text = "\n".join(kept).rstrip("\n") + "\n" if kept else ""
-    if not external:
+    if not overlaid:
         write_env_text(env_path, text)
-        return "Removed COMPOSE_FILE from .env: both stores are local again, so a bare docker compose uses its defaults."
+        return "Removed COMPOSE_FILE from .env: no store is external and monitoring is local again, so a bare docker compose uses its defaults."
     write_env_text(env_path, set_env_values(text, {stores.COMPOSE_FILE_VARIABLE: value}, stores.COMPOSE_FILE_MARKER))
     return f"Set COMPOSE_FILE={value} in .env, so a bare docker compose uses the same files as just deploy."
 
@@ -1424,6 +1681,8 @@ def preflight(
     binfmt: Callable[[], bool | None] = amd64_emulation_registered,
     interactive: bool = False,
     ask: Callable[[str], str] = input,
+    meminfo: Callable[[], int | None] = linux_mem_available,
+    linux: bool | None = None,
 ) -> int:
     """Print every finding; return 0 to go ahead or 3 to stop before anything changes."""
     info, error = docker.info()
@@ -1436,14 +1695,20 @@ def preflight(
 
     desktop = "Docker Desktop" in str(info.get("OperatingSystem", ""))
     local = local_engine(environ)
+    total = int(info.get("MemTotal") or 0)
+    available, source = available_memory(
+        total, docker, local=local, desktop=desktop, linux=platform.system() == "Linux" if linux is None else linux, meminfo=meminfo
+    )
+    running = bool(docker.groovemap_containers(all_states=False))
     findings = [
         check_architecture(str(info.get("Architecture", "")), desktop, binfmt() if local else None),
-        check_memory(int(info.get("MemTotal") or 0), mode, desktop),
+        check_memory(total, mode, desktop, available, source, existing=running),
+        *decision_findings(env_values, environ),
     ]
     if local:
         # A re-run finds the stack's own containers holding its ports; those are not conflicts.
         own = {port for line in docker.groovemap_containers(all_states=False) for port in published_ports(line)}
-        findings += check_ports(configured_ports(mode, env_values, environ, external_store_ports(env_values, environ)), own, in_use)
+        findings += check_ports(configured_ports(mode, env_values, environ, omitted_service_ports(env_values, environ)), own, in_use)
     else:
         findings.append(Finding("warn", "The Docker engine is remote (DOCKER_HOST), so its ports were not checked from here"))
     for finding in findings:
@@ -1487,8 +1752,10 @@ def disk_check(
     probe = probe or (lambda path: probe_path(path, walk_up=path != root_dir))
     findings = check_volumes(resolve_locations(config, root_dir, local, desktop), root_dir, local, desktop, existing, probe)
     findings += [
-        Finding("ok", f"{volume.name} is not checked: {volume.service} is external, so its disk is the operator's responsibility")
-        for volume in external_store_volumes(config)
+        Finding(
+            "ok", f"{volume.name} is not checked: {volume.service} is {_omitted_as(config, volume)}, so its disk is the operator's responsibility"
+        )
+        for volume in omitted_volumes(config)
     ]
     for finding in findings:
         show(finding)
@@ -1554,7 +1821,7 @@ def endpoints(mode: str, env_values: Mapping[str, str], environ: Mapping[str, st
         "RABBITMQ_MANAGEMENT_HOST_PORT",
     )
     by_variable = {port.variable: port for port in configured_ports(mode, env_values, environ)}
-    return [
+    rows = [
         (
             by_variable[variable].label,
             f"http://{url_host(by_variable[variable].address, hostname)}:{by_variable[variable].port}",
@@ -1562,6 +1829,15 @@ def endpoints(mode: str, env_values: Mapping[str, str], environ: Mapping[str, st
         )
         for variable in shown
     ]
+    try:
+        shared = stores.read_stores(env_values, environ).shared_monitoring
+    except stores.StoreConfigError:
+        shared = False
+    if not shared:
+        return rows
+    # This stack runs no Grafana, so there is no local port and no local admin password to point at.
+    grafana = ("Grafana (shared)", effective("GRAFANA_URL", env_values, environ, "http://localhost:3000"), "your own sign-in on the shared Grafana")
+    return [grafana if label == "Grafana" else (label, url, note) for label, url, note in rows]
 
 
 def render_endpoints(rows: Sequence[tuple[str, str, str]]) -> str:
@@ -1703,16 +1979,26 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     latch.add_argument("compose", nargs=argparse.REMAINDER)
     store_check = commands.add_parser(
-        "stores", help="check the GROOVEMAP_POSTGRES / GROOVEMAP_VALKEY settings; exit 0 to go ahead, 3 to stop before anything changes"
+        "stores",
+        help="check the GROOVEMAP_POSTGRES / GROOVEMAP_VALKEY / GROOVEMAP_MONITORING settings; exit 0 to go ahead, 3 to stop before anything changes",
     )
     store_check.add_argument("--mode", choices=("prod", "dev"), default="prod")
     store_check.add_argument("--project-name")
+    failure = commands.add_parser(
+        "store-check-failure", help="explain a failed store-check one-shot that could not resolve or reach its server; exit 0 if it did, 1 if not"
+    )
+    failure.add_argument("store", choices=stores.STORES)
+    failure.add_argument("output", type=Path, help="what the store-check one-shot printed")
+    failure.add_argument("rendered", type=Path, help="`docker compose --profile '*' config --format json`")
     commands.add_parser(
-        "store-files", help="print each external store's overlay (added after the production overlay) and its store-check service, one per line"
+        "store-files",
+        help="print each overlay to add after the production overlay, one per line: an external store's with its store-check service, "
+        "then the shared-monitoring overlay alone",
     )
     commands.add_parser("stack-container", help="print the container whose presence says the stack has been started")
     compose_file = commands.add_parser(
-        "compose-file", help="with an external store, keep COMPOSE_FILE in .env equal to the given files; otherwise remove deploy's"
+        "compose-file",
+        help="with an external store or shared monitoring, keep COMPOSE_FILE in .env equal to the given files; otherwise remove deploy's",
     )
     compose_file.add_argument("files", nargs="+", help="the Compose files deploy uses, in order")
     name = commands.add_parser("project-name", help="print the Compose project name")
@@ -1805,7 +2091,7 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
         except stores.StoreConfigError as error:
             print(f"error: {error}", file=sys.stderr)
             return 3
-        change = sync_compose_file(ENV_FILE, args.files, bool(configured.external))
+        change = sync_compose_file(ENV_FILE, args.files, bool(configured.overlays))
         if change:
             print(f"    {change}")
         return 0
@@ -1819,6 +2105,22 @@ def main(argv: Sequence[str] | None = None, docker: Docker | None = None, enviro
             print(configured.stack_container)
         for store in configured.external if args.command == "store-files" else ():
             print(f"{stores.OVERLAYS[store]} {stores.STORE_CHECK_SERVICES[store]}")
+        if args.command == "store-files" and configured.shared_monitoring:
+            print(stores.MONITORING_OVERLAY)  # no check one-shot: the collector's healthcheck validates its endpoints
+        return 0
+    if args.command == "store-check-failure":
+        try:
+            output = args.output.read_text(errors="replace")
+        except OSError:
+            return 1
+        try:
+            rendered = json.loads(args.rendered.read_text())
+        except (OSError, json.JSONDecodeError):
+            rendered = {}
+        explanation = store_check_failure(args.store, output, rendered, env_values, environ)
+        if explanation is None:
+            return 1
+        print(f"deploy: {explanation}", file=sys.stderr)
         return 0
     if args.command == "project-name":
         print(project_name(args.project_name, env_values, environ))

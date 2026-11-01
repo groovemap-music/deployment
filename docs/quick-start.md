@@ -8,7 +8,8 @@ does not provide a source-development environment for those services.
 - Git
 - Docker Engine with Docker Compose v2
 - python3 3.10 or newer (the distro's is enough; Debian 12 and Ubuntu 22.04 ship it)
-- Optional, for maintainers: [mise](https://mise.jdx.dev/) for the repository toolchain
+- Optional: `just` for the recipe shortcuts; every operator recipe also works without `uv`, on
+  the distro's python3. Maintainers can use [mise](https://mise.jdx.dev/) for the full toolchain
   (`just` and `uv`)
 - enough memory and storage for the selected stack and imported datasets
 - approved manifest digests for every required GrooveMap image
@@ -79,6 +80,15 @@ Docker Engine with Compose v2 must be working. GrooveMap's own images are built
 for `linux/amd64` only; on an arm64 host they run under emulation, much more
 slowly, and deploy asks before going ahead (Linux needs amd64 binfmt emulation
 registered first).
+
+To see where an install stands without changing anything, run `just status` (or
+`python3 scripts/status.py`): services, the Discogs gate, the store and monitoring decisions
+resolved from the shell and `.env`, and the reviewed image releases. A shell value wins even when
+empty, in which case Compose uses the variable's default instead of the `.env` value. It exits 0
+when it could determine the state and 2 when it could not. To reuse an existing PostgreSQL or
+Valkey, or an existing Grafana and VictoriaMetrics, see
+[Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey)
+and [Shared monitoring](homelab.md#shared-monitoring).
 
 `just deploy` starts containers, so `just check` and CI never run it. The steps
 below are the manual path it automates.
