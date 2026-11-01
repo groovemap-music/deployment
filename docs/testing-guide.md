@@ -98,11 +98,12 @@ flowchart LR
 ## Lux regressions: failure to regression test
 
 The operator's lux installation (deployment `6af13ec`, mixed stores, shared monitoring) exposed
-eight setup failures (rows 1–8). Later follow-up work added the promoted image checks and the
-loader-latch issue found in CI (rows 9–10); provenance is identified per row. Each fix has unit and
-render coverage in `just check`. A disposable Linux Docker smoke exercises the runtime scenarios
-and their negative cases. The smoke column is filled from its final report; entries marked
-`TODO(smoke)` are pending. See
+eight setup failures (rows 1–8). Later follow-up work added the promoted image checks and two
+CI-discovered gate races: the SQL loader's missing latch and discogs-graph-enricher's partial
+completion marker (rows 9–11). Provenance is identified per row. Each deployment fix has local
+unit or render coverage; the graph-enricher source fix has its own source-repository tests. A
+disposable Linux Docker smoke exercises the runtime scenarios and their negative cases. The smoke
+column is filled from its final report; entries marked `TODO(smoke)` are pending. See
 [Lux upgrade](homelab.md#lux-upgrade-from-6af13ec160fe7d) for the operator's view.
 
 | # | Issue and provenance | Fix | Unit and render tests | Linux smoke scenario and negative case |
@@ -116,7 +117,8 @@ and their negative cases. The smoke column is filled from its final report; entr
 | 7 | Lux: production rendering required `SOURCE_DUMP_ID` and `SOURCE_DUMP_DATE` with the embeddings job inactive | The values are required only by the job's wrapper, not by rendering | `test_compose_one_shots_and_collector.py::test_the_stack_renders_without_inactive_job_inputs`, `::test_the_embeddings_wrapper_refuses_to_run_without_real_values` | TODO(smoke): scenario; negative case |
 | 8 | Lux: reusing PostgreSQL did not add the database to the backup allowlist; generated secrets had no recovery path | Preflight and docs check backup coverage; `just recovery-manifest` lists what to encrypt; bootstrap refuses to regenerate a secret that existed | `test_recovery_manifest.py::test_manifest_lists_what_to_capture_and_prints_no_secret_value`, `::test_verify_rejects_a_removed_secret`, `::test_deploy_refuses_a_bootstrap_that_would_regenerate_a_secret`, `::test_deploy_keeps_restored_secrets` | TODO(smoke): scenario; negative case |
 | 9 | Follow-up: Explore theme release (`graph-explorer` v0.3.0) and the console's configurable targets | Reviewed digests promoted; the console reads its probe targets from the environment | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_status.py::test_reviewed_images_show_their_release_and_oci_labels`, `test_shared_monitoring.py::test_the_local_stack_sets_no_console_target_mode` | TODO(smoke): scenario; negative case |
-| 10 | CI smoke found the Discogs gate never completes because discogs-sql-loader v0.3.0 writes no latch | v0.4.0 (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes the latch when it receives extraction-complete signals; if v0.3.0 already acknowledged them, the gate stays fail-closed and needs operator-directed recovery | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_deploy.py::test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence`, `test_status.py::test_a_complete_gate_with_musicbrainz_not_yet_enabled_says_to_run_deploy` | TODO(smoke): scenario; negative case |
+| 10 | CI smoke found the Discogs gate never completes because discogs-sql-loader v0.3.0 writes no SQL completion latch | v0.4.0 (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes the latch when it receives extraction-complete signals; if v0.3.0 already acknowledged them, the gate stays fail-closed. A supported full reprocess is documented in the [lux recovery procedure](homelab.md#late-discogs-recovery) | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_deploy.py::test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence`, `test_status.py::test_a_complete_gate_with_musicbrainz_not_yet_enabled_says_to_run_deploy` | TODO(smoke): scenario; negative case |
+| 11 | CI smoke found `discogs-graph-enricher` v0.3.0 received all four completion signals, but a concurrent cache version reset lost the artists and masters markers; queues drained with only 2/4 durable | Source fix is merged into the graph-enricher source epic. Its candidate image is not yet published or promoted; keep v0.3.0 marked as affected and the gate closed until a reviewed release is available | `discogs-graph-enricher` source suite: 567 unit tests and 14 real-Neo4j tests pass; 9 regression cases fail against the old implementation | TODO(smoke): v0.4.0 release and runtime scenario pending; do not treat drained queues as completion |
 
 Operator-facing summaries (`just status`, preflight, and the effective store and monitoring
 decisions) are covered by `test_status.py` and

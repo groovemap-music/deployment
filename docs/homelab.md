@@ -547,8 +547,9 @@ A host that installed GrooveMap at deployment `6af13ec` (or `160fe7d`) with mixe
 external PostgreSQL with TLS, a dedicated Valkey) and shared monitoring carried local
 workarounds for eight failures. Every fix has regression coverage, with the mapping and Linux
 smoke status tracked in the [failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test),
-including the Discogs gate that never completed. Nothing below is destructive: no volume is
-removed, no store is touched, and secrets are never regenerated.
+including the SQL loader latch and graph completion-marker races found in CI. This procedure never
+removes volumes or regenerates secrets. The optional late-import recovery below triggers a full
+Discogs reprocess against the existing stores and requires explicit operator approval.
 
 **Ansible owns the deployment checkout and its `.env` and override.** Make the release and
 configuration changes in the Ansible-managed deployment; do not edit those managed files by hand
@@ -590,8 +591,11 @@ verification below:
   (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes it when it
   receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
   acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
-  fail-closed, do not restart the extractor or insert a latch row manually, and report the
-  missing evidence to the operator.
+  fail-closed, do not restart the extractor or insert a latch row manually. The
+  `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
+  its durable completion marker at 2/4 after all queues drain. A v0.4.0 graph-enricher image is not published or
+  promoted yet; retain the current reviewed pin and keep MusicBrainz disabled until a reviewed fix
+  is available. See [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
   depend on `rabbitmq-dlq-policy-init` completing successfully.
 
@@ -625,12 +629,35 @@ every other line. On lux, add needed values through Ansible's managed configurat
 5. Check `just discogs-import-status --prod` (the gate). Exit 0 means complete, exit 3 means
    importing, and exit 2 means the result cannot be determined. Exit 3 is normal progress; exit
    2 is not evidence of completion, so keep MusicBrainz gated and report the problem.
-6. If v0.3.0 already acknowledged the extraction-complete signals before the upgrade, v0.4.0
-   cannot recreate that missing latch from an empty queue. This is a late-upgrade recovery case:
-   do not restart the extractor or insert a latch row. Keep the gate closed and have the operator
-   arrange targeted recovery.
+6. If v0.3.0 already acknowledged the extraction-complete signals, or the graph marker is partial
+   despite drained queues, keep the gate closed. Do not restart the extractor or insert a latch or
+   marker row. Follow the operator-controlled [late Discogs recovery](#late-discogs-recovery)
+   procedure only after its preconditions are met.
 7. `just recovery-manifest`, then keep the listed files in an encrypted bundle, and check the
    [shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist).
+
+### Late Discogs recovery
+
+This is an operator-controlled **full new Discogs pass**, not a latch repair or a replay of only
+the missing terminal messages. Use it only after a read-only baseline is captured, the recovery
+bundle is encrypted, storage and database headroom are confirmed, the extractor is idle, the new
+loader and graph-enricher consumers are healthy, and the operator explicitly approves the write.
+Ansible remains the source of truth for the checkout, `.env`, and override. Keep MusicBrainz
+disabled throughout.
+
+Use the authenticated Catalog API admin endpoint `POST /api/admin/extractions/trigger` with the
+JSON body `{"source":"discogs"}`. Catalog API v0.6.0 routes this through the supported
+`discogs-ingestion` trigger with `force_reprocess=true`, records the extraction and audit entry,
+and returns `202` when accepted. The producer returns `409` if an extraction is already running;
+stop and re-check state instead of retrying concurrently. Do not call container restart commands,
+write latch or marker rows, replay broker messages manually, or delete volumes to manufacture a
+fresh run.
+
+A forced reprocess creates new producer state and may download and process the selected dump
+again. It is not a queue-only replay and its duration is not bounded by the missing-latch failure.
+After it finishes, verify all four SQL latch records and their refreshed state, all four durable
+graph completion markers, and drained queues. Then require `just discogs-import-status --prod`
+exit 0 before enabling MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
 
 A `grafana_data` volume created earlier needs the one-time re-own in
 [Grafana now runs as your user](#grafana-now-runs-as-your-user); old `*_logs` volumes are left
@@ -664,8 +691,12 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   services as unreachable; see [Shared monitoring](#shared-monitoring).
 - **A late discogs-sql-loader upgrade cannot reconstruct an acknowledged completion signal.** If
   v0.3.0 acknowledged the extraction-complete events before v0.4.0 was deployed, the latch stays
-  absent and the gate must remain closed until the operator arranges targeted recovery. Never
+  absent and the gate must remain closed until an operator approves a full new Discogs pass. Never
   insert the latch manually or restart the extractor to try to recreate it.
+- **The reviewed `discogs-graph-enricher` v0.3.0 can lose two completion markers in a concurrent
+  cache version reset.** Empty queues do not prove all four durable markers were written. The
+  source fix has passed source tests, but its v0.4.0 image is not yet published or promoted; keep
+  the gate closed until that release is reviewed and a new pass completes.
 - **An active first import is not a Compose-wide rollout window.** Take the read-only config and
   identity snapshot first, preserve the current extractor and loader IDs, and use a bounded,
   operator-approved tableinator-only promotion. Schedule full-stack recreation for after the

@@ -66,11 +66,22 @@ days to rebuild.
   (`assets/override-shared-monitoring-network.yml`).
 - **An operator recipe says `uv: command not found`:** it should not; operator recipes run on
   python3 3.10 or newer. Update the checkout. Only maintainer recipes (`just check`) need `uv`.
-- **The gate stays in progress after every queue drained:** verify that the Ansible-managed
-  deployment uses reviewed images, including discogs-sql-loader v0.4.0. Version v0.3.0 did not
-  write the completion latch. If it already acknowledged the extraction-complete signals,
-  v0.4.0 cannot recreate the latch from an empty queue; keep the gate closed and report this for
-  operator-directed recovery. Do not restart the extractor or insert a latch manually.
+- **The gate stays in progress after every queue drained:** empty queues are not completion
+  evidence. Keep MusicBrainz disabled and check the effective image pins plus all four SQL latch
+  records and four graph completion markers. discogs-sql-loader v0.3.0 did not write its latch;
+  discogs-graph-enricher v0.3.0 also has a CI-discovered race that can leave two graph markers
+  missing after a concurrent cache-version reset. The source fix exists, but a reviewed graph
+  image is not published yet.
+- **A completion latch or graph marker is missing:** do not restart the extractor, write a marker,
+  or replay broker messages manually. After a reviewed graph-enricher release and healthy new
+  consumers are deployed, recovery requires the operator's approval, a read-only baseline, an
+  encrypted recovery bundle and confirmed database/storage headroom. The supported option is a
+  full new Discogs reprocess through the authenticated Catalog API admin endpoint
+  `POST /api/admin/extractions/trigger` with `{"source":"discogs"}`; it may download and process
+  the selected dump again. A `202` means accepted; `409` means the producer is already running,
+  so re-check instead of retrying. Keep MusicBrainz off until the pass finishes, all four SQL
+  latch records and graph markers are fresh, the queues are drained and the gate exits 0. See
+  [late Discogs recovery](../../../docs/homelab.md#late-discogs-recovery).
 - **`just status`** (read-only) shows per service state, the gate, the recorded decisions and any
   image that is not the reviewed digest.
 
