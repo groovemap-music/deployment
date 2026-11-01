@@ -99,14 +99,16 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader and graph enricher
-`v0.3.0`; MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
+Matching consumer and schema images (Discogs SQL loader `v0.4.0` and graph enricher `v0.4.0`;
+MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which
+keeps the `v0.5.0` DDL, including `activity.event_idempotency` and
+`activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
@@ -254,6 +256,94 @@ Evidence:
   platform-health comparison against `v0.2.0` was not re-run.
 
 Rolling back is a pin change to the rollback digest above for the affected image alone.
+
+### Promotion of discogs-sql-loader v0.4.0 (2026-10-31)
+
+The digest was resolved from the released tag on GHCR and verified with `gh attestation verify
+oci://ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0).
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `discogs-sql-loader:v0.4.0` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` | `v0.3.0` — `sha256:09f55827f972ec289baad7128acca061739fd9d4d350f23f3d6d22afeafee7e6` |
+
+Why: `v0.3.0` never writes `public.loader_extraction_latch`, so the Discogs gate cannot complete.
+`v0.4.0` writes it.
+
+Compatibility: every relation `v0.4.0` requires is declared by `database-schema` `v0.5.0` and
+`v0.6.0`, so the pinned `v0.6.0` schema needs no change (evidence: the discogs-sql-loader release
+bead `gm-discogs-sql-loader-a8z0`).
+
+Evidence:
+
+- Diagnostic Linux run [41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+  used this SQL v0.4.0 digest with graph-enricher v0.3.0. It proved the SQL latch was 4/4 durable
+  with `refreshed_at`, but the overall gate remained closed because the graph marker was only 2/4.
+  This is diagnostic evidence, not a green run of both promoted consumers.
+
+Rolling back is a pin change to the rollback digest above for this image alone.
+
+### Promotion of discogs-graph-enricher v0.4.0 (2026-11-01)
+
+The published tag was built from the approved source commit
+`1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5` in release run
+[41343109766](https://github.com/groovemap-music/discogs-graph-enricher/actions/runs/41343109766).
+Its manifest digest was verified with `gh attestation verify
+oci://ghcr.io/groovemap-music/discogs-graph-enricher@sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0).
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `discogs-graph-enricher:v0.4.0` | `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` | `v0.3.0` — `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
+
+The published artifact was pulled and inspected for `linux/amd64`: OCI version `v0.4.0`, revision
+`1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5`, source
+`https://github.com/groovemap-music/discogs-graph-enricher`, and image user `1000:1000` all match
+the release. Source CI run
+[41342658276](https://github.com/groovemap-music/discogs-graph-enricher/actions/runs/41342658276)
+passed 567 unit tests and 14 real-Neo4j integration tests; 9 race regressions fail against the
+old implementation.
+
+The earlier Linux run [41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+proved the SQL v0.4.0 latch was 4/4 durable and refreshed, but exposed the independent graph v0.3.0
+race: only 2/4 graph completion markers persisted even though the relevant queues drained.
+
+The real combined-pin Linux smoke [41343620122](https://github.com/groovemap-music/deployment/actions/runs/41343620122)
+passed on deployment commit `fd649d58e9dbcf954842c1e03ffede1134be00ff` in 725 seconds. Its report
+had 29 passing assertions and 77 stack checks. Both v0.4.0 consumers received all four genuine
+fixture completion messages for version `20000101` at `2026-11-01T19:57:56Z`; the SQL latch row
+durably contained all four signals (`artists`, `labels`, `masters`, `releases`; generation 1) with
+`refreshed_at=2026-11-01T19:58:03.492945+00:00`, all four Neo4j graph markers were durable, and
+all eight queues drained. The gate moved from exit 3 to `COMPLETE` exit 0 at
+`2026-11-01T19:58:16Z`. The three MusicBrainz services were then enabled and each inspected as
+running and healthy using the documented producer stand-in; this verifies phase-2 enablement, not
+a full MusicBrainz import. No completion rows were inserted manually, the fixture was not
+serialized, and the gate logic was unchanged.
+
+The combined run also passed its negative cases: external-store off-network, wrong-CA, plaintext,
+and override-rewiring refusals; UID 59000 refusal to read a mode-0600 secret; invalid collector
+configuration unhealthy; failed DLQ policy initialization blocking seven dependents; and RabbitMQ
+readiness failing with the app stopped despite a live ping, then recovering when the app started.
+The legacy UID 1001 named-log failure was also reproduced.
+
+Additional unmodified candidate smokes with the same reviewed graph v0.4.0 and SQL v0.4.0 pins:
+
+- `just smoke-media`: 15/15 passed, exit 0; teardown removed all project containers, volumes and
+  networks.
+- `just smoke-released-fixture`: 7/7 passed, exit 0; no fake `SOURCE_DUMP_ID` or
+  `SOURCE_DUMP_DATE`; teardown removed all project resources.
+- `just smoke-released` (`gm-resume-released-20261101`): schema initialization succeeded twice,
+  all ten application services became healthy, shutdown completed and teardown removed all project
+  containers, volumes and networks.
+- `just smoke-erasure`: 32/32 passed with unchanged API and store images; this scenario does not
+  run the graph enricher, so the evidence remains applicable.
+
+These fresh-run results do not reconstruct completion signals already acknowledged by v0.3.0. A
+pin-only upgrade leaves a gate fail-closed if those terminal events are gone; do not restart the
+extractor or write latch/marker rows. Recovery requires an operator-approved full new Discogs pass
+after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
+healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
+pin-only promotion.
 
 ### Identifier lookup verification (2026-09-21)
 
