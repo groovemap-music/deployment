@@ -99,14 +99,16 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader `v0.4.0` and graph enricher
-`v0.3.0`; MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which keeps the `v0.5.0` DDL, including `activity.event_idempotency` and `activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
+Matching consumer and schema images (Discogs SQL loader `v0.4.0` and graph enricher `v0.4.0`;
+MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which
+keeps the `v0.5.0` DDL, including `activity.event_idempotency` and
+`activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
 | `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
@@ -258,8 +260,8 @@ Rolling back is a pin change to the rollback digest above for the affected image
 ### Promotion of discogs-sql-loader v0.4.0 (2026-10-31)
 
 The digest was resolved from the released tag on GHCR and verified with `gh attestation verify
-oci://ghcr.io/groovemap-music/discogs-sql-loader@<digest> --owner groovemap-music --signer-repo
-groovemap-music/automation` (exit 0).
+oci://ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0).
 
 | Image | Reviewed digest | Rollback tag and digest |
 | --- | --- | --- |
@@ -274,9 +276,40 @@ bead `gm-discogs-sql-loader-a8z0`).
 
 Evidence:
 
-- Linux smoke run: <URL>
+- Diagnostic Linux run [41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+  used this SQL v0.4.0 digest with graph-enricher v0.3.0. It proved the SQL latch was 4/4 durable
+  with `refreshed_at`, but the overall gate remained closed because the graph marker was only 2/4.
+  This is diagnostic evidence, not a green run of both promoted consumers.
 
 Rolling back is a pin change to the rollback digest above for this image alone.
+
+### Promotion of discogs-graph-enricher v0.4.0 (2026-11-01)
+
+The published tag was built from the approved source commit
+`1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5` in release run
+[41343109766](https://github.com/groovemap-music/discogs-graph-enricher/actions/runs/41343109766).
+Its manifest digest was verified with `gh attestation verify
+oci://ghcr.io/groovemap-music/discogs-graph-enricher@sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0).
+
+| Image | Reviewed digest | Rollback tag and digest |
+| --- | --- | --- |
+| `discogs-graph-enricher:v0.4.0` | `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` | `v0.3.0` — `sha256:e95fabb7633859c94e0913f9122ccbaed18a04a017c486886c38840c230ff80d` |
+
+The published artifact was pulled and inspected for `linux/amd64`: OCI version `v0.4.0`, revision
+`1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5`, source
+`https://github.com/groovemap-music/discogs-graph-enricher`, and image user `1000:1000` all match
+the release. Source CI run
+[41342658276](https://github.com/groovemap-music/discogs-graph-enricher/actions/runs/41342658276)
+passed 567 unit tests and 14 real-Neo4j integration tests; 9 race regressions fail against the
+old implementation.
+
+The earlier Linux run [41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+proved the SQL v0.4.0 latch was 4/4 durable and refreshed, but exposed the independent graph v0.3.0
+race: only 2/4 graph completion markers persisted even though the relevant queues drained. The
+new Linux run with both promoted pins is still pending; do not count this diagnostic run as green
+gate evidence. The final run must show all four durable signals in each store, SQL
+`refreshed_at`, Discogs gate exit 3 to 0, and phase-2 enable with no manual state changes.
 
 ### Identifier lookup verification (2026-09-21)
 
