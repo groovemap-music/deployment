@@ -342,7 +342,8 @@ These fresh-run results do not reconstruct completion signals already acknowledg
 pin-only upgrade leaves a gate fail-closed if those terminal events are gone; do not restart the
 extractor or write latch/marker rows. Recovery requires an operator-approved full new Discogs pass
 after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
-healthy v0.4.0 consumers (see the [late Discogs recovery procedure](homelab.md#late-discogs-recovery)).
+healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
+pin-only promotion.
 
 ### Identifier lookup verification (2026-09-21)
 
