@@ -311,8 +311,8 @@ race: only 2/4 graph completion markers persisted even though the relevant queue
 The real combined-pin Linux smoke [41343620122](https://github.com/groovemap-music/deployment/actions/runs/41343620122)
 passed on deployment commit `fd649d58e9dbcf954842c1e03ffede1134be00ff` in 725 seconds. Its report
 had 29 passing assertions and 77 stack checks. Both v0.4.0 consumers received all four genuine
-fixture completion messages for version `20000101` at `2026-11-01T19:57:56Z`; all four SQL latch
-rows (`artists`, `labels`, `masters`, `releases`; generation 1) were durable with
+fixture completion messages for version `20000101` at `2026-11-01T19:57:56Z`; the SQL latch row
+durably contained all four signals (`artists`, `labels`, `masters`, `releases`; generation 1) with
 `refreshed_at=2026-11-01T19:58:03.492945+00:00`, all four Neo4j graph markers were durable, and
 all eight queues drained. The gate moved from exit 3 to `COMPLETE` exit 0 at
 `2026-11-01T19:58:16Z`. The three MusicBrainz services were then enabled and each inspected as
