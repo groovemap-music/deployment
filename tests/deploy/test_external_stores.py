@@ -1075,6 +1075,30 @@ def test_the_postgres_check_counts_groovemaps_own_connections_as_headroom_only_w
     assert "30 of them GrooveMap's own" in running.stdout
 
 
+def test_a_compose_up_on_a_running_stack_counts_its_own_connections_too(tmp_path: Path) -> None:
+    """`docker compose up` runs the check again first, without deploy's flag: the stack's running clients tell it.
+
+    The homelab smoke found every re-run refused against lux's 60-connection role limit: 12 of the
+    stack's own connections left 48 of headroom.
+    """
+    fake = {"FAKE_LIMITS": "60 60", "FAKE_IN_USE": "12 12 12 12"}
+    refused, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert refused.returncode == 1
+    assert "only 48 connections of headroom" in refused.stderr
+    bin_dir = tmp_path / "bin"
+    getent = bin_dir / "getent"
+    getent.write_text('#!/bin/sh\n[ "$1" = hosts ] && [ "$2" = groovemap-tableinator ] && echo "172.20.0.9 $2"\n')
+    getent.chmod(0o755)
+    running, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert running.returncode == 0, running.stdout + running.stderr
+    assert "connection headroom 60 of the 60" in running.stdout
+    assert "12 of them GrooveMap's own" in running.stdout
+    # A peer name that does not resolve (the stack is down, or another host's stack holds them) gives nothing back.
+    getent.write_text("#!/bin/sh\nexit 2\n")
+    again, _ = _run_check(tmp_path, "store-check-postgres.sh", fake)
+    assert again.returncode == 1
+
+
 @pytest.mark.parametrize(
     ("fake", "reason"),
     [
@@ -1294,6 +1318,8 @@ def test_cleartext_postgres_to_a_server_off_this_machine_needs_the_opt_out(mode:
     assert _problems(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true") == []
     warnings = _warnings(EXTERNAL_POSTGRES_SSLMODE=mode, EXTERNAL_POSTGRES_ALLOW_PLAINTEXT="true")
     assert len(warnings) == 1 and "PostgreSQL at db.lan is reached in the clear" in warnings[0]
+    # Refused without the opt-out: no warning that claims the opt-out is set (the homelab smoke saw one).
+    assert _warnings(EXTERNAL_POSTGRES_SSLMODE=mode) == []
 
 
 def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> None:
@@ -1302,6 +1328,7 @@ def test_cleartext_valkey_to_a_server_off_this_machine_needs_the_opt_out() -> No
     assert "EXTERNAL_VALKEY_ALLOW_PLAINTEXT=true" in problems[0]
     assert _problems(EXTERNAL_VALKEY_TLS="false", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="yes") == []
     assert "Valkey at cache.lan is reached in the clear" in _warnings(EXTERNAL_VALKEY_TLS="0", EXTERNAL_VALKEY_ALLOW_PLAINTEXT="true")[0]
+    assert _warnings(EXTERNAL_VALKEY_TLS="0") == []
 
 
 @pytest.mark.parametrize("host", ["host.docker.internal", "127.0.0.1", "localhost"])
@@ -1372,6 +1399,10 @@ def test_verify_full_reaches_every_postgresql_client(
         service = external_render["services"][name]
         assert service["environment"]["PGSSLMODE"] == "verify-full", name
         assert service["environment"]["PGSSLROOTCERT"] == "/run/secrets/postgres_ca", name
+        # Password authentication only: libpq must not look for a client certificate in an image HOME
+        # the host user (the services' UID) may not be able to enter.
+        assert service["environment"]["PGSSLCERTMODE"] == "disable", name
+        assert require_render["services"][name]["environment"]["PGSSLCERTMODE"] == "disable", name
         assert {"source": "postgres_ca", "target": "/run/secrets/postgres_ca"} in service["secrets"], name
         # `require` must not get a root file: libpq would then verify after all.
         assert require_render["services"][name]["environment"]["PGSSLMODE"] == "require"

@@ -21,8 +21,8 @@ just check
 - checks the promoted extraction-rules and contract-fixture provenance records;
 - checks dependency license policy;
 - renders the base, production, infrastructure-smoke, media-smoke,
-  released-fixture-smoke, and erasure-smoke Compose configurations using
-  validation-only image digests;
+  released-fixture-smoke, and erasure-smoke Compose configurations, and the
+  homelab smoke's own PostgreSQL, using validation-only image digests;
 - scans the Git history and worktree for leaked secrets;
 - type-checks the Python validation scripts;
 - runs deployment regression tests with coverage.
@@ -87,6 +87,7 @@ flowchart LR
 | Compose topology, overlays, secrets wiring, and migration-script safeguards | `deployment/tests/deploy/` |
 | The media assertion's fixtures, event translation, and isolation | `deployment/tests/deploy/test_media_smoke.py` |
 | The erasure assertion's export parsing, absence probes, and isolation | `deployment/tests/deploy/test_erasure_smoke.py` |
+| The homelab smoke's provisioning SQL, generated override, stack/secrets/blocked-dependent checks, isolation and workflow pins | `deployment/tests/deploy/test_homelab_smoke.py` |
 | Image naming, digest pinning, and promoted-artifact provenance | `deployment/scripts/check-images.py` |
 | Compose rendering for supported overlays | `deployment/scripts/check-compose.sh` |
 | Catalog-DLQ size-cap policy: pattern matches the real DLQ names and provisioning wiring | `deployment/scripts/check-rabbitmq-dlq-policy.py` |
@@ -107,6 +108,190 @@ references pinned with `@sha256:<manifest-digest>`.
 The reviewed release digests are not kept in either environment file. They live
 in `RELEASED_IMAGE_DIGESTS` in `scripts/check-images.py`, which is what
 `just smoke-released` validates a candidate `.env` against.
+
+## What CI starts
+
+CI starts containers only in disposable smoke stacks, never a live environment.
+Today that is one workflow, `.github/workflows/smoke-homelab.yml`, which runs
+`just smoke-homelab` (below). Each smoke stack uses its own Compose projects,
+pulls only digest-pinned images, needs no secrets or credentials, and removes
+every container, volume and network it labelled on every exit. `just check`
+itself still starts nothing.
+
+## The homelab-shape smoke
+
+Mocks and Compose renders missed every failure found installing GrooveMap on lux
+(`gm-deployment-zg3x`). `just smoke-homelab` (`scripts/smoke-homelab.sh`, helpers
+in `scripts/smoke_homelab.py`) rebuilds lux's shape on real Docker and checks it
+end to end, plus the negative cases that must fail closed.
+
+**What it builds**, on a Linux amd64 Docker host:
+
+- a "homelab" PostgreSQL 18 (`config/homelab-smoke/compose.yml`, the stack's own
+  pinned image) in its own Compose project and bridge network, with a throwaway
+  CA and a server certificate for `homelab-postgres`. Its admin provisions
+  GrooveMap's role, database and `pg_trgm` with the SQL in
+  [homelab.md](homelab.md#what-groovemap-needs-from-each-server), then adds lux's
+  60-connection limits on the role and the database. The role is not a superuser;
+- the homelab's shared monitoring in the same project, on its own monitoring network:
+  VictoriaMetrics, VictoriaTraces, Grafana, node-exporter, cAdvisor and a PostgreSQL
+  exporter that already watches the homelab server, each on the image the stack pins;
+- GrooveMap from a disposable copy of the checkout. `.env` comes from
+  `scripts/env-init.py` with the reviewed digests and sets
+  `GROOVEMAP_POSTGRES=external` with `verify-full`. Valkey, Neo4j and RabbitMQ are
+  the stack's own. The override is generated from the skill's
+  `override-external-store-network.yml`, PostgreSQL half only, so exactly
+  `STORE_CLIENTS["postgres"]` join the homelab network. The operator writes the
+  PostgreSQL username, password and CA (0600), and `create-secrets.sh` writes the
+  rest as the running user;
+- `just deploy --no-wait --no-admin --force`, with uv off `PATH`. `--force` is
+  there because a CI runner cannot meet the production memory and disk minimums
+  for a full import, which the fixture does not need.
+
+**The positive path**, in order:
+
+1. With the stack's own monitoring, as every installation starts, phase 1
+   reaches `up --wait` success. Every service in Compose's render is checked:
+   one-shots (`store-check-postgres`, `schema-init`, `rabbitmq-dlq-policy-init`)
+   completed with 0, services with a healthcheck healthy (the collector and
+   Grafana, on a fresh volume, included), read-only roots and users as rendered,
+   and exactly the PostgreSQL clients on the homelab network. `secrets/` is 0700
+   with every file 0600 and owned by the deploying user. `valkey-exporter`,
+   running as that user, reports `redis_up 1`. That project is then removed.
+2. In lux's shape, `GROOVEMAP_MONITORING=shared` with the `SHARED_*` addresses
+   and `EXTERNAL_POSTGRES_EXPORTER_ADDRESS`, and the override also attaches
+   exactly `MONITORING_CLIENTS` to the monitoring network (from the skill's
+   `override-shared-monitoring-network.yml`). Phase 1 reaches `up --wait` success
+   with the same stack checks. The collector's `up` series for RabbitMQ and the
+   homelab's PostgreSQL exporter reach the shared VictoriaMetrics. The console's
+   own probe code (`dashboard.platform_health`, run in its container) must report
+   every service healthy and the shared ones probed as shared.
+3. The p9mu regression: after phase 1, `musicbrainz_data` exists, no MusicBrainz
+   container exists, and the profile is off.
+4. `just discogs-import-status --prod -f docker-compose.override.yml` exits 3 with
+   its reason. `just status` exits 0 and shows phase 1, the gate in progress,
+   MusicBrainz waiting on the gate and PostgreSQL external, with nothing flagged.
+   `just recovery-manifest` exits 0. All three run with uv off `PATH`.
+5. Re-running deploy while the gate reports 3 stays in phase 1 and starts no
+   MusicBrainz container. Its store check, which every `docker compose up` runs
+   again, must count the stack's own connections against the 60-connection
+   limits as GrooveMap's.
+6. The reviewed `discogs-ingestion` image runs once against the one-record dump
+   it packages (`LOCAL_MANIFEST`, see
+   [the released fixture](#live-and-performance-checks)). It publishes the record
+   and `extraction_complete` to all four exchanges. The real loaders then record
+   their latches and the SQL loader stamps its refresh. The smoke never writes a
+   latch row itself.
+7. The gate reaches 0, `just status` shows phase 1 finished, and re-running deploy
+   enables the musicbrainz profile from the gate and reaches `up --wait` success
+   with the MusicBrainz services. The stack checks pass again.
+
+During `up --wait` the two extractors are stand-ins (a sleep with a trivial
+healthcheck, in the generated override, nothing else changed). The real
+extractors would download the monthly dumps from data.discogs.com and the
+MusicBrainz mirror, and the smoke contacts nothing but the registries. Step 5
+runs the real Discogs extractor binary.
+
+**Negative cases**, each failing closed with a precise message:
+
+| Case | How it is provoked | What must happen |
+| --- | --- | --- |
+| Store check off the database network | the override leaves `store-check-postgres` off the homelab network | deploy exits 3: "PostgreSQL host homelab-postgres did not resolve or accept a connection from store-check-postgres", with the attachment advice; no container exists |
+| Wrong CA | `secrets/postgres_ca.crt` is another CA | deploy exits 3: "certificate verify failed"; no container exists |
+| Plaintext | `EXTERNAL_POSTGRES_SSLMODE=disable` to a non-loopback host, no opt-out | deploy exits 3: "EXTERNAL_POSTGRES_SSLMODE=disable sends credentials and data to homelab-postgres in the clear"; no container exists, and no warning claims the opt-out is set |
+| Override rewires PostgreSQL | the override sets `POSTGRES_HOST` on `api` | the override check stops deploy with exit 3: "docker-compose.override.yml changes POSTGRES_HOST on api"; no container exists |
+| Secret owner mismatch | `valkey-exporter` run as UID 59000 (redis_exporter's default, lux's crash loop) | it exits non-zero with "permission denied" on its 0600 password file |
+| Broker readiness | stop the RabbitMQ application while leaving its Erlang node running | `ping` passes, the actual listener healthcheck fails, then it passes after `start_app`; policy initialization waits for both AMQP and management HTTP |
+| Old log-volume ownership | mount the loader image's historical named `/logs` volume as UID 1001 | the real image exits non-zero with `PermissionError` |
+| Invalid collector configuration | the bind-mounted `config/otel-collector.yaml` gains an unknown top-level key, in place | the running collector turns unhealthy through the healthcheck that validates the command's own `--config` source, naming the key |
+| Failing one-shot | the override gives `rabbitmq-dlq-policy-init` an invalid overflow mode | deploy fails naming it; it exited non-zero and none of the services that wait on it, directly or not, ever started |
+
+**lux's failures and the cases that cover them** (`gm-deployment-zg3x`):
+
+| lux failure | Covered by |
+| --- | --- |
+| 1. External-store network coverage | the override from the skill example, the stack check that exactly `STORE_CLIENTS` are on the homelab network, and the store-check-off-network refusal |
+| 2. Collector configuration on a read-only root | `up --wait` with the collector healthy (Compose 5.6.1, read-only), the shared endpoints coming from env, and the invalid-configuration case |
+| 3. Secret ownership | `secrets/` modes and owners, `valkey-exporter` and Grafana running as the deploying user (`redis_up 1`), and the UID 59000 refusal |
+| 4. One-shots and `up --wait` | `up --wait` success with every one-shot completed, and the failing `rabbitmq-dlq-policy-init` case |
+| 5. Shared monitoring | the lux-shape phase: the shared-monitoring overlay, `MONITORING_CLIENTS` on the monitoring network, `up` series in the shared VictoriaMetrics, and the console's own probes |
+| 6. Operator tools without uv | `just deploy`, `discogs-import-status` (0/3 and its reason), `status` and `recovery-manifest`, all with uv off `PATH` |
+| 7. Disabled-job interpolation | every render and `up` of the production stack with no `SOURCE_DUMP_*` set |
+| 8. Backup and recovery | `just recovery-manifest` exits 0 on the external-store deployment, and deploy's secret-change guard runs on every deploy |
+
+**Run it locally** on any Linux amd64 Docker host with `just`, `uv`, `python3`,
+`openssl` and `git`: `just setup && just smoke-homelab`. Run it as the user whose
+UID the stack should use. It refuses to start where `groovemap-*` containers
+exist, because the stack's container names are fixed. It never touches another
+Compose project. Optional settings: `SMOKE_HOMELAB_RUN` (unique suffix),
+`SMOKE_HOMELAB_SUBNET` (stack network, default `172.29.0.0/16`),
+`SMOKE_HOMELAB_EVIDENCE_DIR` (keeps the report and logs) and
+`SMOKE_HOMELAB_GATE_TIMEOUT` (seconds, default 600). It cannot run on Docker
+Desktop for macOS: bind-mount ownership and UIDs are not the host's, and the
+images are amd64 only.
+
+**In CI**, the workflow runs on `main`, on bead branches (`wt/**`) and on pull
+requests that touch Compose files, `scripts/`, `config/`, `skills/`, the
+`Justfile` or the workflow. It also runs on any pull request labelled
+`smoke-homelab`, and on demand (`workflow_dispatch`). It runs on `ubuntu-24.04`
+with Docker Compose 5.6.1 (lux's version, checksum-pinned) and as a UID-1000
+user, lux's operator UID. It writes the PASS/FAIL report to the job summary and
+keeps the evidence (deploy, gate and status output, check results, the override,
+and container log tails on failure) as the `smoke-homelab-evidence` artifact for
+14 days.
+
+**Runtime and cost**: the job allows 60 minutes on a standard `ubuntu-24.04`
+runner (4 vCPU, 16 GB). The successful full run below took **725 seconds
+(12 minutes 5 seconds)**, including both monitoring shapes, the real fixture,
+MusicBrainz phase 2 and all negative cases. GitHub does not bill hosted runners
+for a public repository. Pushes to the same branch cancel the run in progress.
+
+Ordinary CI uses `env-init`'s reviewed release table. Manual `workflow_dispatch`
+can select an explicit SQL or graph candidate in its scratch stack. A graph
+candidate also requires the expected OCI version and full source revision;
+the SQL latch candidate is attested as the v0.4.0 release below. Every stage checks both
+loaders' rendered and running digests, OCI version, repository and source
+revision. The only permitted status warning names exactly the explicit
+unpromoted candidates. These inputs do not promote releases or alter an
+installed environment. `smoke_host_uid=1001` selects the actual runner UID for
+the separate tmpfs regression; the default is lux's UID 1000.
+
+**Observed acceptance evidence (2026-11-01):**
+[run 41343620122](https://github.com/groovemap-music/deployment/actions/runs/41343620122)
+passed at tested commit `fd649d58e9dbcf954842c1e03ffede1134be00ff`, as actual
+UID/GID `1000:1000`, Compose 5.6.1 and Docker Engine 28.0.4. The rendered and
+running images, with their actual OCI version/source labels, matched these
+releases in the local-monitoring, shared-monitoring and phase-2 stages:
+
+| Loader | OCI version | Image | Full source revision |
+| --- | --- | --- | --- |
+| SQL | v0.4.0 | `ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` | `86531426576195c1355a84909785410b70b0dde6` |
+| Graph | v0.4.0 | `ghcr.io/groovemap-music/discogs-graph-enricher@sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` | `1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5` |
+
+Both real loaders received `artists`, `labels`, `masters` and `releases`
+completion signals for fixture version `20000101` at 19:57:56 UTC. No completion
+row was inserted by the smoke. Its read-only SQL latch capture was:
+
+```json
+{"loader":"discogs","version":"20000101","signals":["artists","labels","masters","releases"],"created_at":"2026-11-01T19:57:56.872389+00:00","updated_at":"2026-11-01T19:58:03.492945+00:00","refreshed_at":"2026-11-01T19:58:03.492945+00:00","generation":1}
+```
+
+The gate started at exit 3 with no SQL latch row, then reached **exit 0 at
+19:58:16 UTC**: both latches 4/4, the fresh SQL refresh stamped, and all eight
+queues at ready=0/unacked=0. Phase 2 then enabled MusicBrainz and inspected
+`groovemap-extractor-musicbrainz`, `groovemap-brainzgraphinator` and
+`groovemap-brainztableinator` as running and healthy. The report has 29 PASS
+lines: local/shared/phase-2 stack checks (79/64/77), 18 secret checks, 13 console
+probes, uv-free operator recipes, p9mu resume and every negative case above.
+The failing policy initializer blocked all seven dependents. Artifacts retain
+per-stage renders and inspection, both images' labels, loader logs, the final
+JSON gate report and the read-only SQL latch.
+
+[Diagnostic run 41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+had already proved SQL v0.4.0 reached 4/4 and refreshed, while graph v0.3.0 lost
+concurrent signals and correctly held the gate at 3 (2/4); graph v0.4.0 fixes
+that race. Earlier run 41253011030 used SQL v0.3.0 (`09f55827f972…`) and cannot
+establish a v0.4.0 defect.
 
 ## Live and performance checks
 

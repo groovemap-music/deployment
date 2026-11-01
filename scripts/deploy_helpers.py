@@ -1036,12 +1036,17 @@ def check_override(
     return findings
 
 
-PUBLISHED = re.compile(r":(\d+)->")
+# Docker collapses consecutive ports into a range ("127.0.0.1:8004-8005->8004-8005/tcp"), so a
+# re-run would otherwise take the stack's own api and explore ports for someone else's.
+PUBLISHED = re.compile(r":(\d+)(?:-(\d+))?->")
 
 
 def published_ports(ports_column: str) -> set[int]:
-    """Host ports out of `docker ps --format {{.Ports}}` ("0.0.0.0:5433->5432/tcp, ...")."""
-    return {int(port) for port in PUBLISHED.findall(ports_column)}
+    """Host ports out of `docker ps --format {{.Ports}}` ("0.0.0.0:5433->5432/tcp, 0.0.0.0:8004-8005->8004-8005/tcp, ...")."""
+    ports: set[int] = set()
+    for first, last in PUBLISHED.findall(ports_column):
+        ports.update(range(int(first), int(last or first) + 1))
+    return ports
 
 
 # --- is there already a MusicBrainz deployment? ---------------------------------------
