@@ -24,6 +24,12 @@ HOST_UID = "1001"
 HOST_GID = "1002"
 NEO4J_UID = "7474"
 UNITS = {"k": 1024, "m": 1024**2, "g": 1024**3}
+# The shipped configs from the Compose-pinned 2026.10.0 image use 20 MB files
+# with up to 7 archives (HTTP uses 5): include an active file and every
+# appender, including HTTP even though it is disabled by default. Include the
+# optional GC log's 5 archives too. See the Neo4j Operations Manual's default
+# logging configuration.
+NEO4J_ROTATION_BUDGET = (8 + 8 + 6 + 8 + 8 + 6) * 20 * UNITS["m"]
 
 # Services built on the shared Python logging (common.config): LOG_FILE defaults to /logs/<service>.log
 # and rotates by LOG_FILE_MAX_BYTES x LOG_FILE_BACKUP_COUNT.
@@ -109,7 +115,11 @@ def test_logs_is_a_capped_tmpfs_owned_by_the_runtime_user(render: dict[str, Any]
     assert (options["uid"], options["gid"]) == (expected_uid, expected_gid)
     assert options["mode"] == "0750"
     assert {"noexec", "nosuid"} <= set(options)
-    assert _bytes(options["size"]) <= 64 * UNITS["m"]
+    if name == "neo4j":
+        assert _bytes(options["size"]) >= NEO4J_ROTATION_BUDGET
+        assert _bytes(options["size"]) <= UNITS["g"]
+    else:
+        assert _bytes(options["size"]) <= 64 * UNITS["m"]
     if name != "neo4j":
         assert service["user"] == f"{HOST_UID}:{HOST_GID}"
 

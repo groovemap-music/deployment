@@ -325,9 +325,12 @@ host has applied it or that every third-party image emits the same log fields.
 ### Container log files (`/logs`)
 
 Each service that writes `/logs` gets a per-service tmpfs there, owned by `${UID}:${GID}`
-(Neo4j: `7474:7474`), mode `0750`, `noexec,nosuid`, capped at **64 MiB** of RAM. Content is lost
-when the container is recreated; the durable copy is the container's stdout through Docker's
-json-file driver (`docker compose logs <service>`).
+(Neo4j: `7474:7474`), mode `0750`, `noexec,nosuid`. Application services are capped at **64 MiB**
+of RAM; Neo4j gets a **1 GiB** cap because the pinned 2026.10.0 image ships 20 MB log files with
+up to seven archives (HTTP keeps five). That allows about 760 MiB across the five log streams,
+including HTTP even though it is disabled by default; with its optional GC log's five archives,
+the conservative budget is 880 MiB. Content is lost when the container is recreated; the durable
+copy is the container's stdout through Docker's json-file driver (`docker compose logs <service>`).
 
 The shared Python logger rotates `/logs/<service>.log` by `LOG_FILE_MAX_BYTES` (compose sets
 `20971520`, 20 MiB) with `LOG_FILE_BACKUP_COUNT` backups (compose sets `2`). The worst case is

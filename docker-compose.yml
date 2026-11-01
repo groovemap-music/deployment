@@ -18,8 +18,12 @@ x-logging: &default-logging
 # (3 files x 20 MiB = 60 MiB). docs/configuration.md documents both.
 x-logs-tmpfs: &logs-tmpfs "/logs:rw,noexec,nosuid,uid=${UID:-1000},gid=${GID:-1000},mode=0750,size=64m"
 
-# Neo4j runs as its own image user (7474), not ${UID}; its logs are self-rotated.
-x-neo4j-logs-tmpfs: &neo4j-logs-tmpfs "/logs:rw,noexec,nosuid,uid=7474,gid=7474,mode=0750,size=64m"
+# Neo4j runs as its own image user (7474), not ${UID}; its default Log4j files
+# rotate at 20 MB with up to 7 archives (HTTP keeps 5). Budgeting one active
+# file plus archives for all five appenders, even if HTTP is enabled, and the
+# optional GC log is conservatively 880 MiB. Keep the tmpfs capped at 1 GiB so
+# the image's defaults fit even if GC logging is enabled later.
+x-neo4j-logs-tmpfs: &neo4j-logs-tmpfs "/logs:rw,noexec,nosuid,uid=7474,gid=7474,mode=0750,size=1g"
 
 # Rotation for the shared Python logging (LOG_FILE defaults to /logs/<service>.log):
 # the active file plus LOG_FILE_BACKUP_COUNT backups, each at most LOG_FILE_MAX_BYTES.
