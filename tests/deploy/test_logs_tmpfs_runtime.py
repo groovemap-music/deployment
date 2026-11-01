@@ -126,7 +126,9 @@ def test_runtime_probes_execute_each_writer_and_report_only_success(tmp_path: Pa
 
     def successful_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        assert kwargs == {"capture_output": True, "text": True, "check": False}
+        assert set(kwargs) == {"capture_output", "text", "check", "env"}
+        assert (kwargs["capture_output"], kwargs["text"], kwargs["check"]) == (True, True, False)
+        assert "COMPOSE_FILE" not in kwargs["env"] and "COMPOSE_PROFILES" not in kwargs["env"]
         return subprocess.CompletedProcess(command, 0, "", "")
 
     probe.run_probes(rendered, ["docker", "compose"], runner=successful_run)
@@ -140,8 +142,9 @@ def test_runtime_probe_fails_with_service_context_without_printing_success(tmp_p
     rendered = tmp_path / "rendered.json"
     rendered.write_text(json.dumps({"services": {"api": _service()}}))
 
-    def failed_run(command: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+    def failed_run(command: list[str], *, capture_output: bool, text: bool, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         assert (capture_output, text, check) == (True, True, False)
+        assert "COMPOSE_FILE" not in env and "COMPOSE_PROFILES" not in env
         return subprocess.CompletedProcess(command, 1, "", "permission denied")
 
     with pytest.raises(probe.ProbeError, match=r"(?s)api: /logs tmpfs runtime ownership/write probe failed \(exit 1\).*permission denied"):
@@ -181,8 +184,9 @@ def test_running_services_are_inspected_and_probed_in_place_while_one_shots_use_
     )
     calls: list[list[str]] = []
 
-    def successful_run(command: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+    def successful_run(command: list[str], *, capture_output: bool, text: bool, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         assert (capture_output, text, check) == (True, True, False)
+        assert "COMPOSE_FILE" not in env and "COMPOSE_PROFILES" not in env
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -212,8 +216,9 @@ def test_existing_writer_with_wrong_actual_mount_fails_without_fresh_probe(tmp_p
         )
     )
 
-    def unexpected_run(command: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+    def unexpected_run(command: list[str], *, capture_output: bool, text: bool, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         assert (capture_output, text, check) == (True, True, False)
+        assert "COMPOSE_FILE" not in env and "COMPOSE_PROFILES" not in env
         raise AssertionError(f"must fail the inspected container, not pass via fresh run: {command}")
 
     with pytest.raises(probe.ProbeError, match=r"HostConfig\.Tmpfs has no /logs entry"):
@@ -238,8 +243,9 @@ def test_existing_writer_mount_options_must_match_the_compose_render(tmp_path: P
         )
     )
 
-    def unexpected_run(command: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+    def unexpected_run(command: list[str], *, capture_output: bool, text: bool, check: bool, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         assert (capture_output, text, check) == (True, True, False)
+        assert "COMPOSE_FILE" not in env and "COMPOSE_PROFILES" not in env
         raise AssertionError(f"must fail the inspected container, not pass via fresh run: {command}")
 
     with pytest.raises(probe.ProbeError, match=r"HostConfig\.Tmpfs size does not match the Compose render"):

@@ -351,6 +351,35 @@ inspect_stack() {
     echo '[]' >"$EVIDENCE/inspect.json"
   fi
 }
+check_logs_runtime() {
+  local name=$1 profile=${2:-} rendered
+  rendered="$EVIDENCE/rendered-$name.json"
+  local compose_args=(docker compose --project-name "$PROJECT")
+  if [[ -n "$profile" ]]; then
+    if [[ "$name" == "phase-1" && "$profile" == "jobs" ]]; then
+      ! grep -q '^COMPOSE_PROFILES=.*musicbrainz' .env || fail "phase 1 enabled MusicBrainz before the gate reached 0"
+      [[ -z "$(docker ps -a --filter "label=$LABEL=$PROJECT" --format '{{.Label "com.docker.compose.service"}}' | grep -E '^(extractor-musicbrainz|brainzgraphinator|brainztableinator)$' || true)" ]] ||
+        fail "phase 1 has MusicBrainz containers before the gate reached 0"
+    fi
+    rendered="$EVIDENCE/rendered-$name-$profile.json"
+    compose --profile "$profile" config --format json >"$rendered"
+    compose_args+=(--profile "$profile")
+  fi
+  python3 scripts/probe_logs_tmpfs.py --rendered "$rendered" --inspect "$EVIDENCE/inspect-$name.json" -- "${compose_args[@]}" \
+    >"$EVIDENCE/logs-tmpfs-$name.log" 2>&1 || {
+    cat "$EVIDENCE/logs-tmpfs-$name.log"
+    fail "$name: runtime /logs tmpfs ownership probe failed (see logs-tmpfs-$name.log)"
+  }
+  pass "$name: runtime /logs probes passed ($(grep -c '^ok ' "$EVIDENCE/logs-tmpfs-$name.log") services)"
+
+  python3 scripts/check_positive_service_logs.py --inspect "$EVIDENCE/inspect-$name.json" --evidence-dir "$EVIDENCE/service-logs-$name" \
+    >"$EVIDENCE/positive-logs-$name.log" 2>&1 || {
+    cat "$EVIDENCE/positive-logs-$name.log"
+    cat "$EVIDENCE/service-logs-$name/permission-log-check.txt" >&2 || true
+    fail "$name: positive service logs contain a permission error (see service-logs-$name)"
+  }
+  pass "$name: captured and checked positive service logs; no Permission denied or PermissionError"
+}
 check_stack() {
   local name=$1
   # A bare `docker compose` reads COMPOSE_FILE, which deploy keeps in .env: the same files as deploy.
@@ -367,6 +396,13 @@ check_stack() {
     cat "$EVIDENCE/check-stack-$name.log"
     fail "$name: the running stack differs from its render (see check-stack-$name.log)"
   }
+  # In phase 1, enable only the optional jobs profile so embeddings gets its
+  # filesystem probe. MusicBrainz remains inactive until phase 2 follows gate 0.
+  if [[ "$name" == "phase-1" ]]; then
+    check_logs_runtime "$name" jobs
+  else
+    check_logs_runtime "$name"
+  fi
   local service actual_image rendered_image expected_image expected_version expected_revision repository version revision source
   for service in tableinator graphinator; do
     if [[ "$service" == tableinator ]]; then

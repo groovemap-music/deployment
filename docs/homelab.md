@@ -579,9 +579,11 @@ and `just recovery-manifest`. Keep the existing extractor and consumer image IDs
 chooses a bounded rollout. Do not run a broad Ansible deployment or Compose update while the
 import is active. In a bounded, operator-approved window, promote both Discogs consumers together:
 `tableinator` (SQL loader) and `graphinator` (graph enricher) to their reviewed v0.4.0 pins. Keep
-the extractor and all MusicBrainz image pins unchanged. Existing log volumes remain in place. A
-separate pending change covers UID-owned `/logs` tmpfs; defer any Compose-wide recreation for it to
-a maintenance window after the import.
+the extractor and all MusicBrainz image pins unchanged. Keep the old `*_logs` volumes in place; the
+updated Compose files mount a per-service tmpfs at `/logs` and never delete those volumes. Apply the
+mount change in the same bounded maintenance window after the import has completed, because Compose
+recreates services when it applies the new mounts. Do not interrupt the active import to roll out
+this change.
 
 Remove the local mitigations from the Ansible role only after the updated checkout passes the
 verification below:
@@ -683,8 +685,8 @@ graph completion markers are present, and queues are drained. Then require
 MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
 
 A `grafana_data` volume created earlier needs the one-time re-own in
-[Grafana now runs as your user](#grafana-now-runs-as-your-user); existing `*_logs` volumes are
-left untouched. UID-owned `/logs` tmpfs is a separate pending change, not part of this recovery.
+[Grafana now runs as your user](#grafana-now-runs-as-your-user). Existing `*_logs` volumes are
+left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the bounded deploy.
 
 ## Known limitations
 

@@ -1025,6 +1025,10 @@ def run_preflight(runner: FakeRunner, mode: str = "prod", **kwargs: Any) -> int:
         "env_values": {},
         "in_use": lambda _address, _port: False,
         "binfmt": lambda: False,
+        # FakeRunner's Docker total is fixture data. Keep ordinary direct tests deterministic;
+        # the available-memory cases below pass their own values explicitly.
+        "linux": True,
+        "meminfo": lambda: None,
     } | kwargs
     result: int = helpers.preflight(mode, docker=helpers.Docker(runner), **options)
     return result
@@ -1290,6 +1294,18 @@ class Deploy:
         for relative in COPIED:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / relative, root / relative)
+        # The deploy subprocess uses a fake, local Docker engine. Give its copied helper a
+        # fixture-owned /proc-like file, leaving locality, port checks, and disk checks intact.
+        fake_meminfo = root / "fake-meminfo"
+        # The CLI test's FakeRunner models only Docker's total; it has no fixture for free RAM.
+        # Omitting MemAvailable exercises the existing unknown-availability behavior without
+        # making a false claim that a low-total fake engine has ample available memory.
+        fake_meminfo.write_text("MemTotal: 65536000 kB\n")
+        deploy_helpers = root / "scripts" / "deploy_helpers.py"
+        helper_source = deploy_helpers.read_text()
+        binding = 'MEMINFO = Path("/proc/meminfo")'
+        assert helper_source.count(binding) == 1
+        deploy_helpers.write_text(helper_source.replace(binding, f"MEMINFO = Path({str(fake_meminfo)!r})"))
         (root / "scripts" / "discogs_import_status.py").write_text(FAKE_GATE)
         bin_dir = root / "bin"
         bin_dir.mkdir()

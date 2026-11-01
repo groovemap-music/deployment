@@ -561,6 +561,7 @@ def test_the_workflow_runs_on_linux_with_pinned_tools_and_no_secrets() -> None:
     job = workflow["jobs"]["smoke"]
     assert job["runs-on"] == "ubuntu-24.04"
     assert job["timeout-minutes"] <= 60
+    assert workflow["concurrency"]["group"] == "smoke-homelab-${{ github.ref }}-${{ inputs.smoke_host_uid || '1000' }}"
     for reference in re.findall(r"uses:\s+(\S+)", text):
         assert re.search(r"@[0-9a-f]{40}$", reference), reference
     assert "secrets." not in text
@@ -570,3 +571,23 @@ def test_the_workflow_runs_on_linux_with_pinned_tools_and_no_secrets() -> None:
     # The label opt-in and the path filter agree on what counts as a change to the stack.
     for path in ("docker-compose", "scripts/", "config/", "skills/"):
         assert path in text
+
+
+def test_runtime_tmpfs_and_positive_log_checks_follow_active_smoke_stages() -> None:
+    text = SCRIPT.read_text()
+    check_logs = text[text.index("check_logs_runtime()") : text.index("check_stack()")]
+    assert "scripts/probe_logs_tmpfs.py" in check_logs
+    assert '--inspect "$EVIDENCE/inspect-$name.json"' in check_logs
+    assert "scripts/check_positive_service_logs.py" in check_logs
+    assert "service-logs-$name" in check_logs
+    assert 'if [[ "$name" == "phase-1" ]]' in text
+    assert 'check_logs_runtime "$name" jobs' in text
+    assert 'check_logs_runtime "$name"' in text
+    assert "--profile '*'" not in check_logs
+    phase_one = check_logs.index('if [[ "$name" == "phase-1" && "$profile" == "jobs" ]]')
+    musicbrainz_guard = check_logs.index("COMPOSE_PROFILES=.*musicbrainz")
+    jobs_render = check_logs.index('compose --profile "$profile" config')
+    assert phase_one < musicbrainz_guard < jobs_render
+    gate_complete = text.index('pass "gate (uv off PATH): exit 0 once both loaders')
+    phase_two_check = text.index("check_stack phase-2")
+    assert gate_complete < phase_two_check, "MusicBrainz log probes must remain after the gate reaches 0"

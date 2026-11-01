@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -229,6 +230,9 @@ def run_probes(
     if compose_prefix[:2] != ["docker", "compose"]:
         raise ProbeError("Compose command prefix must begin with docker compose")
     fresh_by_service = dict(zip((name for name, _uid, _gid in writers), probe_commands(compose_prefix, writers), strict=True))
+    child_environment = os.environ.copy()
+    child_environment.pop("COMPOSE_FILE", None)
+    child_environment.pop("COMPOSE_PROFILES", None)
     for service_name, uid, gid in writers:
         service = render["services"][service_name]
         container = active.get(service_name)
@@ -242,7 +246,7 @@ def run_probes(
             raise ProbeError(f"{service_name}: expected active log-writer container is {status or 'not running'}")
         else:
             raise ProbeError(f"{service_name}: active log-writer has no inspected container")
-        result = runner(command, capture_output=True, text=True, check=False)
+        result = runner(command, capture_output=True, text=True, check=False, env=child_environment)
         if result.returncode:
             detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
             raise ProbeError(
