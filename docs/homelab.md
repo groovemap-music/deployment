@@ -523,11 +523,11 @@ What changes in shared mode:
    on a missing or malformed one; it warns about what it cannot monitor and prints the shared
    Grafana instead of a local login.
 
-**The console needs its configurable-targets release.** The reviewed operations-console (v0.2.0)
-predates the `<NAME>_MODE` targets the overlay sets. It ignores them, which is harmless, but keeps
-probing the omitted services by their compose names, so until the release that reads them is
-promoted (`gm-deployment-8nbg`) it still shows them unreachable; `just deploy` says so with a
-`[warn]` line. Everything else in shared mode works with v0.2.0.
+**The console needs its configurable-targets release.** The reviewed operations-console is v0.3.0,
+the first release that reads the `<NAME>_MODE` targets the overlay sets, so the omitted services show
+as shared. An older console ignores them, which is harmless, but keeps probing the omitted services by
+their compose names and shows them unreachable; `just deploy` warns when `.env` runs one
+(`CONSOLE_TARGETS_FLOOR` in `scripts/check-images.py`).
 
 **History.** Series written before this change lack the stack label on the exporter and collector
 series, so the scoped infrastructure panels start at the upgrade (application series always had it).
