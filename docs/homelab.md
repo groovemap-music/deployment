@@ -559,12 +559,13 @@ host settings; `EXTERNAL_POSTGRES_SSLMODE` remains `verify-full`.
 **Snapshot first; do not interrupt an active import.** Before changing the checkout or running an
 update, have Ansible capture a read-only baseline: deployed commit, effective configuration and
 image pins, current service/container identities, `just status`, the Discogs gate and queue state,
-and `just recovery-manifest`. Keep the existing extractor and loader image IDs until an operator
+and `just recovery-manifest`. Keep the existing extractor and consumer image IDs until an operator
 chooses a bounded rollout. Do not run a broad Ansible deployment or Compose update while the
-import is active. Promote only `tableinator` (the Discogs SQL loader) in a bounded,
-operator-approved window; preserve the extractor and the other loader images. The old log volumes
-remain in place. Any later Compose-wide recreation for the separate `/logs` tmpfs change belongs
-in a maintenance window after the import.
+import is active. In a bounded, operator-approved window, promote both Discogs consumers together:
+`tableinator` (SQL loader) and `graphinator` (graph enricher) to their reviewed v0.4.0 pins. Keep
+the extractor and all MusicBrainz image pins unchanged. Existing log volumes remain in place. A
+separate pending change covers UID-owned `/logs` tmpfs; defer any Compose-wide recreation for it to
+a maintenance window after the import.
 
 Remove the local mitigations from the Ansible role only after the updated checkout passes the
 verification below:
@@ -593,9 +594,11 @@ verification below:
   acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
   fail-closed, do not restart the extractor or insert a latch row manually. The
   `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
-  its durable completion marker at 2/4 after all queues drain. A v0.4.0 graph-enricher image is not published or
-  promoted yet; retain the current reviewed pin and keep MusicBrainz disabled until a reviewed fix
-  is available. See [late Discogs recovery](#late-discogs-recovery).
+  its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
+  v0.4.0 pin (`sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`) together
+  with the SQL loader v0.4.0 pin; the combined Linux smoke passed the full gate. A pin-only upgrade
+  still cannot recreate signals already acknowledged by v0.3.0. See
+  [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
   depend on `rabbitmq-dlq-policy-init` completing successfully.
 
@@ -617,8 +620,9 @@ every other line. On lux, add needed values through Ansible's managed configurat
 1. Have Ansible capture the read-only config and identity baseline above, then update the
    deployment checkout. Preserve the existing `.env`, override and secrets; do not regenerate
    secrets or replace host-specific values.
-2. Choose and approve a bounded tableinator-only rollout. Keep existing extractor and other loader
-   pins, and do not run the full deployment while Discogs is active.
+2. Choose and approve a bounded rollout of both Discogs consumers: `tableinator` and `graphinator`
+   at the reviewed v0.4.0 pins. Keep the extractor and MusicBrainz pins unchanged, and do not run
+   the full deployment while Discogs is active.
 3. After the import is complete and the operator chooses the maintenance window, apply the
    remaining deployment changes through Ansible. Preflight reports each effective store and
    monitoring decision and stops before changing anything on a setting it cannot honour.
@@ -626,9 +630,10 @@ every other line. On lux, add needed values through Ansible's managed configurat
    effective store and monitoring decisions with their sources, the services that are shared or
    external rather than missing, the reviewed image digests and the Discogs gate. Exit 3 from
    `just discogs-import-status` means the import is still in progress, not an error.
-5. Check `just discogs-import-status --prod` (the gate). Exit 0 means complete, exit 3 means
-   importing, and exit 2 means the result cannot be determined. Exit 3 is normal progress; exit
-   2 is not evidence of completion, so keep MusicBrainz gated and report the problem.
+5. Check the Lux gate with `just discogs-import-status --prod -f docker-compose.override.yml`.
+   Exit 0 means complete, exit 3 means importing, and exit 2 means the result cannot be
+   determined. Exit 3 is normal progress; exit 2 is not evidence of completion, so keep
+   MusicBrainz gated and report the problem.
 6. If v0.3.0 already acknowledged the extraction-complete signals, or the graph marker is partial
    despite drained queues, keep the gate closed. Do not restart the extractor or insert a latch or
    marker row. Follow the operator-controlled [late Discogs recovery](#late-discogs-recovery)
@@ -655,13 +660,15 @@ fresh run.
 
 A forced reprocess creates new producer state and may download and process the selected dump
 again. It is not a queue-only replay and its duration is not bounded by the missing-latch failure.
-After it finishes, verify all four SQL latch records and their refreshed state, all four durable
-graph completion markers, and drained queues. Then require `just discogs-import-status --prod`
-exit 0 before enabling MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
+After it finishes, verify the single SQL latch row for the selected version contains all four
+signals (`artists`, `labels`, `masters`, `releases`) and a non-null `refreshed_at`, all four durable
+graph completion markers are present, and queues are drained. Then require
+`just discogs-import-status --prod -f docker-compose.override.yml` to exit 0 before enabling
+MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
 
 A `grafana_data` volume created earlier needs the one-time re-own in
-[Grafana now runs as your user](#grafana-now-runs-as-your-user); old `*_logs` volumes are left
-alone (they stay until you remove them yourself; a separate change moves logs to tmpfs).
+[Grafana now runs as your user](#grafana-now-runs-as-your-user); existing `*_logs` volumes are
+left untouched. UID-owned `/logs` tmpfs is a separate pending change, not part of this recovery.
 
 ## Known limitations
 
@@ -686,22 +693,25 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   external-stores mode is supported: the capability floors are met by the reviewed release set,
   and `just deploy` still refuses a store whose settings, secrets, TLS or server checks fail.
   See [Existing PostgreSQL and Valkey](#existing-postgresql-and-valkey).
-- **Shared monitoring needs the next console release for truthful health rows.** Until the
-  operations-console release with configurable targets is promoted, the console shows the shared
-  services as unreachable; see [Shared monitoring](#shared-monitoring).
-- **A late discogs-sql-loader upgrade cannot reconstruct an acknowledged completion signal.** If
+- **Shared monitoring needs operations-console v0.3.0 or newer for truthful health rows.** The
+  reviewed set pins v0.3.0; an older console ignores the configurable targets and shows shared
+  services as unreachable. `just deploy` warns below the reviewed floor; see
+  [Shared monitoring](#shared-monitoring).
+- **A late Discogs-consumer upgrade cannot reconstruct acknowledged completion signals.** If
   v0.3.0 acknowledged the extraction-complete events before v0.4.0 was deployed, the latch stays
   absent and the gate must remain closed until an operator approves a full new Discogs pass. Never
   insert the latch manually or restart the extractor to try to recreate it.
 - **The reviewed `discogs-graph-enricher` v0.3.0 can lose two completion markers in a concurrent
   cache version reset.** Empty queues do not prove all four durable markers were written. The
-  source fix is merged into its source epic and passed source tests, but its v0.4.0 image is not
-  yet published or promoted; keep the gate closed until that release is reviewed and a new pass
-  completes.
+  source fix is released as v0.4.0 and promoted at
+  `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`; the combined Linux
+  smoke proved all four markers and drained queues for a fresh fixture pass. This does not recover
+  an earlier acknowledged terminal signal.
 - **An active first import is not a Compose-wide rollout window.** Take the read-only config and
-  identity snapshot first, preserve the current extractor and loader IDs, and use a bounded,
-  operator-approved tableinator-only promotion. Schedule full-stack recreation for after the
-  import; do not destroy or replace its data volumes.
+  identity snapshot first, preserve the current extractor and MusicBrainz IDs, and use a bounded,
+  operator-approved `tableinator` plus `graphinator` promotion. Schedule full-stack recreation for
+  after the import; do not destroy or replace its data volumes. The UID-owned `/logs` tmpfs change
+  remains separate until its dedicated bead lands.
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations
