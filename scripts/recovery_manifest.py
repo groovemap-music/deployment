@@ -32,8 +32,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OVERRIDE_FILE = "docker-compose.override.yml"
 FINGERPRINT_CHARS = 16
-# Named tuples: the formatter would rewrite an inline `except (A, B)` to the 3.14-only form, a SyntaxError on 3.10.
-GIT_ERRORS = (OSError, subprocess.SubprocessError)
 GIT = shutil.which("git") or "git"
 IMAGE_PIN = re.compile(r"^([A-Z][A-Z0-9_]*_IMAGE)\s*=\s*['\"]?([^\s'\"#]+@sha256:[0-9a-f]{64})['\"]?\s*(?:#.*)?$")
 STORE_MODE = re.compile(r"^(GROOVEMAP_POSTGRES|GROOVEMAP_VALKEY)\s*=\s*['\"]?(external|local)['\"]?\s*(?:#.*)?$")
@@ -111,7 +109,7 @@ def owner(info: os.stat_result) -> str:
 def git(root: Path, *args: str) -> str | None:
     try:
         result = subprocess.run([GIT, *args], cwd=root, capture_output=True, text=True, timeout=30, check=False)  # noqa: S603 -- fixed git argv, no shell
-    except GIT_ERRORS:
+    except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
 

@@ -82,7 +82,7 @@ deploy *args:
 # See docs/maintenance.md#recovery-bundle. Standard library only; uv is optional.
 [positional-arguments]
 recovery-manifest *args:
-    @if command -v uv >/dev/null 2>&1; then exec uv run --quiet python scripts/recovery_manifest.py "$@"; else exec python3 scripts/recovery_manifest.py "$@"; fi
+    {{operator_python}} scripts/recovery_manifest.py "$@"
 
 # Writes .env from .env.example, filling every image digest from the reviewed release set in
 # scripts/check-images.py. Refuses to replace an existing .env unless --force is given, which

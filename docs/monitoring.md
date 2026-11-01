@@ -15,6 +15,16 @@ docker compose logs --tail=100
 docker compose logs --tail=100 api
 ```
 
+For one read-only summary of the whole deployment, run `just status` (or
+`python3 scripts/status.py`): per service installed, healthy, importing or waiting on the
+Discogs gate, the store and monitoring decisions resolved with Compose's shell-over-`.env`
+precedence, and each running image against the reviewed release table. A present but empty shell
+variable selects the Compose default; it does not fall through to `.env`. Services that are
+external or shared appear as such rather than missing. Exit 0 means the state was determined, 2
+that it could not be. While a store is
+external, plain `docker compose` commands in the checkout follow the files `just deploy` keeps in
+`COMPOSE_FILE`, so they see the same stack.
+
 Add timestamps when correlating events:
 
 ```bash

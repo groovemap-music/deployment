@@ -1768,3 +1768,55 @@ def test_a_refusal_by_the_server_itself_gets_no_network_hint(external: ExternalD
     assert result.returncode == 3
     assert "refused the external store" in result.stderr
     assert "did not resolve" not in result.stderr
+
+
+# --- recorded decisions share one source with read_stores ------------------------------------
+
+
+def test_an_empty_shell_variable_overrides_env_and_uses_the_compose_default() -> None:
+    env_values = {"GROOVEMAP_POSTGRES": "external"}
+    environ = {"GROOVEMAP_POSTGRES": ""}
+    assert stores.read_stores(env_values, environ).postgres == "local"
+    assert ("PostgreSQL", "local", "the shell") in stores.recorded_decisions(env_values, environ)
+
+
+def test_an_empty_shell_variable_matches_the_compose_render_and_reported_decision(tmp_path: Path) -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("no docker binary to render a Compose interpolation fixture")
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GROOVEMAP_POSTGRES=external\n")
+    compose_file = tmp_path / "compose.yml"
+    compose_file.write_text(
+        "services:\n  api:\n    image: example.invalid/api:latest\n    environment:\n      STORE_MODE: ${GROOVEMAP_POSTGRES:-local}\n"
+    )
+    result = subprocess.run(
+        [docker, "compose", "--env-file", str(env_file), "-f", str(compose_file), "config", "--format", "json"],
+        cwd=tmp_path,
+        env={**os.environ, "GROOVEMAP_POSTGRES": ""},
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered = json.loads(result.stdout)
+    actual = rendered["services"]["api"]["environment"]["STORE_MODE"]
+
+    env_values = helpers.parse_env(env_file.read_text())
+    environ = {"GROOVEMAP_POSTGRES": ""}
+    decisions = stores.recorded_decisions(env_values, environ)
+    assert actual == stores.read_stores(env_values, environ).postgres == "local"
+    assert ("PostgreSQL", actual, "the shell") in decisions
+
+
+def test_a_shell_value_wins_over_env_in_both() -> None:
+    env_values = {"GROOVEMAP_VALKEY": "local"}
+    environ = {"GROOVEMAP_VALKEY": "external"}
+    assert stores.read_stores(env_values, environ).valkey == "external"
+    assert ("Valkey", "external", "the shell") in stores.recorded_decisions(env_values, environ)
+
+
+def test_an_invalid_mode_is_refused_not_displayed() -> None:
+    with pytest.raises(stores.StoreConfigError, match="GROOVEMAP_MONITORING"):
+        stores.recorded_decisions({"GROOVEMAP_MONITORING": "sometimes"}, {})

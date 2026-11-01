@@ -159,6 +159,11 @@ to address the same stack by hand.
 
 ### Effective Compose inputs
 
+For these interpolated values, Compose reads the shell first, then `.env`, then the declared
+default. A shell variable that exists but is empty still takes precedence over `.env`; for a
+`${NAME:-default}` expression Compose chooses the default. Preflight and `just status` report the
+same effective value and its source, so their decision summaries match the rendered stack.
+
 The following groups are interpolated by the executable stack:
 
 | Inputs | Purpose |
@@ -738,10 +743,11 @@ anything starts.
 
 The console gets the operations-console configurable targets (`<NAME>_MODE` and its URL):
 `shared` with the URLs above for VictoriaMetrics, VictoriaTraces, Grafana, node-exporter and
-cAdvisor, and `disabled` or `shared` for an omitted PostgreSQL or Valkey exporter. A console
-release that predates them ignores the variables, which is harmless, but keeps probing the omitted
-services by their compose names and shows them unreachable; `just deploy` warns while the reviewed
-console is below `CONSOLE_TARGETS_FLOOR` in `scripts/check-images.py`.
+cAdvisor, and `disabled` or `shared` for an omitted PostgreSQL or Valkey exporter. The reviewed
+operations-console v0.3.0 reads them. A console that predates them ignores the variables, which is
+harmless, but keeps probing the omitted services by their compose names and shows them
+unreachable; `just deploy` warns while `.env` pins a console below `CONSOLE_TARGETS_FLOOR` in
+`scripts/check-images.py`.
 
 Shared endpoints must accept unauthenticated writes and reads from this host (the usual homelab
 setup on an internal Docker network); an `https://` endpoint must present a certificate the system
@@ -1031,7 +1037,7 @@ DISCOGS_USER_AGENT="GrooveMap/1.0 +https://groovemap.music"
 
 # Optional — HKDF master encryption key (derives OAuth + TOTP encryption keys)
 # Required for TOTP 2FA. Without it, OAuth tokens are stored unencrypted and 2FA is disabled.
-# Generate with: uv run python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+# Generate with: python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # In production, supply via ENCRYPTION_MASTER_KEY_FILE (Docker secret)
 ENCRYPTION_MASTER_KEY="your-master-key-here"
 

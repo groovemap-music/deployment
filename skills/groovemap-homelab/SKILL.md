@@ -210,13 +210,14 @@ stacks already use, ask whether GrooveMap should report to them or run its own. 
 supported, with these consequences to state:
 
 - The stack runs no Grafana, VictoriaMetrics, VictoriaTraces, node-exporter or cAdvisor of its
-  own, and no Grafana admin password is created. Its collector writes to the shared stores; the
-  console probes the shared services.
+  own. No local Grafana admin password is required or newly generated; preserve an existing
+  `secrets/grafana_admin_password.txt` from an earlier deployment. Its collector writes to the
+  shared stores; the console probes the shared services.
 - Someone with admin rights on the shared Grafana imports GrooveMap's dashboards and alert rules
   (every query is scoped to `service_namespace="groovemap"`, so they never mix in other stacks),
   ideally into an organization of their own, and creates the optional Viewer token there.
-- Until the operations-console release with configurable targets is promoted, the console shows
-  the shared services as unreachable (`just deploy` warns).
+- The reviewed operations-console v0.3.0 reads the configurable targets and shows the shared
+  services as Shared; a console pinned older shows them as unreachable (`just deploy` warns).
 - Shared endpoints must accept unauthenticated access on an internal network.
 
 With approval, set only `GROOVEMAP_MONITORING=shared` and the `SHARED_*` values in `.env` (and
@@ -293,6 +294,14 @@ Inside the checkout:
 
 Once the user approves starting containers:
 
+For an existing deployment with its first import still active, do not run a broad Ansible or
+Compose update. First capture a read-only config and identity snapshot (deployed commit, image
+pins and service identities, `just status`, gate/queue state, and `just recovery-manifest`). Keep
+the current extractor and consumer image IDs until the operator chooses a bounded rollout. In
+that approved window promote both Discogs consumers, `tableinator` and `graphinator`, to their
+reviewed v0.4.0 pins; keep the extractor and MusicBrainz pins unchanged. Do not restart the
+extractor or replace any data volume. See [the Lux upgrade procedure](../../docs/homelab.md#lux-upgrade-from-6af13ec160fe7d).
+
 ```bash
 just deploy --no-wait
 ```
@@ -322,8 +331,11 @@ MusicBrainz on by itself. Ctrl-C or a reboot loses nothing, and re-running resum
    `EXPLORE_HEALTH_HOST_PORT` or `API_HEALTH_HOST_PORT` moved them. Check each proxied URL
    with `curl -sSI`. Fix proxy errors now, while the import runs.
 2. **URLs:** give the user their URLs: the proxied hostnames when a proxy is used, otherwise
-   the endpoints `just deploy` printed. Grafana's admin password is in
-   `secrets/grafana_admin_password.txt`. Tell the user where it is, but don't print it.
+   the endpoints `just deploy` printed. With local monitoring Grafana's admin password is in
+   `secrets/grafana_admin_password.txt`; tell the user where it is, but don't print it. With
+   shared monitoring, there is no local Grafana or local password requirement. Do not create a new
+   password file; preserve an existing one from an upgraded deployment. Users sign in to their
+   own Grafana.
 3. **First admin:** the console signs in admins created with `catalog-admin-setup`, which asks
    for a password on a terminal. Ask the user to run it in their own terminal on the host:
    `docker exec -it groovemap-api catalog-admin-setup --email you@example.com`. Sign-in
