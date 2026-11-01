@@ -306,10 +306,43 @@ old implementation.
 
 The earlier Linux run [41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
 proved the SQL v0.4.0 latch was 4/4 durable and refreshed, but exposed the independent graph v0.3.0
-race: only 2/4 graph completion markers persisted even though the relevant queues drained. The
-new Linux run with both promoted pins is still pending; do not count this diagnostic run as green
-gate evidence. The final run must show all four durable signals in each store, SQL
-`refreshed_at`, Discogs gate exit 3 to 0, and phase-2 enable with no manual state changes.
+race: only 2/4 graph completion markers persisted even though the relevant queues drained.
+
+The real combined-pin Linux smoke [41343620122](https://github.com/groovemap-music/deployment/actions/runs/41343620122)
+passed on deployment commit `fd649d58e9dbcf954842c1e03ffede1134be00ff` in 725 seconds. Its report
+had 29 passing assertions and 77 stack checks. Both v0.4.0 consumers received all four genuine
+fixture completion messages for version `20000101` at `2026-11-01T19:57:56Z`; all four SQL latch
+rows (`artists`, `labels`, `masters`, `releases`; generation 1) were durable with
+`refreshed_at=2026-11-01T19:58:03.492945+00:00`, all four Neo4j graph markers were durable, and
+all eight queues drained. The gate moved from exit 3 to `COMPLETE` exit 0 at
+`2026-11-01T19:58:16Z`. The three MusicBrainz services were then enabled and each inspected as
+running and healthy using the documented producer stand-in; this verifies phase-2 enablement, not
+a full MusicBrainz import. No completion rows were inserted manually, the fixture was not
+serialized, and the gate logic was unchanged.
+
+The combined run also passed its negative cases: external-store off-network, wrong-CA, plaintext,
+and override-rewiring refusals; UID 59000 refusal to read a mode-0600 secret; invalid collector
+configuration unhealthy; failed DLQ policy initialization blocking seven dependents; and RabbitMQ
+readiness failing with the app stopped despite a live ping, then recovering when the app started.
+The legacy UID 1001 named-log failure was also reproduced.
+
+Additional unmodified candidate smokes with the same reviewed graph v0.4.0 and SQL v0.4.0 pins:
+
+- `just smoke-media`: 15/15 passed, exit 0; teardown removed all project containers, volumes and
+  networks.
+- `just smoke-released-fixture`: 7/7 passed, exit 0; no fake `SOURCE_DUMP_ID` or
+  `SOURCE_DUMP_DATE`; teardown removed all project resources.
+- `just smoke-released` (`gm-resume-released-20261101`): schema initialization succeeded twice,
+  all ten application services became healthy, shutdown completed and teardown removed all project
+  containers, volumes and networks.
+- `just smoke-erasure`: 32/32 passed with unchanged API and store images; this scenario does not
+  run the graph enricher, so the evidence remains applicable.
+
+These fresh-run results do not reconstruct completion signals already acknowledged by v0.3.0. A
+pin-only upgrade leaves a gate fail-closed if those terminal events are gone; do not restart the
+extractor or write latch/marker rows. Recovery requires an operator-approved full new Discogs pass
+after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
+healthy v0.4.0 consumers (see the [late Discogs recovery procedure](homelab.md#late-discogs-recovery)).
 
 ### Identifier lookup verification (2026-09-21)
 
