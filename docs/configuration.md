@@ -332,8 +332,9 @@ json-file driver (`docker compose logs <service>`).
 The shared Python logger rotates `/logs/<service>.log` by `LOG_FILE_MAX_BYTES` (compose sets
 `20971520`, 20 MiB) with `LOG_FILE_BACKUP_COUNT` backups (compose sets `2`). The worst case is
 (1 + 2) x 20 MiB = 60 MiB, which fits the 64 MiB cap; raise the cap and the rotation settings
-together (a test checks that the budget fits). The Rust extractors log JSON to stdout only,
-so their `/logs` tmpfs stays empty.
+together (a test checks that the budget fits). The monthly `embeddings` job uses the same file
+logger at `/logs/embeddings.log`. The Rust extractors log JSON to stdout only, so their `/logs`
+tmpfs stays empty.
 
 ### RabbitMQ Configuration
 

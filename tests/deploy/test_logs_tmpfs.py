@@ -37,6 +37,7 @@ PYTHON_LOG_SERVICES = [
     "dashboard",
     "explore",
     "insights",
+    "embeddings",
 ]
 # The Rust extractors log JSON to stdout only; /logs exists in their image but nothing rotates there.
 EXTRACTOR_SERVICES = ["extractor-discogs", "extractor-musicbrainz"]

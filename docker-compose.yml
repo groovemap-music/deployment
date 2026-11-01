@@ -1226,7 +1226,7 @@ services:
     profiles:
       - jobs
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: embeddings
       LOG_LEVEL: INFO
       POSTGRES_DATABASE: groovemap
@@ -1253,6 +1253,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - *logs-tmpfs
 
 volumes:
   rabbitmq_data:
