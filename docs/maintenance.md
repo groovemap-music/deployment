@@ -163,9 +163,10 @@ its repository.
 At this 2026-10-31 snapshot, `discogs-graph-enricher` and `discogs-sql-loader` were still at
 `v0.3.0` (then the latest tags). Their later `v0.4.0` promotions and gate evidence are recorded
 below.
-Commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5` (SQL loader), the
-rollout's `HEALTH_PORT` override and exit-1 changes, are in no tag yet. Rollout constraint O5 says
-those releases are not coupled to anything, so nothing waits on them.
+At that snapshot, commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5`
+(SQL loader), the rollout's `HEALTH_PORT` override and exit-1 changes, were not in a release tag.
+The subsequent v0.4.0 promotions below include the consumer changes. Rollout constraint O5 meant
+those earlier releases were not coupled to anything.
 
 Rolling the MusicBrainz consumers or the console back is not independent: they are coupled to the
 Compose health ports and to the console's credentials (rollout constraints T1 and T2). Use the
