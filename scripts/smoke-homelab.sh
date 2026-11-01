@@ -408,6 +408,21 @@ metrics="$(compose exec -T api python -c 'import urllib.request; print(urllib.re
   fail "could not read valkey-exporter's metrics from the api container"
 grep -qx 'redis_up 1' <<<"$metrics" || fail "valkey-exporter reports redis_up $(grep '^redis_up' <<<"$metrics" || echo missing)"
 pass "valkey-exporter as $uid:$gid read its 0600 password file and authenticated (redis_up 1); Grafana healthy as $uid:$gid on a fresh volume"
+
+say "Negative case: a live Erlang node without broker listeners must not be healthy"
+rabbit_health="$(docker inspect --format '{{index .Config.Healthcheck.Test 1}}' groovemap-rabbitmq)"
+compose exec -T rabbitmq rabbitmqctl stop_app >"$EVIDENCE/rabbitmq-readiness.log" 2>&1
+compose exec -T rabbitmq rabbitmq-diagnostics -q ping >>"$EVIDENCE/rabbitmq-readiness.log" 2>&1 || fail "stopped RabbitMQ application did not leave its Erlang node answering ping"
+status=0
+compose exec -T rabbitmq sh -c "$rabbit_health" >>"$EVIDENCE/rabbitmq-readiness.log" 2>&1 || status=$?
+((status != 0)) || fail "RabbitMQ health passed while its application listeners were closed"
+compose exec -T rabbitmq rabbitmqctl start_app >>"$EVIDENCE/rabbitmq-readiness.log" 2>&1
+deadline=$((SECONDS + 120))
+until compose exec -T rabbitmq sh -c "$rabbit_health" >>"$EVIDENCE/rabbitmq-readiness.log" 2>&1; do
+  ((SECONDS < deadline)) || fail "RabbitMQ listeners did not recover after start_app"
+  sleep 5
+done
+pass "RabbitMQ readiness: ping passed with the application stopped, listener health failed (exit $status), and recovered after start_app"
 remove_project "$PROJECT"
 remove_project_resources "$PROJECT"
 

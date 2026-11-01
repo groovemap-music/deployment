@@ -97,7 +97,9 @@ services:
           - message-broker
           - amqp
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # A node can answer ping before RabbitMQ opens its listeners. The policy
+      # initializer needs management HTTP, and the consumers need AMQP.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_port_listener 5672 && rabbitmq-diagnostics -q check_port_listener 15672"]
       interval: 30s
       timeout: 10s
       retries: 5
