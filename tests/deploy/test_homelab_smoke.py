@@ -505,11 +505,57 @@ def test_the_script_passes_shellcheck() -> None:
     assert completed.returncode == 0, completed.stdout
 
 
+@pytest.mark.parametrize(
+    ("candidate", "version", "revision", "reason"),
+    [
+        ("ghcr.io/groovemap-music/discogs-graph-enricher:latest", "v0.4.0", "a" * 40, "digest-pinned"),
+        ("ghcr.io/groovemap-music/discogs-graph-enricher@sha256:" + "a" * 64, "", "", "expected OCI version"),
+        ("ghcr.io/groovemap-music/discogs-graph-enricher@sha256:" + "a" * 64, "v0.4.0", "short", "full source revision"),
+    ],
+)
+def test_graph_candidate_attestation_is_required_before_docker(tmp_path: Path, candidate: str, version: str, revision: str, reason: str) -> None:
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    marker = tmp_path / "docker-called"
+    for tool in ("docker", "git", "python3", "openssl", "just", "uv", "tar"):
+        stub = tools / tool
+        stub.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 99\n")
+        stub.chmod(0o755)
+    uname = tools / "uname"
+    uname.write_text("#!/bin/sh\necho Linux\n")
+    uname.chmod(0o755)
+    bash = shutil.which("bash")
+    assert bash is not None
+    result = subprocess.run(
+        [bash, str(SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{tools}:/usr/bin:/bin",
+            "TMPDIR": str(tmp_path),
+            "RUNNER_TEMP": str(tmp_path),
+            "SMOKE_HOMELAB_SQL_LOADER_IMAGE": "",
+            "SMOKE_HOMELAB_GRAPH_LOADER_IMAGE": candidate,
+            "SMOKE_HOMELAB_GRAPH_LOADER_VERSION": version,
+            "SMOKE_HOMELAB_GRAPH_LOADER_REVISION": revision,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert reason in result.stderr
+    assert not marker.exists()
+
+
 def test_the_workflow_runs_on_linux_with_pinned_tools_and_no_secrets() -> None:
     text = WORKFLOW.read_text()
     workflow = yaml.safe_load(text)
     triggers = workflow[True]  # PyYAML reads the bare `on` key as True
     assert set(triggers) == {"pull_request", "push", "workflow_dispatch"}
+    # Ordinary CI must follow future reviewed promotions; candidates are explicit manual inputs.
+    for loader in ("sql", "graph"):
+        assert triggers["workflow_dispatch"]["inputs"][f"{loader}_loader_image"]["default"] == ""
     assert "main" in triggers["push"]["branches"]
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["smoke"]
