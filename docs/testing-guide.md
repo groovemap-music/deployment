@@ -241,36 +241,57 @@ and container log tails on failure) as the `smoke-homelab-evidence` artifact for
 14 days.
 
 **Runtime and cost**: the job allows 60 minutes on a standard `ubuntu-24.04`
-runner (4 vCPU, 16 GB). The diagnostic run below took 20 minutes 49 seconds,
-including a ten-minute gate timeout. Successful full-run timing remains to be
-measured. GitHub does not bill hosted runners for a public repository. Pushes
-to the same branch cancel the run in progress.
+runner (4 vCPU, 16 GB). The successful full run below took **725 seconds
+(12 minutes 5 seconds)**, including both monitoring shapes, the real fixture,
+MusicBrainz phase 2 and all negative cases. GitHub does not bill hosted runners
+for a public repository. Pushes to the same branch cancel the run in progress.
 
 Ordinary CI uses `env-init`'s reviewed release table. Manual `workflow_dispatch`
 can select an explicit SQL or graph candidate in its scratch stack. A graph
 candidate also requires the expected OCI version and full source revision;
-the SQL latch candidate is attested as v0.4.0 at
-`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`,
-source `86531426576195c1355a84909785410b70b0dde6`. Every stage checks both
+the SQL latch candidate is attested as the v0.4.0 release below. Every stage checks both
 loaders' rendered and running digests, OCI version, repository and source
 revision. The only permitted status warning names exactly the explicit
 unpromoted candidates. These inputs do not promote releases or alter an
 installed environment. `smoke_host_uid=1001` selects the actual runner UID for
 the separate tmpfs regression; the default is lux's UID 1000.
 
-**Observed diagnostic evidence (2026-11-01):**
-[run 41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034),
-tested commit `d2120f7c3e6eda16eeb974847bc448de15e8d1c5`, used the exact SQL
-v0.4.0 digest and source above. Its real fixture produced all four completion
-messages. PostgreSQL reached latch 4/4 and stamped the refresh, while the
-reviewed graph loader v0.3.0 retained only labels and releases after concurrent
-first-version signals. The gate stayed at exit 3 with Neo4j 2/4 and drained
-queues; phase 2 was correctly skipped and the run failed. The broker readiness
-negative, both monitoring shapes, 0600 secrets and the other fail-closed cases
-passed. This is SQL-loader success evidence, not a green whole-stack result.
-Earlier run 41253011030 used SQL v0.3.0 (`09f55827f972…`) and cannot establish
-a v0.4.0 defect. Artifacts retain per-stage renders and inspection, image
-labels, loader logs, the final JSON gate report and the read-only SQL latch.
+**Observed acceptance evidence (2026-11-01):**
+[run 41343620122](https://github.com/groovemap-music/deployment/actions/runs/41343620122)
+passed at tested commit `fd649d58e9dbcf954842c1e03ffede1134be00ff`, as actual
+UID/GID `1000:1000`, Compose 5.6.1 and Docker Engine 28.0.4. The rendered and
+running images, with their actual OCI version/source labels, matched these
+releases in the local-monitoring, shared-monitoring and phase-2 stages:
+
+| Loader | OCI version | Image | Full source revision |
+| --- | --- | --- | --- |
+| SQL | v0.4.0 | `ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` | `86531426576195c1355a84909785410b70b0dde6` |
+| Graph | v0.4.0 | `ghcr.io/groovemap-music/discogs-graph-enricher@sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` | `1cf8c3cbd2401cc4b434dc80f17d5d29ab17c6f5` |
+
+Both real loaders received `artists`, `labels`, `masters` and `releases`
+completion signals for fixture version `20000101` at 19:57:56 UTC. No completion
+row was inserted by the smoke. Its read-only SQL latch capture was:
+
+```json
+{"loader":"discogs","version":"20000101","signals":["artists","labels","masters","releases"],"created_at":"2026-11-01T19:57:56.872389+00:00","updated_at":"2026-11-01T19:58:03.492945+00:00","refreshed_at":"2026-11-01T19:58:03.492945+00:00","generation":1}
+```
+
+The gate started at exit 3 with no SQL latch row, then reached **exit 0 at
+19:58:16 UTC**: both latches 4/4, the fresh SQL refresh stamped, and all eight
+queues at ready=0/unacked=0. Phase 2 then enabled MusicBrainz and inspected
+`groovemap-extractor-musicbrainz`, `groovemap-brainzgraphinator` and
+`groovemap-brainztableinator` as running and healthy. The report has 29 PASS
+lines: local/shared/phase-2 stack checks (79/64/77), 18 secret checks, 13 console
+probes, uv-free operator recipes, p9mu resume and every negative case above.
+The failing policy initializer blocked all seven dependents. Artifacts retain
+per-stage renders and inspection, both images' labels, loader logs, the final
+JSON gate report and the read-only SQL latch.
+
+[Diagnostic run 41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034)
+had already proved SQL v0.4.0 reached 4/4 and refreshed, while graph v0.3.0 lost
+concurrent signals and correctly held the gate at 3 (2/4); graph v0.4.0 fixes
+that race. Earlier run 41253011030 used SQL v0.3.0 (`09f55827f972…`) and cannot
+establish a v0.4.0 defect.
 
 ## Live and performance checks
 
