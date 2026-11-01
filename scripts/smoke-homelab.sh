@@ -47,10 +47,13 @@ NETWORK="$PROJECT-homelab"
 MONITORING_NETWORK="$PROJECT-monitoring"
 SUBNET="${SMOKE_HOMELAB_SUBNET:-172.29.0.0/16}"
 GATE_TIMEOUT="${SMOKE_HOMELAB_GATE_TIMEOUT:-600}"
-# Operator-supplied release candidate with the durable extraction latch and refresh.
-# Keep explicit until promoted into the deployment-wide reviewed image set.
-DEFAULT_SQL_LOADER_IMAGE=ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
-SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-$DEFAULT_SQL_LOADER_IMAGE}"
+# Explicit candidates affect only this scratch stack. Defaults come from env-init's
+# reviewed release table, so ordinary CI follows later promotions automatically.
+KNOWN_SQL_LATCH_IMAGE=ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
+SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-}"
+GRAPH_LOADER_IMAGE="${SMOKE_HOMELAB_GRAPH_LOADER_IMAGE:-}"
+GRAPH_LOADER_VERSION="${SMOKE_HOMELAB_GRAPH_LOADER_VERSION:-}"
+GRAPH_LOADER_REVISION="${SMOKE_HOMELAB_GRAPH_LOADER_REVISION:-}"
 FIXTURE_MANIFEST=/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
 LABEL=com.docker.compose.project
 STARTED=$SECONDS
@@ -145,7 +148,11 @@ cleanup() {
 for tool in docker git python3 openssl just uv tar; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is not on PATH"
 done
-[[ "$SQL_LOADER_IMAGE" =~ ^ghcr\.io/groovemap-music/discogs-sql-loader@sha256:[0-9a-f]{64}$ ]] || die "SQL loader must be a digest-pinned ghcr.io/groovemap-music/discogs-sql-loader image"
+[[ -z "$SQL_LOADER_IMAGE" || "$SQL_LOADER_IMAGE" =~ ^ghcr\.io/groovemap-music/discogs-sql-loader@sha256:[0-9a-f]{64}$ ]] || die "SQL loader must be a digest-pinned ghcr.io/groovemap-music/discogs-sql-loader image"
+if [[ -n "$GRAPH_LOADER_IMAGE" ]]; then
+  [[ "$GRAPH_LOADER_IMAGE" =~ ^ghcr\.io/groovemap-music/discogs-graph-enricher@sha256:[0-9a-f]{64}$ ]] || die "graph loader must be a digest-pinned ghcr.io/groovemap-music/discogs-graph-enricher image"
+  [[ "$GRAPH_LOADER_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$GRAPH_LOADER_REVISION" =~ ^[0-9a-f]{40}$ ]] || die "a graph candidate needs its expected OCI version and full source revision"
+fi
 docker compose version >/dev/null 2>&1 || die "the docker compose plugin is not installed"
 arch="$(docker info --format '{{.Architecture}}')"
 [[ "$arch" == x86_64 ]] || die "the GrooveMap images are linux/amd64 only and this engine is $arch; run it on an amd64 host"
@@ -211,8 +218,21 @@ set_env() {
 }
 python3 scripts/env-init.py >"$EVIDENCE/env-init.log"
 REVIEWED_SQL_LOADER_IMAGE="$(sed -n 's/^DISCOGS_SQL_LOADER_IMAGE=//p' .env)"
+REVIEWED_GRAPH_LOADER_IMAGE="$(sed -n 's/^DISCOGS_GRAPH_ENRICHER_IMAGE=//p' .env)"
+SQL_LOADER_IMAGE="${SQL_LOADER_IMAGE:-$REVIEWED_SQL_LOADER_IMAGE}"
+GRAPH_LOADER_IMAGE="${GRAPH_LOADER_IMAGE:-$REVIEWED_GRAPH_LOADER_IMAGE}"
+SQL_LOADER_VERSION="$(python3 -c 'import runpy; print("v" + runpy.run_path("scripts/check-images.py")["RELEASED_IMAGE_VERSIONS"]["DISCOGS_SQL_LOADER_IMAGE"])')"
+GRAPH_LOADER_VERSION="${GRAPH_LOADER_VERSION:-$(python3 -c 'import runpy; print("v" + runpy.run_path("scripts/check-images.py")["RELEASED_IMAGE_VERSIONS"]["DISCOGS_GRAPH_ENRICHER_IMAGE"])')}"
+SQL_LOADER_REVISION=""
+if [[ "$SQL_LOADER_IMAGE" == "$KNOWN_SQL_LATCH_IMAGE" ]]; then
+  SQL_LOADER_VERSION=v0.4.0
+  SQL_LOADER_REVISION=86531426576195c1355a84909785410b70b0dde6
+elif [[ "$SQL_LOADER_IMAGE" != "$REVIEWED_SQL_LOADER_IMAGE" ]]; then
+  die "unrecognized SQL loader candidate: use the reviewed release or the attested v0.4.0 latch release"
+fi
 printf '\n# Homelab smoke (scripts/smoke-homelab.sh)\n' >>.env
 set_env DISCOGS_SQL_LOADER_IMAGE "$SQL_LOADER_IMAGE"
+set_env DISCOGS_GRAPH_ENRICHER_IMAGE "$GRAPH_LOADER_IMAGE"
 set_env COMPOSE_PROJECT_NAME "$PROJECT"
 set_env UID "$uid"
 set_env GID "$gid"
@@ -336,6 +356,7 @@ check_stack() {
   # A bare `docker compose` reads COMPOSE_FILE, which deploy keeps in .env: the same files as deploy.
   compose config --format json >"$EVIDENCE/rendered-$name.json"
   inspect_stack
+  cp "$EVIDENCE/inspect.json" "$EVIDENCE/inspect-$name.json"
   local monitoring=() clients="exactly STORE_CLIENTS on $NETWORK"
   if ((${#MONITORING_ARGS[@]})); then
     monitoring=(--monitoring-network "$MONITORING_NETWORK")
@@ -346,17 +367,26 @@ check_stack() {
     cat "$EVIDENCE/check-stack-$name.log"
     fail "$name: the running stack differs from its render (see check-stack-$name.log)"
   }
-  local actual_image rendered_image
-  rendered_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["tableinator"]["image"])' "$EVIDENCE/rendered-$name.json")"
-  [[ "$rendered_image" == "$SQL_LOADER_IMAGE" ]] || fail "$name: rendered tableinator image $rendered_image differs from $SQL_LOADER_IMAGE"
-  actual_image="$(docker inspect --format '{{.Config.Image}}' groovemap-tableinator)"
-  record "$name tableinator image: $actual_image"
-  [[ "$actual_image" == "$SQL_LOADER_IMAGE" ]] || fail "$name: tableinator did not deploy the pinned SQL loader $SQL_LOADER_IMAGE"
-  docker image inspect "$actual_image" --format '{{json .RepoDigests}} {{json .Config.Labels}}' >"$EVIDENCE/tableinator-image-$name.log"
-  if [[ "$SQL_LOADER_IMAGE" == "$DEFAULT_SQL_LOADER_IMAGE" ]]; then
-    [[ "$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" == v0.4.0 ]] || fail "$name: SQL loader has an unexpected release label"
-    [[ "$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == 86531426576195c1355a84909785410b70b0dde6 ]] || fail "$name: SQL loader has an unexpected source revision"
-  fi
+  local service actual_image rendered_image expected_image expected_version expected_revision repository version revision source
+  for service in tableinator graphinator; do
+    if [[ "$service" == tableinator ]]; then
+      expected_image="$SQL_LOADER_IMAGE" expected_version="$SQL_LOADER_VERSION" expected_revision="$SQL_LOADER_REVISION" repository=discogs-sql-loader
+    else
+      expected_image="$GRAPH_LOADER_IMAGE" expected_version="$GRAPH_LOADER_VERSION" expected_revision="$GRAPH_LOADER_REVISION" repository=discogs-graph-enricher
+    fi
+    rendered_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"][sys.argv[2]]["image"])' "$EVIDENCE/rendered-$name.json" "$service")"
+    [[ "$rendered_image" == "$expected_image" ]] || fail "$name: rendered $service image $rendered_image differs from $expected_image"
+    actual_image="$(docker inspect --format '{{.Config.Image}}' "groovemap-$service")"
+    [[ "$actual_image" == "$expected_image" ]] || fail "$name: $service did not deploy $expected_image"
+    docker image inspect "$actual_image" --format '{{json .RepoDigests}} {{json .Config.Labels}}' >"$EVIDENCE/$service-image-$name.log"
+    version="$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+    revision="$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+    source="$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')"
+    [[ "$version" == "$expected_version" ]] || fail "$name: $service OCI version $version differs from $expected_version"
+    [[ "$source" == "https://github.com/groovemap-music/$repository" ]] || fail "$name: $service has an unexpected OCI source: $source"
+    [[ "$revision" =~ ^[0-9a-f]{40}$ && ( -z "$expected_revision" || "$revision" == "$expected_revision" ) ]] || fail "$name: $service has an unexpected OCI source revision: $revision"
+    record "$name $service image: $actual_image (OCI $version, revision $revision)"
+  done
   pass "$name: every service up as rendered: one-shots completed, healthchecks healthy, read-only roots and users as configured, $clients ($(grep -c '^ok' "$EVIDENCE/check-stack-$name.log") checks)"
 }
 # The gate as an operator runs it, bounded by `seconds` (timeout's 124 when it runs out).
@@ -375,11 +405,17 @@ status_report() {
   for text in "$@"; do
     grep -qF -- "$text" "$EVIDENCE/status-$name.log" || fail "just status ($name) lacks \"$text\" (see status-$name.log)"
   done
-  local attention expected_attention="" attention_result="nothing flagged"
+  local attention candidates="" expected_attention="" attention_result="nothing flagged"
   attention="$(grep '^Attention:' "$EVIDENCE/status-$name.log" || true)"
+  if [[ "$GRAPH_LOADER_IMAGE" != "$REVIEWED_GRAPH_LOADER_IMAGE" ]]; then
+    candidates=graphinator
+  fi
   if [[ "$SQL_LOADER_IMAGE" != "$REVIEWED_SQL_LOADER_IMAGE" ]]; then
-    expected_attention="Attention: not the reviewed release: tableinator"
-    attention_result="only the expected unpromoted SQL loader warning"
+    candidates="${candidates:+$candidates, }tableinator"
+  fi
+  if [[ -n "$candidates" ]]; then
+    expected_attention="Attention: not the reviewed release: $candidates"
+    attention_result="only the expected unpromoted loader warning ($candidates)"
   fi
   [[ "$attention" == "$expected_attention" ]] || fail "just status ($name) has unexpected warnings: $attention"
   pass "just status ($name, uv off PATH): exit 0, $(printf '"%s" ' "$@")and $attention_result"
@@ -568,6 +604,11 @@ pass "fixture: the reviewed extractor published its packaged dump and extraction
 # phase 2 is skipped, and the run still fails at the end.
 status=0
 gate complete "$GATE_TIMEOUT" --wait --interval 10 || status=$?
+gate after-fixture 120 --json || true
+# Read-only evidence even when another store holds the gate closed. Only the loader writes it.
+"${homelab[@]}" exec -T homelab-postgres psql -X -A -t -v ON_ERROR_STOP=1 -U homelab_admin -d groovemap \
+  -c "SELECT row_to_json(latch) FROM public.loader_extraction_latch AS latch WHERE loader = 'discogs'" \
+  >"$EVIDENCE/discogs-latch.jsonl" 2>"$EVIDENCE/discogs-latch.err" || record "Could not capture the SQL latch (see discogs-latch.err)"
 if ((status != 0)); then
   received="$(docker logs groovemap-tableinator 2>&1 | grep -c 'Received extraction_complete' || true)"
   soft_fail "gate did not reach 0 within ${GATE_TIMEOUT}s (exit $status). Last poll: $(grep -E 'in progress|cannot determine' "$EVIDENCE/gate-complete.log" | tail -n 1)." \
@@ -575,10 +616,6 @@ if ((status != 0)); then
   record "SKIP phase 2: it needs the gate at 0"
 else
   pass "gate (uv off PATH): exit 0 once both loaders signalled all four types and the refresh was stamped"
-  # Read-only evidence from the real loader's durable state; only the loader writes it.
-  "${homelab[@]}" exec -T homelab-postgres psql -X -A -t -v ON_ERROR_STOP=1 -U homelab_admin -d groovemap \
-    -c "SELECT row_to_json(latch) FROM public.loader_extraction_latch AS latch WHERE loader = 'discogs'" \
-    >"$EVIDENCE/discogs-latch.jsonl"
   status_report gate-complete "Discogs gate: COMPLETE (exit 0)" "phase 1 finished"
 
   # --- phase 2 -------------------------------------------------------------------------

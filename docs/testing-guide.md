@@ -201,6 +201,8 @@ runs the real Discogs extractor binary.
 | Plaintext | `EXTERNAL_POSTGRES_SSLMODE=disable` to a non-loopback host, no opt-out | deploy exits 3: "EXTERNAL_POSTGRES_SSLMODE=disable sends credentials and data to homelab-postgres in the clear"; no container exists, and no warning claims the opt-out is set |
 | Override rewires PostgreSQL | the override sets `POSTGRES_HOST` on `api` | the override check stops deploy with exit 3: "docker-compose.override.yml changes POSTGRES_HOST on api"; no container exists |
 | Secret owner mismatch | `valkey-exporter` run as UID 59000 (redis_exporter's default, lux's crash loop) | it exits non-zero with "permission denied" on its 0600 password file |
+| Broker readiness | stop the RabbitMQ application while leaving its Erlang node running | `ping` passes, the actual listener healthcheck fails, then it passes after `start_app`; policy initialization waits for both AMQP and management HTTP |
+| Old log-volume ownership | mount the loader image's historical named `/logs` volume as UID 1001 | the real image exits non-zero with `PermissionError` |
 | Invalid collector configuration | the bind-mounted `config/otel-collector.yaml` gains an unknown top-level key, in place | the running collector turns unhealthy through the healthcheck that validates the command's own `--config` source, naming the key |
 | Failing one-shot | the override gives `rabbitmq-dlq-policy-init` an invalid overflow mode | deploy fails naming it; it exited non-zero and none of the services that wait on it, directly or not, ever started |
 
@@ -238,20 +240,37 @@ keeps the evidence (deploy, gate and status output, check results, the override,
 and container log tails on failure) as the `smoke-homelab-evidence` artifact for
 14 days.
 
-**Runtime and cost**: expect about 12 to 20 minutes on a standard `ubuntu-24.04`
-runner (4 vCPU, 16 GB), including image pulls, both monitoring modes, the fixture,
-phase 2 and negative cases. GitHub does not bill hosted runners for a public
-repository. Pushes to the same branch cancel the run in progress.
+**Runtime and cost**: the job allows 60 minutes on a standard `ubuntu-24.04`
+runner (4 vCPU, 16 GB). The diagnostic run below took 20 minutes 49 seconds,
+including a ten-minute gate timeout. Successful full-run timing remains to be
+measured. GitHub does not bill hosted runners for a public repository. Pushes
+to the same branch cancel the run in progress.
 
-The disposable smoke explicitly selects the operator-supplied SQL loader digest
+Ordinary CI uses `env-init`'s reviewed release table. Manual `workflow_dispatch`
+can select an explicit SQL or graph candidate in its scratch stack. A graph
+candidate also requires the expected OCI version and full source revision;
+the SQL latch candidate is attested as v0.4.0 at
 `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`,
-which includes the extraction latch and durable refresh absent from the deployment's
-reviewed 0.3.0. It asserts the running tableinator image matches this pin and keeps
-its image labels and fixture logs as evidence. This does not promote the digest
-into the deployment-wide reviewed set or change any installed environment.
-Run 41253011030 used the reviewed 0.3.0 digest `09f55827f972…`, so its gate
-could not complete despite four extraction-complete messages. Gate failures remain
-failures, with phase 2 skipped and diagnostics preserved.
+source `86531426576195c1355a84909785410b70b0dde6`. Every stage checks both
+loaders' rendered and running digests, OCI version, repository and source
+revision. The only permitted status warning names exactly the explicit
+unpromoted candidates. These inputs do not promote releases or alter an
+installed environment. `smoke_host_uid=1001` selects the actual runner UID for
+the separate tmpfs regression; the default is lux's UID 1000.
+
+**Observed diagnostic evidence (2026-11-01):**
+[run 41338188034](https://github.com/groovemap-music/deployment/actions/runs/41338188034),
+tested commit `d2120f7c3e6eda16eeb974847bc448de15e8d1c5`, used the exact SQL
+v0.4.0 digest and source above. Its real fixture produced all four completion
+messages. PostgreSQL reached latch 4/4 and stamped the refresh, while the
+reviewed graph loader v0.3.0 retained only labels and releases after concurrent
+first-version signals. The gate stayed at exit 3 with Neo4j 2/4 and drained
+queues; phase 2 was correctly skipped and the run failed. The broker readiness
+negative, both monitoring shapes, 0600 secrets and the other fail-closed cases
+passed. This is SQL-loader success evidence, not a green whole-stack result.
+Earlier run 41253011030 used SQL v0.3.0 (`09f55827f972…`) and cannot establish
+a v0.4.0 defect. Artifacts retain per-stage renders and inspection, image
+labels, loader logs, the final JSON gate report and the read-only SQL latch.
 
 ## Live and performance checks
 

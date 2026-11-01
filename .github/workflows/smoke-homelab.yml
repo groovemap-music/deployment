@@ -30,9 +30,21 @@ on:
         options: ["1000", "1001"]
         default: "1000"
       sql_loader_image:
-        description: Digest-pinned SQL loader to test in the scratch stack
+        description: Optional SQL loader candidate digest (empty uses reviewed release)
         type: string
-        default: ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
+        default: ""
+      graph_loader_image:
+        description: Optional graph loader candidate digest (empty uses reviewed release)
+        type: string
+        default: ""
+      graph_loader_version:
+        description: Expected OCI version for a graph candidate, including v prefix
+        type: string
+        default: ""
+      graph_loader_revision:
+        description: Expected full source commit for a graph candidate
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -83,7 +95,10 @@ jobs:
     timeout-minutes: 60
     env:
       SMOKE_HOST_UID: ${{ inputs.smoke_host_uid || '1000' }}
-      SMOKE_HOMELAB_SQL_LOADER_IMAGE: ${{ inputs.sql_loader_image || 'ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b' }}
+      SMOKE_HOMELAB_SQL_LOADER_IMAGE: ${{ inputs.sql_loader_image || '' }}
+      SMOKE_HOMELAB_GRAPH_LOADER_IMAGE: ${{ inputs.graph_loader_image || '' }}
+      SMOKE_HOMELAB_GRAPH_LOADER_VERSION: ${{ inputs.graph_loader_version || '' }}
+      SMOKE_HOMELAB_GRAPH_LOADER_REVISION: ${{ inputs.graph_loader_revision || '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,6 +166,9 @@ jobs:
           sudo -u "$OPERATOR" -H env "PATH=$PATH" \
             "SMOKE_HOST_UID=$SMOKE_HOST_UID" \
             "SMOKE_HOMELAB_SQL_LOADER_IMAGE=$SMOKE_HOMELAB_SQL_LOADER_IMAGE" \
+            "SMOKE_HOMELAB_GRAPH_LOADER_IMAGE=$SMOKE_HOMELAB_GRAPH_LOADER_IMAGE" \
+            "SMOKE_HOMELAB_GRAPH_LOADER_VERSION=$SMOKE_HOMELAB_GRAPH_LOADER_VERSION" \
+            "SMOKE_HOMELAB_GRAPH_LOADER_REVISION=$SMOKE_HOMELAB_GRAPH_LOADER_REVISION" \
             "UV_CACHE_DIR=$RUNNER_TEMP/smoke-homelab-uv-cache" \
             "SMOKE_HOMELAB_RUN=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             "SMOKE_HOMELAB_EVIDENCE_DIR=$RUNNER_TEMP/smoke-homelab-evidence" \
