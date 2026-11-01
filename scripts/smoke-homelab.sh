@@ -49,7 +49,8 @@ SUBNET="${SMOKE_HOMELAB_SUBNET:-172.29.0.0/16}"
 GATE_TIMEOUT="${SMOKE_HOMELAB_GATE_TIMEOUT:-600}"
 # Operator-supplied release candidate with the durable extraction latch and refresh.
 # Keep explicit until promoted into the deployment-wide reviewed image set.
-SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b}"
+DEFAULT_SQL_LOADER_IMAGE=ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
+SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-$DEFAULT_SQL_LOADER_IMAGE}"
 FIXTURE_MANIFEST=/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
 LABEL=com.docker.compose.project
 STARTED=$SECONDS
@@ -209,6 +210,7 @@ set_env() {
   fi
 }
 python3 scripts/env-init.py >"$EVIDENCE/env-init.log"
+REVIEWED_SQL_LOADER_IMAGE="$(sed -n 's/^DISCOGS_SQL_LOADER_IMAGE=//p' .env)"
 printf '\n# Homelab smoke (scripts/smoke-homelab.sh)\n' >>.env
 set_env DISCOGS_SQL_LOADER_IMAGE "$SQL_LOADER_IMAGE"
 set_env COMPOSE_PROJECT_NAME "$PROJECT"
@@ -351,6 +353,10 @@ check_stack() {
   record "$name tableinator image: $actual_image"
   [[ "$actual_image" == "$SQL_LOADER_IMAGE" ]] || fail "$name: tableinator did not deploy the pinned SQL loader $SQL_LOADER_IMAGE"
   docker image inspect "$actual_image" --format '{{json .RepoDigests}} {{json .Config.Labels}}' >"$EVIDENCE/tableinator-image-$name.log"
+  if [[ "$SQL_LOADER_IMAGE" == "$DEFAULT_SQL_LOADER_IMAGE" ]]; then
+    [[ "$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" == v0.4.0 ]] || fail "$name: SQL loader has an unexpected release label"
+    [[ "$(docker image inspect "$actual_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == 86531426576195c1355a84909785410b70b0dde6 ]] || fail "$name: SQL loader has an unexpected source revision"
+  fi
   pass "$name: every service up as rendered: one-shots completed, healthchecks healthy, read-only roots and users as configured, $clients ($(grep -c '^ok' "$EVIDENCE/check-stack-$name.log") checks)"
 }
 # The gate as an operator runs it, bounded by `seconds` (timeout's 124 when it runs out).
@@ -369,8 +375,14 @@ status_report() {
   for text in "$@"; do
     grep -qF -- "$text" "$EVIDENCE/status-$name.log" || fail "just status ($name) lacks \"$text\" (see status-$name.log)"
   done
-  ! grep -q '^Attention:' "$EVIDENCE/status-$name.log" || fail "just status ($name) flags a problem: $(grep '^Attention:' "$EVIDENCE/status-$name.log")"
-  pass "just status ($name, uv off PATH): exit 0, $(printf '"%s" ' "$@")and nothing flagged"
+  local attention expected_attention="" attention_result="nothing flagged"
+  attention="$(grep '^Attention:' "$EVIDENCE/status-$name.log" || true)"
+  if [[ "$SQL_LOADER_IMAGE" != "$REVIEWED_SQL_LOADER_IMAGE" ]]; then
+    expected_attention="Attention: not the reviewed release: tableinator"
+    attention_result="only the expected unpromoted SQL loader warning"
+  fi
+  [[ "$attention" == "$expected_attention" ]] || fail "just status ($name) has unexpected warnings: $attention"
+  pass "just status ($name, uv off PATH): exit 0, $(printf '"%s" ' "$@")and $attention_result"
 }
 musicbrainz_containers() {
   docker ps -a --filter "label=$LABEL=$PROJECT" --format '{{.Label "com.docker.compose.service"}}' | grep -E '^(extractor-musicbrainz|brainzgraphinator|brainztableinator)$' || true
