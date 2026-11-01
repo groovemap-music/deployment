@@ -128,14 +128,16 @@ Reviewed console (`v0.3.0`), explorer (`v0.3.0`) and analytics (`v0.5.0`) images
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
 
-The three changed entries resolve from their released tags for `linux/amd64`
-(the platform published by these release workflows). Their reviewed rollback
-targets are the previous index digests: `DISCOGS_SQL_LOADER_IMAGE`
+The 2026-10-31 release review resolved its changed entries from their released
+tags for `linux/amd64` (the platform published by these workflows). At that
+time, the recorded rollback targets were the previous index digests:
+`DISCOGS_SQL_LOADER_IMAGE`
 `sha256:dfa00f9ee24d9fab6212b02a272486f70490b741e9556edf0b2fd2c793f3393c`,
 `DISCOGS_GRAPH_ENRICHER_IMAGE`
 `sha256:933df432732e8f1b863f1b3e3945ff0619a141e1708889a05f9f4dcf2003335b`,
 and `CATALOG_API_IMAGE`
 `sha256:b236b3ac805e4e92f7d9cc889d0e15d966a293d764af860d02c46b15efc9c5cb`.
+Later image promotions below record their current rollback pins.
 
 These are records of what was published, not an instruction to deploy. Verify a
 digest against the registry before promoting it, and re-resolve it for any
@@ -158,7 +160,9 @@ its repository.
 | `musicbrainz-ingestion:v0.3.0` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` | `v0.2.1` — `sha256:2b348519450cc9811fe8d194d0ef4b4dd3ead901b2f8e5883dec83a839bd9b37` |
 | `graph-explorer:v0.2.2` | `sha256:edbbd476a2d324443453dd4045606350bb6ce3bf7a5bc77c357e8801cc3a0afa` | `v0.1.1` — `sha256:546e3823b811eb9d912c175a28a56153a72c95107089714393b3c21551f6e33b` |
 
-`discogs-graph-enricher` and `discogs-sql-loader` stay at `v0.3.0` (already the latest tags).
+At this 2026-10-31 snapshot, `discogs-graph-enricher` and `discogs-sql-loader` were still at
+`v0.3.0` (then the latest tags). Their later `v0.4.0` promotions and gate evidence are recorded
+below.
 Commits `4d70985` and `204bc85` (graph enricher) and `6b8fa03` and `5faa9b5` (SQL loader), the
 rollout's `HEALTH_PORT` override and exit-1 changes, are in no tag yet. Rollout constraint O5 says
 those releases are not coupled to anything, so nothing waits on them.
@@ -246,14 +250,17 @@ repository's `refs/tags/v0.3.0`).
 
 Evidence:
 
-- `just smoke-released` passed on unmodified compose files with a `just env-init` environment.
-  Teardown was proven by label: no containers, volumes or networks remained for the
-  `groovemap-released-smoke` project.
 - The published-image theme test for the canonical Explore theme passed against these images.
-- `just smoke-media` and `just smoke-erasure` were waived for this interim promotion: neither
-  exercises the two changed images, and both passed on these exact images at `6af13ec`.
-- The console's own test pins its default `*_MODE` and `*_URL` targets to this deployment's, so the
-  platform-health comparison against `v0.2.0` was not re-run.
+- The combined-pin Linux run and unmodified released, media, erasure, and released-fixture smoke
+  evidence are recorded once under [the Discogs graph-enricher v0.4.0 promotion](#promotion-of-discogs-graph-enricher-v040-2026-11-01).
+  That run used the reviewed console and Explore v0.3.0 pins in this section and inspected the
+  enabled runtime services as healthy.
+- The console's own test pins its default `*_MODE` and `*_URL` targets to this deployment's, so a
+  before/after platform-health comparison against v0.2.0 was not run.
+
+`CONSOLE_TARGETS_FLOOR` keeps the reviewed console minimum at v0.3.0. When an external-monitoring
+overlay omits local exporters, an older console ignores the configured external targets and
+`just deploy` reports a warning; it does not stop the stack.
 
 Rolling back is a pin change to the rollback digest above for the affected image alone.
 
@@ -337,6 +344,12 @@ Additional unmodified candidate smokes with the same reviewed graph v0.4.0 and S
   containers, volumes and networks.
 - `just smoke-erasure`: 32/32 passed with unchanged API and store images; this scenario does not
   run the graph enricher, so the evidence remains applicable.
+
+The final runtime comparison covered 41 candidate runtime, configuration and smoke files against
+the rebased Linux-smoke branch. The only difference was `docker-compose.external-postgres.yml`'s
+`PGSSLCERTMODE` setting, which these dedicated-store smokes do not use; all tested Compose inputs,
+smoke scripts and complete reviewed image digest/version tables were byte-identical. This is why
+the unmodified supporting smoke results apply to the reviewed pins above.
 
 These fresh-run results do not reconstruct completion signals already acknowledged by v0.3.0. A
 pin-only upgrade leaves a gate fail-closed if those terminal events are gone; do not restart the
