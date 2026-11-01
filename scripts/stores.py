@@ -223,10 +223,11 @@ class Stores:
 
 
 def _source(key: str, env_values: Mapping[str, str], environ: Mapping[str, str]) -> tuple[str, str]:
-    """(value, where) by Compose's precedence: the shell environment, then .env. An empty value is unset, as for Compose's `${VAR:-default}`."""
-    shell = environ.get(key, "").strip()
-    if shell:
-        return shell, "the shell"
+    """Return the Compose-precedence value and its source (shell, then .env)."""
+    if key in environ:
+        # Compose gives a shell variable precedence even when it is empty. `${VAR:-default}`
+        # then chooses its default; it does not fall through to the value in .env.
+        return environ[key].strip(), "the shell"
     recorded = env_values.get(key, "").strip()
     if recorded:
         return recorded, ".env"

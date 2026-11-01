@@ -545,22 +545,38 @@ the local services start again, deploy removes its `COMPOSE_FILE`, and
 
 A host that installed GrooveMap at deployment `6af13ec` (or `160fe7d`) with mixed stores (an
 external PostgreSQL with TLS, a dedicated Valkey) and shared monitoring carried local
-workarounds for eight failures. Every fix is now in the repository, with a regression test and a
-Linux smoke for each, including the Discogs gate that never completed ([failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test)).
-Nothing below is destructive: no volume is removed, no store is touched, and secrets are never
-regenerated.
+workarounds for eight failures. Every fix has regression coverage, with the mapping and Linux
+smoke status tracked in the [failure-to-test table](testing-guide.md#lux-regressions-failure-to-regression-test),
+including the Discogs gate that never completed. Nothing below is destructive: no volume is
+removed, no store is touched, and secrets are never regenerated.
 
-**Local mitigations that are now unnecessary.** Remove them from the override, `.env` and your
-Ansible role once the new checkout passes the verification below:
+**Ansible owns the deployment checkout and its `.env` and override.** Make the release and
+configuration changes in the Ansible-managed deployment; do not edit those managed files by hand
+or run `env-init` in a way that overwrites Ansible-owned values. Keep the existing secrets and
+host settings; `EXTERNAL_POSTGRES_SSLMODE` remains `verify-full`.
+
+**Snapshot first; do not interrupt an active import.** Before changing the checkout or running an
+update, have Ansible capture a read-only baseline: deployed commit, effective configuration and
+image pins, current service/container identities, `just status`, the Discogs gate and queue state,
+and `just recovery-manifest`. Keep the existing extractor and loader image IDs until an operator
+chooses a bounded rollout. Do not run a broad Ansible deployment or Compose update while the
+import is active. Promote only `tableinator` (the Discogs SQL loader) in a bounded,
+operator-approved window; preserve the extractor and the other loader images. The old log volumes
+remain in place. Any later Compose-wide recreation for the separate `/logs` tmpfs change belongs
+in a maintenance window after the import.
+
+Remove the local mitigations from the Ansible role only after the updated checkout passes the
+verification below:
 
 - **The store-check network attach.** The example override
   (`skills/groovemap-homelab/assets/override-external-store-network.yml`) now attaches
   `store-check-postgres` and `store-check-valkey` along with the app clients. Take the example's
   service list; a check that cannot resolve the store now names the store, host, service and
   networks.
-- **The collector environment workaround.** The collector reads its configuration through the
-  environment provider, and its command and healthcheck validate that same configuration. Drop any
-  `configs.content` or healthcheck override.
+- **The collector config workaround.** The collector loads the read-only config file mounted at
+  `/etc/otelcol-contrib/config.yaml`; its command and healthcheck both validate that same file, and
+  endpoint values are substituted from the container environment. Drop any `configs.content` or
+  healthcheck override.
 - **A `uv` install.** Operator recipes (`deploy`, `env-init`, `discogs-import-status`,
   `status`, `recovery-manifest`, the embeddings steps) run on `python3` 3.10 or newer when `uv` is
   absent; exit codes 0, 3 and 2 pass through unchanged. `uv` is for maintainers.
@@ -569,10 +585,13 @@ Ansible role once the new checkout passes the verification below:
 - **Exporter and secret ownership workarounds.** Every service that reads a 0600 secret runs as the
   owner of `secrets/`, so a `chown`/`chmod` of the derived Valkey exporter password or a `user:`
   override on an exporter is no longer needed.
-- **A hand-written Discogs latch or a gate you stopped waiting on.** With discogs-sql-loader v0.3.0
-  the gate never completed because the loader wrote no latch; v0.4.0 (`sha256:be150770...`) writes
-  it, so `just discogs-import-status` reaches exit 0 and deploy starts MusicBrainz. Run
-  `just env-init` to pick up the reviewed digest. Do not write the latch row yourself.
+- **A hand-written Discogs latch or a gate you stopped waiting on.** discogs-sql-loader v0.3.0
+  did not write the completion latch. v0.4.0
+  (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes it when it
+  receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
+  acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
+  fail-closed, do not restart the extractor or insert a latch row manually, and report the
+  missing evidence to the operator.
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
   depend on `rabbitmq-dlq-policy-init` completing successfully.
 
@@ -585,20 +604,32 @@ Ansible role once the new checkout passes the verification below:
 | `SHARED_GRAFANA_URL`, `SHARED_NODE_EXPORTER_ADDRESS`, `SHARED_CADVISOR_ADDRESS` | The console's and collector's view of the shared services |
 | `EXTERNAL_POSTGRES_EXPORTER_ADDRESS` | `host:port` of the exporter that watches an external PostgreSQL |
 
-`just env-init` appends any of these your `.env` lacks, under a comment, and keeps every other line.
+For an unmanaged deployment, `just env-init` appends any missing keys under a comment and keeps
+every other line. On lux, add needed values through Ansible's managed configuration; do not run
+`env-init` against the Ansible-owned `.env`.
 
 **Verify.**
 
-1. `git pull`, then `just env-init` to refresh the reviewed digests.
-2. `just deploy`. Preflight reports each recorded store and monitoring decision and stops, before
-   changing anything, on a setting it cannot honour.
-3. `just status` (read-only; exit 0, or 2 when Docker or a setting cannot be read) lists the
-   decisions recorded in `.env`, the services that are shared or external rather than missing, the
-   reviewed image digests and the Discogs gate. Exit 3 from `just discogs-import-status` means
-   the import is still in progress, not an error.
-4. `just discogs-import-status --prod` (the gate) keeps reading the external database and never
-   enables MusicBrainz early.
-5. `just recovery-manifest`, then keep the listed files in an encrypted bundle, and check the
+1. Have Ansible capture the read-only config and identity baseline above, then update the
+   deployment checkout. Preserve the existing `.env`, override and secrets; do not regenerate
+   secrets or replace host-specific values.
+2. Choose and approve a bounded tableinator-only rollout. Keep existing extractor and other loader
+   pins, and do not run the full deployment while Discogs is active.
+3. After the import is complete and the operator chooses the maintenance window, apply the
+   remaining deployment changes through Ansible. Preflight reports each effective store and
+   monitoring decision and stops before changing anything on a setting it cannot honour.
+4. `just status` (read-only; exit 0, or 2 when Docker or a setting cannot be read) lists the
+   effective store and monitoring decisions with their sources, the services that are shared or
+   external rather than missing, the reviewed image digests and the Discogs gate. Exit 3 from
+   `just discogs-import-status` means the import is still in progress, not an error.
+5. Check `just discogs-import-status --prod` (the gate). Exit 0 means complete, exit 3 means
+   importing, and exit 2 means the result cannot be determined. Exit 3 is normal progress; exit
+   2 is not evidence of completion, so keep MusicBrainz gated and report the problem.
+6. If v0.3.0 already acknowledged the extraction-complete signals before the upgrade, v0.4.0
+   cannot recreate that missing latch from an empty queue. This is a late-upgrade recovery case:
+   do not restart the extractor or insert a latch row. Keep the gate closed and have the operator
+   arrange targeted recovery.
+7. `just recovery-manifest`, then keep the listed files in an encrypted bundle, and check the
    [shared PostgreSQL checklist](maintenance.md#shared-postgresql-checklist).
 
 A `grafana_data` volume created earlier needs the one-time re-own in
@@ -631,6 +662,14 @@ These describe current behavior. A follow-up is planned; no dates are promised.
 - **Shared monitoring needs the next console release for truthful health rows.** Until the
   operations-console release with configurable targets is promoted, the console shows the shared
   services as unreachable; see [Shared monitoring](#shared-monitoring).
+- **A late discogs-sql-loader upgrade cannot reconstruct an acknowledged completion signal.** If
+  v0.3.0 acknowledged the extraction-complete events before v0.4.0 was deployed, the latch stays
+  absent and the gate must remain closed until the operator arranges targeted recovery. Never
+  insert the latch manually or restart the extractor to try to recreate it.
+- **An active first import is not a Compose-wide rollout window.** Take the read-only config and
+  identity snapshot first, preserve the current extractor and loader IDs, and use a bounded,
+  operator-approved tableinator-only promotion. Schedule full-stack recreation for after the
+  import; do not destroy or replace its data volumes.
 - **MusicBrainz disk use is an estimate.**
 
 ## Backups and operations

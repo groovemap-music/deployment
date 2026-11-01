@@ -159,6 +159,11 @@ to address the same stack by hand.
 
 ### Effective Compose inputs
 
+For these interpolated values, Compose reads the shell first, then `.env`, then the declared
+default. A shell variable that exists but is empty still takes precedence over `.env`; for a
+`${NAME:-default}` expression Compose chooses the default. Preflight and `just status` report the
+same effective value and its source, so their decision summaries match the rendered stack.
+
 The following groups are interpolated by the executable stack:
 
 | Inputs | Purpose |

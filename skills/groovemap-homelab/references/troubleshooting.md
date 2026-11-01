@@ -66,8 +66,11 @@ days to rebuild.
   (`assets/override-shared-monitoring-network.yml`).
 - **An operator recipe says `uv: command not found`:** it should not; operator recipes run on
   python3 3.10 or newer. Update the checkout. Only maintainer recipes (`just check`) need `uv`.
-- **The gate stays in progress after every queue drained:** the images must be the reviewed
-  digests (`just env-init`); discogs-sql-loader before v0.4.0 never wrote the completion latch.
+- **The gate stays in progress after every queue drained:** verify that the Ansible-managed
+  deployment uses reviewed images, including discogs-sql-loader v0.4.0. Version v0.3.0 did not
+  write the completion latch. If it already acknowledged the extraction-complete signals,
+  v0.4.0 cannot recreate the latch from an empty queue; keep the gate closed and report this for
+  operator-directed recovery. Do not restart the extractor or insert a latch manually.
 - **`just status`** (read-only) shows per service state, the gate, the recorded decisions and any
   image that is not the reviewed digest.
 

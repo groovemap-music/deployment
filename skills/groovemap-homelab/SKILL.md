@@ -293,6 +293,13 @@ Inside the checkout:
 
 Once the user approves starting containers:
 
+For an existing deployment with its first import still active, do not run a broad Ansible or
+Compose update. First capture a read-only config and identity snapshot (deployed commit, image
+pins and service identities, `just status`, gate/queue state, and `just recovery-manifest`). Keep
+the current extractor and loader image IDs until the operator chooses a bounded rollout. Promote
+only `tableinator` in that approved window; do not restart the extractor or replace any data
+volume. See [the Lux upgrade procedure](../../docs/homelab.md#lux-upgrade-from-6af13ec160fe7d).
+
 ```bash
 just deploy --no-wait
 ```
