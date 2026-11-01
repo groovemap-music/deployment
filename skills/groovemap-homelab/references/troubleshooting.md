@@ -67,20 +67,23 @@ days to rebuild.
 - **An operator recipe says `uv: command not found`:** it should not; operator recipes run on
   python3 3.10 or newer. Update the checkout. Only maintainer recipes (`just check`) need `uv`.
 - **The gate stays in progress after every queue drained:** empty queues are not completion
-  evidence. Keep MusicBrainz disabled and check the effective image pins plus all four SQL latch
-  records and four graph completion markers. discogs-sql-loader v0.3.0 did not write its latch;
+  evidence. Keep MusicBrainz disabled and check the effective image pins plus the SQL latch row
+  for the newest version (all four signals and `refreshed_at`) and four graph completion markers.
+  discogs-sql-loader v0.3.0 did not write its latch;
   discogs-graph-enricher v0.3.0 also has a CI-discovered race that can leave two graph markers
-  missing after a concurrent cache-version reset. The source fix is merged into its source epic,
-  but a reviewed graph image is not published yet.
+  missing after a concurrent cache-version reset. The reviewed fix is released and promoted as
+  graph-enricher v0.4.0 at
+  `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`.
 - **A completion latch or graph marker is missing:** do not restart the extractor, write a marker,
-  or replay broker messages manually. After a reviewed graph-enricher release and healthy new
-  consumers are deployed, recovery requires the operator's approval, a read-only baseline, an
+  or replay broker messages manually. After both reviewed v0.4.0 Discogs consumers are healthy,
+  recovery requires the operator's approval, a read-only baseline, an
   encrypted recovery bundle and confirmed database/storage headroom. The supported option is a
   full new Discogs reprocess through the authenticated Catalog API admin endpoint
   `POST /api/admin/extractions/trigger` with `{"source":"discogs"}`; it may download and process
   the selected dump again. A `202` means accepted; `409` means the producer is already running,
-  so re-check instead of retrying. Keep MusicBrainz off until the pass finishes, all four SQL
-  latch records and graph markers are fresh, the queues are drained and the gate exits 0. See
+  so re-check instead of retrying. Keep MusicBrainz off until the pass finishes, the SQL latch row
+  has all four signals and a fresh `refreshed_at`, all four graph markers are present, the queues
+  are drained and the gate exits 0. See
   [late Discogs recovery](../../../docs/homelab.md#late-discogs-recovery).
 - **`just status`** (read-only) shows per service state, the gate, the recorded decisions and any
   image that is not the reviewed digest.
