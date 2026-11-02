@@ -393,7 +393,8 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 
 **DISCOGS_ROOT Details**:
 
-- Must be writable by service user (UID 1000 in Docker)
+- Must be writable by the service user (`${UID}:${GID}` from `.env`); the
+  `data-volume-init` one-shot hands `discogs_data` and `musicbrainz_data` to that user
 - Requires ~76GB free space for full dataset
 - Contains downloaded XML files and metadata cache
 
@@ -1677,7 +1678,7 @@ infrastructure use their native commands. Inspect the exact commands with
 **Cache Directory Errors**:
 
 - Verify directory exists
-- Check write permissions (UID 1000 for Docker)
+- Check write permissions for the service user (`${UID}:${GID}` from `.env`)
 - Ensure sufficient disk space
 
 **Environment Variables Not Loading**:
