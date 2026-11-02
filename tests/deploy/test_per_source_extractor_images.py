@@ -156,7 +156,9 @@ class TestFrozenDeploymentIdentities:
             spec = services[service]
             assert spec["container_name"] == expected["container_name"]
             assert spec["hostname"] == expected["hostname"]
-            assert expected["volume"] in spec["volumes"]
+            # The data mount is long-syntax so it can carry nocopy (gm-deployment-lvhq).
+            source, target = expected["volume"].split(":")
+            assert any(isinstance(m, dict) and (m["source"], m["target"]) == (source, target) for m in spec["volumes"]), spec["volumes"]
 
     def test_health_port_is_unchanged(self) -> None:
         services = _compose()["services"]

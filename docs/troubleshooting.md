@@ -112,7 +112,7 @@ breaks that. Fix the owner or the override, never the mode.
   `skills/groovemap-homelab/assets/override-external-store-network.yml`. A refusal by the server
   itself (authentication, TLS, version) is not a network problem.
 - **`up --wait` reports a one-shot as failed.** One-shots that exit 0 (such as
-  `rabbitmq-dlq-policy-init`) must have a dependent with `service_completed_successfully`;
+  `rabbitmq-dlq-policy-init`, `data-volume-init`) must have a dependent with `service_completed_successfully`;
   `just check` fails a one-shot that has none.
 - **The console shows UNREACHABLE for a shared exporter.** In shared monitoring, the console probes
   the `SHARED_*` targets and `EXTERNAL_POSTGRES_EXPORTER_ADDRESS`, not compose names; see
@@ -201,6 +201,30 @@ Resolution, which changes state and needs approval before it is run:
 4. Confirm recovery: `valkey_memory_used_bytes / valkey_memory_max_bytes` back
    under 85%, `ValkeyWritesRejected` resolved, and the cache hit ratio
    recovering.
+
+## Where are the service logs? `/logs` is empty after a restart
+
+`/logs` inside the application containers is an ephemeral, size-capped tmpfs owned by the
+runtime UID; it is emptied whenever the container is recreated. Read logs from stdout instead:
+
+```bash
+docker compose logs --tail 200 <service>
+```
+
+A `Permission denied: /logs/<service>.log` crash loop means the stack is still using the old
+named `*_logs` volumes, which carry UID 1000 ownership. Pull the current compose files and
+redeploy; the old volumes can then be removed if you no longer want them (see
+[homelab.md](homelab.md#logs-is-now-a-tmpfs-any-host-uid-works)).
+
+## An extractor fails with `Permission denied` on `/discogs-data` or `/musicbrainz-data`
+
+The extractor images create their data directories owned by 1000:1000 and a fresh named volume
+inherits that, so under another host UID the extractor cannot write. The `data-volume-init` one-shot
+re-owns both volumes to `${UID}:${GID}` and the extractors mount them `nocopy`; check
+`docker compose logs data-volume-init` (it prints the entries it re-owned and each volume's owner)
+and that `docker compose config` shows `nocopy: true` on both extractor data mounts. An override that
+redeclares those mounts must use the long syntax with `nocopy: true`. See
+[docker-security.md](docker-security.md#1-non-root-user-execution).
 
 ## Port conflicts
 

@@ -63,6 +63,11 @@ INVENTORY: dict[str, dict[str, str]] = {
         "image_user": "",
         "reads_as": "root",  # runs as the image default (root); scripts/rabbitmq-dlq-policy-init.sh
     },
+    "data-volume-init": {
+        "image": "rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109",
+        "image_user": "",
+        "reads_as": "root",  # user 0:0 with CHOWN + DAC_READ_SEARCH only; scripts/data-volume-init.sh reads no secret
+    },
     "neo4j": {
         "image": "neo4j:2026.10.0-community@sha256:388c0e5c6d4543e3d0e6cee3d1e751c05ad9314aa73342cc63cd0ea0946e38bb",
         "image_user": "",
@@ -155,7 +160,10 @@ def test_no_secret_is_remapped_or_made_readable_to_others(stack: str) -> None:
             if not isinstance(secret, str):
                 for key in ("uid", "gid", "mode"):
                     assert key not in secret, f"{name}: secret {secret['source']} sets {key}; run as the owner instead"
-        assert not {"DAC_OVERRIDE", "DAC_READ_SEARCH"} & set(service.get("cap_add", [])) or name == "cadvisor"
+        # data-volume-init is the one other exception: root with exactly CHOWN + DAC_READ_SEARCH to re-own the
+        # extractor data volumes, mounting no secret (docs/docker-security.md).
+        volume_init = name == "data-volume-init" and set(service.get("cap_add", [])) == {"CHOWN", "DAC_READ_SEARCH"} and not service.get("secrets")
+        assert not {"DAC_OVERRIDE", "DAC_READ_SEARCH"} & set(service.get("cap_add", [])) or name == "cadvisor" or volume_init
     script = (ROOT / "scripts" / "create-secrets.sh").read_text()
     assert "chmod 644" not in script
     assert "chmod 666" not in script

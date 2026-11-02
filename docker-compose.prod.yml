@@ -394,7 +394,6 @@ services:
       - valkey_password
       - insights_internal_secret
     volumes:
-      - api_logs:/logs
       - discogs_data:/discogs-data:ro
       - musicbrainz_data:/musicbrainz-data:ro
 

@@ -152,8 +152,8 @@ until it exits 0 and only then enable the profile.
 
 `just deploy` treats a host as already running MusicBrainz only on evidence that MusicBrainz
 itself produced: one of the three MusicBrainz containers (any state), a Compose volume that
-only `musicbrainz`-profile services mount (such as `extractor_musicbrainz_logs`; computed from
-the rendered Compose config, not a fixed list), or a `loader_extraction_latch` row with
+only `musicbrainz`-profile services mount (computed from the rendered Compose config; none
+exists today), the three legacy `*_logs` volumes of the old layout, or a `loader_extraction_latch` row with
 `loader = 'musicbrainz'` while PostgreSQL runs. `musicbrainz_data` is not evidence: the API
 mounts it read-only, so phase 1 creates it before MusicBrainz ever runs. If the render or the
 query fails, `just deploy` does not guess; it goes through the Discogs gate.
@@ -175,7 +175,7 @@ About two dozen containers, all on one `groovemap` bridge network (`172.20.0.0/1
 | Group | Services | Role |
 | --- | --- | --- |
 | Data stores | `postgres`, `neo4j`, `rabbitmq`, `valkey` | Relational store, graph, message broker, cache |
-| Schema | `schema-init`, `rabbitmq-dlq-policy-init` | One-shot initialisers for the schemas and broker policy |
+| Schema | `schema-init`, `rabbitmq-dlq-policy-init`, `data-volume-init` | One-shot initialisers for the schemas, broker policy and extractor data-volume ownership |
 | Discogs path | `extractor-discogs`, `graphinator`, `tableinator` | Download the dump, load the graph and PostgreSQL |
 | MusicBrainz path | `extractor-musicbrainz`, `brainzgraphinator`, `brainztableinator` | Same for MusicBrainz; profile `musicbrainz` |
 | Applications | `api`, `explore`, `dashboard`, `insights` | Catalog API, graph explorer (the app), operations console, insights |
@@ -318,7 +318,35 @@ Run it against the `grafana_data` volume only. If the listing shows the volume i
 holds nothing and `docker volume rm` of that one volume is also safe; never remove a volume
 that has data. Dashboards are provisioned from `config/grafana/`, but users, preferences and
 API tokens live in `grafana.db`.
+### `/logs` is now a tmpfs (any host UID works)
 
+The services run as `${UID}:${GID}`, but the named `*_logs` volumes that used to back `/logs`
+initialised with the image user's ownership (UID 1000). Under any other host UID the consumers
+crash-looped on `Permission denied: /logs/<service>.log`. Each service that writes `/logs` now
+gets a size-capped tmpfs there, owned by `${UID}:${GID}` (Neo4j: its own `7474`), so no
+`chown` of a volume is needed.
+
+The extractor data volumes had the same defect: the extractor images create `/discogs-data` and
+`/musicbrainz-data` owned by 1000:1000, which a fresh named volume inherits, so a non-1000 UID could
+not write them. The one-shot `data-volume-init` now re-owns both volumes to `${UID}:${GID}` before
+the extractors start, and the extractors mount them `nocopy` so Docker cannot re-apply the image's
+ownership. It only changes the owner of mismatched entries (never deleting or `chmod`ing anything).
+
+- On an existing UID 1000 install it is a no-op, except possibly re-owning a root-owned, empty
+  `musicbrainz_data` root that phase 1 created before MusicBrainz ever ran.
+- Recreating the extractors (they pick up the `nocopy` mount and the new dependency) belongs in the
+  maintenance window; nothing else restarts.
+- No `chown` of the data volumes (or of bind-backed directories for them) is needed.
+
+- Logs are ephemeral inside containers. Read them with `docker compose logs <service>`
+  (json-file driver, 10 MB x 3 per service) or through the telemetry stack.
+- The old volumes (`neo4j_logs`, `api_logs`, `graphinator_logs`, ... twelve in all, prefixed
+  with the Compose project name) are no longer mounted. `just deploy` never deletes volumes, so
+  they stay on disk. Once you no longer need their old log files you may remove them yourself
+  (`docker volume ls --filter name=_logs`, then `docker volume rm`), only after reviewing the list.
+- `just deploy` still counts the three old MusicBrainz log volumes as evidence that MusicBrainz
+  ran here. If you remove them, the MusicBrainz containers or the `loader_extraction_latch` row
+  remain as evidence.
 ## Existing PostgreSQL and Valkey
 
 The agent skill discovers existing PostgreSQL, PgBouncer, Valkey and Redis instances read-only
@@ -563,9 +591,11 @@ and `just recovery-manifest`. Keep the existing extractor and consumer image IDs
 chooses a bounded rollout. Do not run a broad Ansible deployment or Compose update while the
 import is active. In a bounded, operator-approved window, promote both Discogs consumers together:
 `tableinator` (SQL loader) and `graphinator` (graph enricher) to their reviewed v0.4.0 pins. Keep
-the extractor and all MusicBrainz image pins unchanged. Existing log volumes remain in place. A
-separate pending change covers UID-owned `/logs` tmpfs; defer any Compose-wide recreation for it to
-a maintenance window after the import.
+the extractor and all MusicBrainz image pins unchanged. Keep the old `*_logs` volumes in place; the
+updated Compose files mount a per-service tmpfs at `/logs` and never delete those volumes. Apply the
+mount change in the same bounded maintenance window after the import has completed, because Compose
+recreates services when it applies the new mounts. Do not interrupt the active import to roll out
+this change.
 
 Remove the local mitigations from the Ansible role only after the updated checkout passes the
 verification below:
@@ -667,8 +697,8 @@ graph completion markers are present, and queues are drained. Then require
 MusicBrainz. Exit 2 or 3 keeps MusicBrainz off and the gate authoritative.
 
 A `grafana_data` volume created earlier needs the one-time re-own in
-[Grafana now runs as your user](#grafana-now-runs-as-your-user); existing `*_logs` volumes are
-left untouched. UID-owned `/logs` tmpfs is a separate pending change, not part of this recovery.
+[Grafana now runs as your user](#grafana-now-runs-as-your-user). Existing `*_logs` volumes are
+left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the bounded deploy.
 
 ## Known limitations
 

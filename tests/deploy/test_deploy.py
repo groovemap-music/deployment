@@ -1025,6 +1025,10 @@ def run_preflight(runner: FakeRunner, mode: str = "prod", **kwargs: Any) -> int:
         "env_values": {},
         "in_use": lambda _address, _port: False,
         "binfmt": lambda: False,
+        # FakeRunner's Docker total is fixture data. Keep ordinary direct tests deterministic;
+        # the available-memory cases below pass their own values explicitly.
+        "linux": True,
+        "meminfo": lambda: None,
     } | kwargs
     result: int = helpers.preflight(mode, docker=helpers.Docker(runner), **options)
     return result
@@ -1290,6 +1294,18 @@ class Deploy:
         for relative in COPIED:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / relative, root / relative)
+        # The deploy subprocess uses a fake, local Docker engine. Give its copied helper a
+        # fixture-owned /proc-like file, leaving locality, port checks, and disk checks intact.
+        fake_meminfo = root / "fake-meminfo"
+        # The CLI test's FakeRunner models only Docker's total; it has no fixture for free RAM.
+        # Omitting MemAvailable exercises the existing unknown-availability behavior without
+        # making a false claim that a low-total fake engine has ample available memory.
+        fake_meminfo.write_text("MemTotal: 65536000 kB\n")
+        deploy_helpers = root / "scripts" / "deploy_helpers.py"
+        helper_source = deploy_helpers.read_text()
+        binding = 'MEMINFO = Path("/proc/meminfo")'
+        assert helper_source.count(binding) == 1
+        deploy_helpers.write_text(helper_source.replace(binding, f"MEMINFO = Path({str(fake_meminfo)!r})"))
         (root / "scripts" / "discogs_import_status.py").write_text(FAKE_GATE)
         bin_dir = root / "bin"
         bin_dir.mkdir()
@@ -1521,7 +1537,9 @@ def _phase_one_volumes(config: dict[str, Any]) -> set[str]:
 def test_musicbrainz_evidence_volumes_are_only_what_no_other_service_mounts(real_render: Path) -> None:
     config = json.loads(real_render.read_text())
     evidence = helpers.musicbrainz_exclusive_volumes(config)
-    assert evidence == {"extractor_musicbrainz_logs", "brainzgraphinator_logs", "brainztableinator_logs"}
+    # No compose volume is MusicBrainz-only any more (/logs is tmpfs); the legacy log volumes of upgraded hosts remain evidence.
+    assert evidence == helpers.LEGACY_MUSICBRAINZ_LOG_VOLUMES
+    assert not evidence & set(config["volumes"])
     assert not evidence & _mounted_volumes(config, lambda service: "musicbrainz" not in (service.get("profiles") or []))
     # The API mounts musicbrainz_data read-only, so phase 1 creates it.
     assert "musicbrainz_data" in _phase_one_volumes(config)
@@ -1535,7 +1553,7 @@ def test_a_render_that_cannot_tell_is_no_evidence() -> None:
 
 def test_a_service_in_several_profiles_does_not_make_its_volumes_musicbrainz_only() -> None:
     config = {"services": {"a": {"profiles": ["musicbrainz", "other"], "volumes": [{"type": "volume", "source": "v", "target": "/v"}]}}}
-    assert helpers.musicbrainz_exclusive_volumes(config) == set()
+    assert helpers.musicbrainz_exclusive_volumes(config) == helpers.LEGACY_MUSICBRAINZ_LOG_VOLUMES
 
 
 def test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence() -> None:

@@ -150,6 +150,9 @@ THIRD_PARTY_REPOSITORIES = {
     # service reuses rabbitmq's own repository rather than adding a new
     # third-party image.
     "rabbitmq-dlq-policy-init": "rabbitmq",
+    # data-volume-init (chowns the extractor data volumes to the host UID) runs a shell script, so
+    # it reuses the same pinned rabbitmq image (Ubuntu: sh, find, chown) rather than adding one.
+    "data-volume-init": "rabbitmq",
     "valkey": "valkey/valkey",
     "valkey-exporter": "oliver006/redis_exporter",
     "victoria-metrics": "victoriametrics/victoria-metrics",

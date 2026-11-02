@@ -23,8 +23,12 @@ services:
   extractor-discogs:
     platform: linux/amd64
     volumes: !override
-      - discogs_data:/discogs-data
-      - extractor_discogs_logs:/logs
+      # Long syntax: Compose merges mounts by target, so a short entry here would drop `nocopy`.
+      - type: volume
+        source: discogs_data
+        target: /discogs-data
+        volume:
+          nocopy: true
       - ${GM_EXTRACTION_RULES_FILE:-./config/extraction-rules.yaml}:/config/extraction-rules.yaml:ro
   extractor-musicbrainz:
     platform: linux/amd64
