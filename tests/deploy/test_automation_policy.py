@@ -17,6 +17,12 @@ if just_executable is None:
 JUST: str = just_executable
 
 
+HYGIENE_COMMAND = (
+    "if git rev-parse --verify --quiet origin/main >/dev/null; then bash scripts/operator-python.sh scripts/publication-hygiene.py "
+    "--base origin/main --head HEAD; else bash scripts/operator-python.sh scripts/publication-hygiene.py; fi"
+)
+
+
 def dry_run(*recipes: str) -> list[str]:
     result: subprocess.CompletedProcess[str] = subprocess.run(
         (JUST, "--dry-run", *recipes),
@@ -94,6 +100,7 @@ def test_recipe_dag_preserves_the_required_validation_graph() -> None:
         "bash scripts/check-compose.sh",
         "gitleaks git --config .gitleaks.toml --redact --no-banner",
         "gitleaks dir . --config .gitleaks.toml --redact --no-banner",
+        HYGIENE_COMMAND,
         "uv run mypy",
         "uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml",
     ]
@@ -122,6 +129,7 @@ def test_public_recipe_surface_remains_stable() -> None:
         "embeddings-provision-login",
         "embeddings-run",
         "env-init",
+        "hygiene",
         "install-check",
         "license-check",
         "performance",

@@ -40,6 +40,8 @@ exclude-newer = "7 days"
 
 [tool.ruff]
 line-length = 150
+# Vendored byte-for-byte from groovemap-music/automation (scripts/publication-hygiene.sha); never reformat it.
+extend-exclude = ["scripts/publication-hygiene.py"]
 target-version = "py314"
 
 [tool.ruff.per-file-target-version]
@@ -82,6 +84,7 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 files = ["scripts", "tests/deploy"]
+exclude = ["scripts/publication-hygiene\\.py"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --tb=short"
