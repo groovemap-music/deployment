@@ -1017,7 +1017,9 @@ def test_port_probe_sees_a_listener_and_a_free_port() -> None:
         port = listener.getsockname()[1]
         assert helpers.port_in_use("", port)
         assert helpers.port_in_use("127.0.0.1", port)
-    assert not helpers.port_in_use("127.0.0.1", _free_port())
+    # Port 0 is never a listening port, and binding it always succeeds, so this does not depend on
+    # which ports the host happens to have free at the moment.
+    assert not helpers.port_in_use("127.0.0.1", 0)
 
 
 def test_published_ports_are_read_from_docker_ps() -> None:
@@ -1338,12 +1340,29 @@ COPIED = (
 PROD = "-f docker-compose.yml -f docker-compose.prod.yml"
 
 
-_CANDIDATES = iter(range(20000, 30000))
+# Runs deploy_helpers.py for a scratch repository with its preflight port probe pinned to "nothing
+# listens". The probe reads real host sockets, so a port chosen as free in the test process can be
+# taken by the time deploy.sh probes it (another xdist worker, a stray listener); pinning it keeps
+# every scratch run independent of the host. The real probe stays covered by test_port_probe_*.
+PROBE_PINNED_WRAPPER = """\
+import os
+import runpy
+import sys
 
+if sys.argv[1] == "-c":
+    exec(sys.argv[2], {"__name__": "__main__"})
+    sys.exit(0)
+script = sys.argv[1]
+if os.path.basename(script) == "deploy_helpers.py":
+    sys.path.insert(0, os.path.dirname(os.path.abspath(script)))
+    import deploy_helpers
 
-def _free_port() -> int:
-    """A free port below every OS's ephemeral range, so no outgoing connection takes it meanwhile."""
-    return next(port for port in _CANDIDATES if not helpers.port_in_use("", port))
+    deploy_helpers.preflight.__kwdefaults__["in_use"] = lambda _address, _port: False
+    sys.argv = sys.argv[1:]
+    sys.exit(deploy_helpers.main())
+sys.argv = sys.argv[1:]
+runpy.run_path(script, run_name="__main__")
+"""
 
 
 class Deploy:
@@ -1373,12 +1392,12 @@ class Deploy:
         (bin_dir / "docker").chmod(0o755)
         self.log = root / "deploy.log"
         self.env = {key: value for key, value in os.environ.items() if not key.startswith(("COMPOSE_", "DOCKER_"))}
-        # Every configured host port points at a port free right now, so the real probe passes.
-        self.env |= {variable: str(_free_port()) for variable, *_ in helpers.PORTS}
+        (root / "probe-pinned.py").write_text(PROBE_PINNED_WRAPPER)
+        self.python = f"{sys.executable} {root / 'probe-pinned.py'}"
         self.env |= {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "DEPLOY_LOG": str(self.log),
-            "DEPLOY_PYTHON": sys.executable,
+            "DEPLOY_PYTHON": self.python,
             "FAKE_DOCKER_INFO": json.dumps(docker_info()),
         }
 
@@ -1447,7 +1466,7 @@ def test_the_profile_is_off_while_phase_one_runs(deploy: Deploy) -> None:
     assert not any(call.startswith("gate") for call in deploy.calls)
     assert "COMPOSE_PROFILES" not in deploy.env_values
     assert "bash scripts/deploy.sh\n" in result.stdout
-    assert f"{sys.executable} scripts/discogs_import_status.py --prod" in result.stdout
+    assert f"{deploy.python} scripts/discogs_import_status.py --prod" in result.stdout
     assert "just" not in result.stdout
 
 
