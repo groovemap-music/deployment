@@ -76,7 +76,7 @@ services:
   # stack's own pinned postgres (tests keep the two equal); its psql reads the password from the
   # secret file into PGPASSWORD, so no credential reaches a command line.
   store-check-postgres:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     container_name: groovemap-store-check-postgres
     hostname: store-check-postgres
     user: "${UID:-1000}:${GID:-1000}"
