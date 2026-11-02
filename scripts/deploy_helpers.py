@@ -625,11 +625,65 @@ def host_path_forms(path: str, resolve: bool) -> frozenset[str]:
     return frozenset({canonical})
 
 
+def _identity(path: str) -> tuple[int, int] | None:
+    """(st_dev, st_ino) of a host path, following symlinks; None when it does not exist.
+
+    Two spellings that name one directory share this identity, whatever their case on a
+    case-insensitive filesystem (macOS's default), where realpath keeps the spelling it was given.
+    """
+    try:
+        status = Path(path).stat()
+    except OSError:
+        return None
+    return status.st_dev, status.st_ino
+
+
+def _identities(path: str) -> list[tuple[int, int]]:
+    """The identity of a host path, then of each existing parent up to `/`; nonexistent levels are skipped."""
+    found = []
+    current = canonical_host_path(path)
+    while True:
+        identity = _identity(current)
+        if identity is not None:
+            found.append(identity)
+        parent = posixpath.dirname(current)
+        if parent == current:
+            return found
+        current = parent
+
+
+def _sensitive_identities() -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """(the sensitive paths themselves, the directories that contain one) as stat identities, for this machine."""
+    below: set[tuple[int, int]] = set()
+    above: set[tuple[int, int]] = set()
+    for bad in OVERRIDE_SENSITIVE_PATHS:
+        if (own := _identity(bad)) is not None:
+            below.add(own)  # `/` is never listed: every path has it as a parent, so it is only matched as `own`
+        above.update(_identities(posixpath.dirname(canonical_host_path(bad))))
+    return below, above
+
+
+def _identity_sensitive(path: str) -> bool:
+    """True when the path, or an existing parent of it, is a sensitive path's identity, or the path contains one."""
+    below, above = _sensitive_identities()
+    own = _identity(path)
+    if own is not None and own in above:
+        return True
+    return any(identity in below for identity in _identities(path))
+
+
+def _identity_overlap(first: str, second: str) -> bool:
+    """True when one path is the other's identity or lies under it, judged by stat identity, whatever the case."""
+    first_own, second_own = _identity(first), _identity(second)
+    return (second_own is not None and second_own in _identities(first)) or (first_own is not None and first_own in _identities(second))
+
+
 def sensitive_host_path(path: str, resolve: bool = False) -> bool:
     """True for `/`, a documented sensitive host path, anything under one, or a parent that contains one.
 
     Both the literal-canonical and the symlink-resolved forms are checked, against the list as
-    written and as resolved (macOS keeps /etc under /private).
+    written and as resolved (macOS keeps /etc under /private). A local engine (`resolve`) also
+    compares stat identities, so `/ETC` on a case-insensitive filesystem is `/etc`.
     """
     if not path.startswith("/"):
         return False
@@ -639,7 +693,7 @@ def sensitive_host_path(path: str, resolve: bool = False) -> bool:
             return True
         if any(normal == bad or normal.startswith(bad + "/") or bad.startswith(normal + "/") for bad in bad_paths):
             return True
-    return False
+    return resolve and _identity_sensitive(path)
 
 
 def _mounts(service: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -683,12 +737,15 @@ def _engine_names(key: str, definitions: Mapping[str, Any], project: str) -> set
 
 
 def _overlaps(first: str, second: str, resolve: bool = False) -> bool:
-    """True when the paths are the same, or one contains the other, in either spelling (canonical or symlink-resolved)."""
-    return any(
+    """True when the paths are the same, or one contains the other, in any spelling: canonical, symlink-resolved,
+    and (a local engine) by stat identity, so a case variant of an existing directory still overlaps it."""
+    if any(
         one == two or one.startswith(two + "/") or two.startswith(one + "/")
         for one in host_path_forms(first, resolve)
         for two in host_path_forms(second, resolve)
-    )
+    ):
+        return True
+    return resolve and first.startswith("/") and second.startswith("/") and _identity_overlap(first, second)
 
 
 @dataclass

@@ -673,6 +673,66 @@ def test_a_symlink_into_a_relocated_data_path_is_path_reuse_and_other_spellings_
     assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=False)] == ["ok"]
 
 
+def _case_insensitive_stat(monkeypatch: pytest.MonkeyPatch, directories: dict[str, tuple[int, int]]) -> None:
+    """Stand in for a case-insensitive filesystem: every case variant of a listed directory stats to its identity."""
+
+    def stat(path: str, *_args: Any, **_kwargs: Any) -> os.stat_result:
+        key = os.path.normpath(str(path)).lower()
+        if key not in directories:
+            raise FileNotFoundError(path)
+        dev, ino = directories[key]
+        return os.stat_result((0, ino, dev, 0, 0, 0, 0, 0, 0, 0))
+
+    monkeypatch.setattr(helpers.os, "stat", stat)
+
+
+_CASE_FOLDED_HOST = {
+    "/": (1, 1),
+    "/etc": (1, 100),
+    "/var": (1, 2),
+    "/var/lib": (1, 3),
+    "/users/robert/pg": (1, 500),
+}
+
+
+@pytest.mark.parametrize("source", ["/ETC", "/Etc/SHADOW", "/eTc/../ETC/hosts"])
+def test_sensitive_host_path_matches_by_stat_identity_on_a_local_engine(monkeypatch: pytest.MonkeyPatch, source: str) -> None:
+    _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
+    bind = {"volumes": [{"type": "bind", "source": source, "target": "/h"}]}
+    after = _stack_after("explore", bind)
+    assert helpers.sensitive_host_path(source, True)
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=True)] == ["stop"]
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=False)] == ["ok"]
+
+
+def test_a_parent_that_contains_a_sensitive_path_matches_by_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
+    assert helpers.sensitive_host_path("/VAR", True)
+    assert not helpers.sensitive_host_path("/VAR", False)
+    assert not helpers.sensitive_host_path("/Users/Robert/projects", True)
+
+
+def test_a_case_variant_of_another_services_data_path_stops_by_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/Robert/pg"}}
+    for source in ("/USERS/robert/PG", "/users/robert/pg/sub"):
+        bind = {"volumes": [{"type": "bind", "source": source, "target": "/d"}]}
+        after = _stack_after("postgres", {}, {"postgres_data": moved})
+        after["services"]["explore"].update(bind)
+        findings = helpers.check_override(_stack_with_volumes(), after, resolve=True)
+        assert [finding.level for finding in findings] == ["stop"], source
+        assert "where the data of postgres lives" in findings[0].message
+        assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=False)] == ["ok"], source
+
+
+def test_identity_matching_does_not_flag_unrelated_directories(monkeypatch: pytest.MonkeyPatch) -> None:
+    _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/Robert/pg"}}
+    after = _stack_after("postgres", {}, {"postgres_data": moved})
+    after["services"]["explore"].update({"volumes": [{"type": "bind", "source": "/Users/Robert/pgx", "target": "/d"}]})
+    assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=True)] == ["ok"]
+
+
 def test_short_volume_syntax_is_judged_like_the_long_form() -> None:
     findings = helpers.check_override(
         _stack_with_volumes(), _stack_after("backup", {"image": PINNED, "volumes": ["/var/run/docker.sock:/s:ro", "postgres_data:/pg"]})
