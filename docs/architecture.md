@@ -53,6 +53,7 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | cAdvisor | `cadvisor` | Per-container CPU, memory, network, and OOM metrics | 8080 (internal) |
 | Node exporter | `node-exporter` | Host CPU, memory, load, and filesystem metrics | 9100 (internal) |
 | DLQ policy initializer | `rabbitmq-dlq-policy-init` | One-shot: declares the catalog dead-letter queue size-cap policy | — |
+| Data volume initializer | `data-volume-init` | One-shot: re-owns `discogs_data` and `musicbrainz_data` to `${UID}:${GID}` for the extractors | — |
 
 The `embeddings` service is a one-shot `analytics-engine` job in the `jobs` profile,
 run monthly rather than started by `docker compose up`; see

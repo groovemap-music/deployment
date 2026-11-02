@@ -175,7 +175,7 @@ About two dozen containers, all on one `groovemap` bridge network (`172.20.0.0/1
 | Group | Services | Role |
 | --- | --- | --- |
 | Data stores | `postgres`, `neo4j`, `rabbitmq`, `valkey` | Relational store, graph, message broker, cache |
-| Schema | `schema-init`, `rabbitmq-dlq-policy-init` | One-shot initialisers for the schemas and broker policy |
+| Schema | `schema-init`, `rabbitmq-dlq-policy-init`, `data-volume-init` | One-shot initialisers for the schemas, broker policy and extractor data-volume ownership |
 | Discogs path | `extractor-discogs`, `graphinator`, `tableinator` | Download the dump, load the graph and PostgreSQL |
 | MusicBrainz path | `extractor-musicbrainz`, `brainzgraphinator`, `brainztableinator` | Same for MusicBrainz; profile `musicbrainz` |
 | Applications | `api`, `explore`, `dashboard`, `insights` | Catalog API, graph explorer (the app), operations console, insights |
@@ -325,6 +325,18 @@ initialised with the image user's ownership (UID 1000). Under any other host UID
 crash-looped on `Permission denied: /logs/<service>.log`. Each service that writes `/logs` now
 gets a size-capped tmpfs there, owned by `${UID}:${GID}` (Neo4j: its own `7474`), so no
 `chown` of a volume is needed.
+
+The extractor data volumes had the same defect: the extractor images create `/discogs-data` and
+`/musicbrainz-data` owned by 1000:1000, which a fresh named volume inherits, so a non-1000 UID could
+not write them. The one-shot `data-volume-init` now re-owns both volumes to `${UID}:${GID}` before
+the extractors start, and the extractors mount them `nocopy` so Docker cannot re-apply the image's
+ownership. It only changes the owner of mismatched entries (never deleting or `chmod`ing anything).
+
+- On an existing UID 1000 install it is a no-op, except possibly re-owning a root-owned, empty
+  `musicbrainz_data` root that phase 1 created before MusicBrainz ever ran.
+- Recreating the extractors (they pick up the `nocopy` mount and the new dependency) belongs in the
+  maintenance window; nothing else restarts.
+- No `chown` of the data volumes (or of bind-backed directories for them) is needed.
 
 - Logs are ephemeral inside containers. Read them with `docker compose logs <service>`
   (json-file driver, 10 MB x 3 per service) or through the telemetry stack.

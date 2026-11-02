@@ -37,10 +37,17 @@ services:
       DATA_QUALITY_RULES: !reset null
       LOCAL_MANIFEST: /usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json
     volumes: !override
-      - discogs_data:/discogs-data
+      # Long syntax: Compose merges mounts by target, so a short entry here would drop `nocopy`.
+      - type: volume
+        source: discogs_data
+        target: /discogs-data
+        volume:
+          nocopy: true
     depends_on: !override
       rabbitmq:
         condition: service_healthy
+      data-volume-init:
+        condition: service_completed_successfully
   tableinator:
     container_name: !reset null
     platform: *released-fixture-platform

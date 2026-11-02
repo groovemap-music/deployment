@@ -82,7 +82,9 @@ def test_overlay_selects_the_packaged_v1_manifest_and_isolates_state() -> None:
     assert all(services[name]["container_name"] is None for name in expected_services)
     assert services["extractor-discogs"]["environment"]["LOCAL_MANIFEST"] == FIXTURE_MANIFEST
     assert services["extractor-discogs"]["environment"]["DATA_QUALITY_RULES"] is None
-    assert services["extractor-discogs"]["volumes"] == ["discogs_data:/discogs-data"]
+    assert services["extractor-discogs"]["volumes"] == [
+        {"type": "volume", "source": "discogs_data", "target": "/discogs-data", "volume": {"nocopy": True}}
+    ]
     assert services["rabbitmq"]["volumes"] == ["rabbitmq_data:/var/lib/rabbitmq"]
     assert [port for service in services.values() for port in service.get("ports", [])] == [
         "127.0.0.1:${SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT:-15674}:15672"

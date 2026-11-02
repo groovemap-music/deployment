@@ -57,6 +57,10 @@ days to rebuild.
 - **A service crash-loops with `permission denied` on `/run/secrets/...`:** it is not running as
   the owner of the 0600 secret files. Do not loosen file modes or add a `user:` in the override;
   find which secret was written by another account (`ls -ln secrets/`) and fix its owner.
+- **An extractor gets `Permission denied` on `/discogs-data` or `/musicbrainz-data`:** the
+  `data-volume-init` one-shot re-owns both volumes to `${UID}:${GID}` and the extractors mount them
+  `nocopy`; read `docker compose logs data-volume-init`. An override that redeclares those mounts
+  must use the long syntax with `nocopy: true`, or Docker re-applies the image's 1000:1000 ownership.
 - **`up --wait` fails on a service that exited 0:** a one-shot (such as `rabbitmq-dlq-policy-init`)
   without a dependent using `service_completed_successfully`. The repository's Compose files have
   them; an override must not remove them.

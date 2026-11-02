@@ -31,13 +31,15 @@ by name. Before the first start, and only after the user approves changes outsid
 
 ```bash
 sudo mkdir -p /mnt/tank/groovemap/{postgres,neo4j,discogs,musicbrainz}
-sudo chown 1000:1000 /mnt/tank/groovemap/discogs /mnt/tank/groovemap/musicbrainz
 ```
 
 Ownership:
 
 - `discogs_data` and `musicbrainz_data` are written by the extractors, which run as
-  `${UID}:${GID}` from `.env` (default 1000:1000). Make those directories theirs.
+  `${UID}:${GID}` from `.env` (default 1000:1000). The `data-volume-init` one-shot re-owns any
+  mismatched entries in those bind-backed directories to `${UID}:${GID}` on every deploy (owner only,
+  never deleting or `chmod`ing), so the former `sudo chown 1000:1000` step is no longer required.
+  Leave them empty or owned by anyone; the extractors mount them `nocopy`.
 - PostgreSQL, Neo4j and RabbitMQ use their official images' entrypoints, which start as root and
   set the ownership of their data directories. Leave those directories owned by root, then
   check the first start's logs for `permission denied`

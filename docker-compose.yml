@@ -64,6 +64,14 @@ x-rabbitmq-dlq-policy-depends-on: &rabbitmq-dlq-policy-depends-on
   rabbitmq-dlq-policy-init:
     condition: service_completed_successfully
 
+# The extractors write their data volumes as ${UID}:${GID}, but their images create the data
+# directories owned by 1000:1000 and a fresh named volume inherits that on first mount. The
+# data-volume-init one-shot hands both volumes to the host user; the extractors mount them with
+# `nocopy` so Docker's copy-up cannot re-apply the image's ownership afterwards.
+x-data-volume-init-depends-on: &data-volume-init-depends-on
+  data-volume-init:
+    condition: service_completed_successfully
+
 networks:
   groovemap:
     driver: bridge
@@ -167,6 +175,38 @@ services:
     logging: *default-logging
     security_opt:
       - no-new-privileges:true
+
+  # One-shot that hands the extractor data volumes to the deploying user (${UID}:${GID}). The
+  # extractor images create /discogs-data and /musicbrainz-data owned by 1000:1000, so on a host
+  # whose UID is not 1000 the extractor could not write its own volume. This is the only
+  # container that runs as root outside the third-party infrastructure images; it is a pinned
+  # third-party image, capability-minimal (CHOWN plus DAC_READ_SEARCH), read-only, without a
+  # network, and it never deletes, chmods or rewrites contents. A no-op when ownership already
+  # matches. See docs/docker-security.md.
+  data-volume-init:
+    image: rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109
+    container_name: groovemap-data-volume-init
+    hostname: data-volume-init
+    user: "0:0"
+    entrypoint: ["/scripts/data-volume-init.sh"]
+    environment:
+      TARGET_UID: "${UID:-1000}"
+      TARGET_GID: "${GID:-1000}"
+    volumes:
+      - discogs_data:/volumes/discogs-data
+      - musicbrainz_data:/volumes/musicbrainz-data
+      - ./scripts/data-volume-init.sh:/scripts/data-volume-init.sh:ro
+    network_mode: none
+    read_only: true
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
 
   # PostgreSQL database
   postgres:
@@ -762,10 +802,14 @@ services:
     tmpfs:
       - *logs-tmpfs
     volumes:
-      - discogs_data:/discogs-data
+      - type: volume
+        source: discogs_data
+        target: /discogs-data
+        volume:
+          nocopy: true
       - ./config/extraction-rules.yaml:/config/extraction-rules.yaml:ro
     depends_on:
-      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on, *data-volume-init-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
@@ -808,9 +852,13 @@ services:
     tmpfs:
       - *logs-tmpfs
     volumes:
-      - musicbrainz_data:/musicbrainz-data
+      - type: volume
+        source: musicbrainz_data
+        target: /musicbrainz-data
+        volume:
+          nocopy: true
     depends_on:
-      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on, *data-volume-init-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
