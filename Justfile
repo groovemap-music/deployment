@@ -27,7 +27,13 @@ _source-analysis: _require-uv
 _compose-check: _require-uv
     bash scripts/check-compose.sh
 
-source-check: _source-analysis license-check _compose-check secret-scan
+source-check: _source-analysis license-check _compose-check secret-scan hygiene
+
+# CI's required "Reject committed bytecode and local home paths" step, run locally. scripts/publication-hygiene.py is
+# byte-identical to groovemap-music/automation at the SHA in scripts/publication-hygiene.sha (the ci.yml pin).
+# Scans the worktree plus unpushed commits (a path a later commit removed still fails); worktree only without origin/main.
+hygiene:
+    if git rev-parse --verify --quiet origin/main >/dev/null; then {{operator_python}} scripts/publication-hygiene.py --base origin/main --head HEAD; else {{operator_python}} scripts/publication-hygiene.py; fi
 
 check: source-check typecheck test
 
