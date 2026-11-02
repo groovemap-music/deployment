@@ -460,6 +460,30 @@ musicbrainz_containers() {
   docker ps -a --filter "label=$LABEL=$PROJECT" --format '{{.Label "com.docker.compose.service"}}' | grep -E '^(extractor-musicbrainz|brainzgraphinator|brainztableinator)$' || true
 }
 
+# gm-deployment-lvhq: the extractor images create their data directories owned by 1000:1000, which a
+# fresh named volume inherits, so an extractor running as any other host UID could not write its own
+# volume. data-volume-init hands the volumes to the operator and the extractors mount them nocopy.
+# Prove it from inside the running extractor, as the operator UID:GID the stack runs as.
+service_container() {
+  docker ps -aq --filter "label=$LABEL=$PROJECT" --filter "label=com.docker.compose.service=$1" | head -n 1
+}
+prove_data_volume() {
+  local service=$1 dir=$2 id log="$EVIDENCE/data-volume-$1.log" init_status init_exit
+  id="$(service_container "$service")"
+  [[ -n "$id" ]] || fail "data volume: no $service container to probe"
+  init_exit="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$(service_container data-volume-init)")"
+  [[ "$init_exit" == "exited 0" ]] || fail "data volume: data-volume-init is '$init_exit', expected 'exited 0'"
+  init_status="$(docker logs "$(service_container data-volume-init)" 2>&1 | grep -c "re-owned")"
+  {
+    echo "data-volume-init: $init_exit"
+    docker logs "$(service_container data-volume-init)" 2>&1
+    docker exec -u "$uid:$gid" "$id" sh -c "id; stat -c '%n owner %u:%g mode %a' $dir; probe=$dir/.smoke-write-probe; touch \"\$probe\" && rm -f \"\$probe\" && echo probe-created-and-removed"
+  } >"$log" 2>&1 || fail "data volume: $service could not use $dir as $uid:$gid (see data-volume-$service.log)"
+  grep -qF "$dir owner $uid:$gid " "$log" || fail "data volume: $dir is not owned by $uid:$gid in $service (see data-volume-$service.log)"
+  grep -qF probe-created-and-removed "$log" || fail "data volume: $service could not create a probe file in $dir (see data-volume-$service.log)"
+  pass "data volume: data-volume-init exited 0 ($init_status volumes handled) and $service, as UID $uid:$gid, owns $dir and created and removed a probe file"
+}
+
 # --- the default monitoring ------------------------------------------------------------
 
 # GrooveMap's own Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor, as every
@@ -533,6 +557,7 @@ pass "phase 1: just deploy --no-wait reached up --wait success with uv off PATH"
 grep -q '^COMPOSE_FILE=.*docker-compose.shared-monitoring.yml.*docker-compose.override.yml' .env ||
   fail "deploy did not keep COMPOSE_FILE in .env with the shared-monitoring overlay and the override"
 check_stack phase-1
+prove_data_volume extractor-discogs /discogs-data
 
 # The collector scrapes RabbitMQ and the homelab's PostgreSQL exporter and remote-writes to the
 # shared VictoriaMetrics; read it back from the console's container, which is on that network.
@@ -627,10 +652,13 @@ until [[ "$(health)" == healthy ]] || ((SECONDS > deadline)); do sleep 5; done
 # The released extractor image packages a one-record Discogs dump. Run once, it publishes the
 # record and extraction_complete to all four exchanges; the real loaders record their latches and
 # the SQL loader runs its derived-relation pass. No latch row is written by the smoke itself.
+# FAILURE_COOLDOWN_SECS=0 (smoke only; the production default is untouched): the extractor sleeps
+# that long after a failure before exiting 1, which would otherwise outlast timeout 600 and hide
+# its real error behind exit 124.
 say "Running the reviewed Discogs extractor once against its packaged fixture"
 status=0
 timeout 600 env -u COMPOSE_FILE -u COMPOSE_PROFILES docker compose run --rm --no-deps -T --entrypoint discogs-ingestion \
-  -e LOCAL_MANIFEST="$FIXTURE_MANIFEST" extractor-discogs >"$EVIDENCE/fixture.log" 2>&1 || status=$?
+  -e FAILURE_COOLDOWN_SECS=0 -e LOCAL_MANIFEST="$FIXTURE_MANIFEST" extractor-discogs >"$EVIDENCE/fixture.log" 2>&1 || status=$?
 ((status == 0)) || fail "the Discogs fixture extraction exited $status (see fixture.log)"
 grep -qF "Extraction complete message sent to all 4 exchanges" "$EVIDENCE/fixture.log" ||
   fail "the fixture extraction did not broadcast extraction_complete (see fixture.log)"
@@ -665,6 +693,7 @@ else
   grep -q '^COMPOSE_PROFILES=musicbrainz' .env || fail "phase 2: COMPOSE_PROFILES=musicbrainz is not in .env"
   pass "phase 2: deploy read the gate (0), enabled the musicbrainz profile in .env and reached up --wait success"
   check_stack phase-2
+  prove_data_volume extractor-musicbrainz /musicbrainz-data
   status_report phase-2 "phase 2: Discogs import complete, MusicBrainz enabled"
 fi
 
