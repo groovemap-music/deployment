@@ -691,7 +691,7 @@ _CASE_FOLDED_HOST = {
     "/etc": (1, 100),
     "/var": (1, 2),
     "/var/lib": (1, 3),
-    "/users/robert/pg": (1, 500),
+    "/users/example/pg": (1, 500),
 }
 
 
@@ -709,13 +709,13 @@ def test_a_parent_that_contains_a_sensitive_path_matches_by_identity(monkeypatch
     _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
     assert helpers.sensitive_host_path("/VAR", True)
     assert not helpers.sensitive_host_path("/VAR", False)
-    assert not helpers.sensitive_host_path("/Users/Robert/projects", True)
+    assert not helpers.sensitive_host_path("/Users/example/projects", True)
 
 
 def test_a_case_variant_of_another_services_data_path_stops_by_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
-    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/Robert/pg"}}
-    for source in ("/USERS/robert/PG", "/users/robert/pg/sub"):
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/example/pg"}}
+    for source in ("/USERS/example/PG", "/users/example/pg/sub"):
         bind = {"volumes": [{"type": "bind", "source": source, "target": "/d"}]}
         after = _stack_after("postgres", {}, {"postgres_data": moved})
         after["services"]["explore"].update(bind)
@@ -727,9 +727,9 @@ def test_a_case_variant_of_another_services_data_path_stops_by_identity(monkeypa
 
 def test_identity_matching_does_not_flag_unrelated_directories(monkeypatch: pytest.MonkeyPatch) -> None:
     _case_insensitive_stat(monkeypatch, _CASE_FOLDED_HOST)
-    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/Robert/pg"}}
+    moved = {"name": "groovemap_postgres_data", "driver_opts": {"type": "none", "o": "bind", "device": "/Users/example/pg"}}
     after = _stack_after("postgres", {}, {"postgres_data": moved})
-    after["services"]["explore"].update({"volumes": [{"type": "bind", "source": "/Users/Robert/pgx", "target": "/d"}]})
+    after["services"]["explore"].update({"volumes": [{"type": "bind", "source": "/Users/example/pgx", "target": "/d"}]})
     assert [finding.level for finding in helpers.check_override(_stack_with_volumes(), after, resolve=True)] == ["ok"]
 
 
