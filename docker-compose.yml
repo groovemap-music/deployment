@@ -10,6 +10,28 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# /logs is a per-service tmpfs owned by the runtime UID, never a named volume: a
+# named volume initialises with the image user's ownership (UID 1000), so under
+# any other host UID the service could not open /logs/<service>.log. Logs are
+# ephemeral here; read them with `docker compose logs` (json-file driver, see
+# x-logging). Cap: 64m per service, which holds the rotation budget below
+# (3 files x 20 MiB = 60 MiB). docs/configuration.md documents both.
+x-logs-tmpfs: &logs-tmpfs "/logs:rw,noexec,nosuid,uid=${UID:-1000},gid=${GID:-1000},mode=0750,size=64m"
+
+# Neo4j runs as its own image user (7474), not ${UID}; its default Log4j files
+# rotate at 20 MB with up to 7 archives (HTTP keeps 5). Budgeting one active
+# file plus archives for all five appenders, even if HTTP is enabled, and the
+# optional GC log is conservatively 880 MiB. Keep the tmpfs capped at 1 GiB so
+# the image's defaults fit even if GC logging is enabled later.
+x-neo4j-logs-tmpfs: &neo4j-logs-tmpfs "/logs:rw,noexec,nosuid,uid=7474,gid=7474,mode=0750,size=1g"
+
+# Rotation for the shared Python logging (LOG_FILE defaults to /logs/<service>.log):
+# the active file plus LOG_FILE_BACKUP_COUNT backups, each at most LOG_FILE_MAX_BYTES.
+# (1 + 2) x 20 MiB = 60 MiB must stay within the 64m tmpfs cap above; a test enforces it.
+x-log-rotation-env: &log-rotation-env
+  LOG_FILE_MAX_BYTES: "20971520"
+  LOG_FILE_BACKUP_COUNT: "2"
+
 # Telemetry wiring shared by every internal-image service. Only the standard
 # OTEL SDK variables are used — there are no GrooveMap-specific telemetry knobs.
 # OTEL_SERVICE_NAME is set per service to its compose key and so stays out of
@@ -40,6 +62,14 @@ x-otel-depends-on: &otel-depends-on
 # stops its dependents from starting and fails `up`.
 x-rabbitmq-dlq-policy-depends-on: &rabbitmq-dlq-policy-depends-on
   rabbitmq-dlq-policy-init:
+    condition: service_completed_successfully
+
+# The extractors write their data volumes as ${UID}:${GID}, but their images create the data
+# directories owned by 1000:1000 and a fresh named volume inherits that on first mount. The
+# data-volume-init one-shot hands both volumes to the host user; the extractors mount them with
+# `nocopy` so Docker's copy-up cannot re-apply the image's ownership afterwards.
+x-data-volume-init-depends-on: &data-volume-init-depends-on
+  data-volume-init:
     condition: service_completed_successfully
 
 networks:
@@ -146,6 +176,38 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # One-shot that hands the extractor data volumes to the deploying user (${UID}:${GID}). The
+  # extractor images create /discogs-data and /musicbrainz-data owned by 1000:1000, so on a host
+  # whose UID is not 1000 the extractor could not write its own volume. This is the only
+  # container that runs as root outside the third-party infrastructure images; it is a pinned
+  # third-party image, capability-minimal (CHOWN plus DAC_READ_SEARCH), read-only, without a
+  # network, and it never deletes, chmods or rewrites contents. A no-op when ownership already
+  # matches. See docs/docker-security.md.
+  data-volume-init:
+    image: rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109
+    container_name: groovemap-data-volume-init
+    hostname: data-volume-init
+    user: "0:0"
+    entrypoint: ["/scripts/data-volume-init.sh"]
+    environment:
+      TARGET_UID: "${UID:-1000}"
+      TARGET_GID: "${GID:-1000}"
+    volumes:
+      - discogs_data:/volumes/discogs-data
+      - musicbrainz_data:/volumes/musicbrainz-data
+      - ./scripts/data-volume-init.sh:/scripts/data-volume-init.sh:ro
+    network_mode: none
+    read_only: true
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+
   # PostgreSQL database
   postgres:
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
@@ -212,9 +274,10 @@ services:
     ports:
       - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${NEO4J_HTTP_HOST_PORT:-7474}:7474"
       - "${DATA_BIND_ADDRESS:+${DATA_BIND_ADDRESS}:}${NEO4J_BOLT_HOST_PORT:-7687}:7687"
+    tmpfs:
+      - *neo4j-logs-tmpfs
     volumes:
       - neo4j_data:/data
-      - neo4j_logs:/logs
       - neo4j_import:/var/lib/neo4j/import
       - neo4j_plugins:/plugins
     networks:
@@ -594,7 +657,7 @@ services:
     hostname: schema-init
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: schema-init
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
@@ -605,8 +668,6 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
-    volumes:
-      - schema_init_logs:/logs
     depends_on:
       <<: *otel-depends-on
       postgres:
@@ -624,6 +685,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - *logs-tmpfs
 
   # API service — user accounts, JWT, Discogs OAuth
   api:
@@ -632,7 +694,7 @@ services:
     hostname: api
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: api
       # Public origin of the Explore frontend — used to build absolute links in
       # outbound email. Must be reachable from the recipient's mail client.
@@ -684,7 +746,6 @@ services:
       - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HOST_PORT:-8004}:8004"
       - "${WEB_BIND_ADDRESS:+${WEB_BIND_ADDRESS}:}${API_HEALTH_HOST_PORT:-8005}:8005"
     volumes:
-      - api_logs:/logs
       - discogs_data:/discogs-data:ro
       - musicbrainz_data:/musicbrainz-data:ro
     depends_on:
@@ -718,6 +779,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - *logs-tmpfs
 
   # Rust-based extractor service for Discogs data. Source-owned image from the
   # discogs-ingestion repository (ADR 0005); its entrypoint takes no source flag.
@@ -737,12 +799,17 @@ services:
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
       DATA_QUALITY_RULES: /config/extraction-rules.yaml
+    tmpfs:
+      - *logs-tmpfs
     volumes:
-      - discogs_data:/discogs-data
-      - extractor_discogs_logs:/logs
+      - type: volume
+        source: discogs_data
+        target: /discogs-data
+        volume:
+          nocopy: true
       - ./config/extraction-rules.yaml:/config/extraction-rules.yaml:ro
     depends_on:
-      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on, *data-volume-init-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
@@ -782,11 +849,16 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
       RABBITMQ_USERNAME: groovemap
+    tmpfs:
+      - *logs-tmpfs
     volumes:
-      - musicbrainz_data:/musicbrainz-data
-      - extractor_musicbrainz_logs:/logs
+      - type: volume
+        source: musicbrainz_data
+        target: /musicbrainz-data
+        volume:
+          nocopy: true
     depends_on:
-      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on]
+      <<: [*otel-depends-on, *rabbitmq-dlq-policy-depends-on, *data-volume-init-depends-on]
       rabbitmq:
         condition: service_healthy
     networks:
@@ -810,7 +882,7 @@ services:
     hostname: graphinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: graphinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
@@ -852,8 +924,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - graphinator_logs:/logs
+      - *logs-tmpfs
 
   # Brainzgraphinator service — MusicBrainz Neo4j enrichment
   brainzgraphinator:
@@ -864,7 +935,7 @@ services:
     profiles:
       - musicbrainz
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: brainzgraphinator
       CONSUMER_CANCEL_DELAY: "300"
       LOG_LEVEL: INFO
@@ -906,8 +977,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - brainzgraphinator_logs:/logs
+      - *logs-tmpfs
 
   # Tableinator service
   tableinator:
@@ -916,7 +986,7 @@ services:
     hostname: tableinator
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: tableinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
@@ -959,8 +1029,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - tableinator_logs:/logs
+      - *logs-tmpfs
 
   # Brainztableinator service (MusicBrainz data to PostgreSQL)
   brainztableinator:
@@ -971,7 +1040,7 @@ services:
     profiles:
       - musicbrainz
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: brainztableinator
       CONSUMER_CANCEL_DELAY: "300"     # 5 minutes before canceling idle consumers
       LOG_LEVEL: INFO
@@ -1014,8 +1083,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - brainztableinator_logs:/logs
+      - *logs-tmpfs
 
   # Dashboard service
   dashboard:
@@ -1024,7 +1092,7 @@ services:
     hostname: dashboard
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: dashboard
       LOG_LEVEL: INFO
       NEO4J_HOST: neo4j
@@ -1087,8 +1155,7 @@ services:
     tmpfs:
       - /tmp
       - /.cache
-    volumes:
-      - dashboard_logs:/logs
+      - *logs-tmpfs
 
   # Explore service
   explore:
@@ -1097,7 +1164,7 @@ services:
     hostname: explore
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: explore
       API_BASE_URL: "http://api:8004"
       LOG_LEVEL: INFO
@@ -1129,8 +1196,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - explore_logs:/logs
+      - *logs-tmpfs
 
   # Insights service — precomputed analytics and music trends
   insights:
@@ -1139,7 +1205,7 @@ services:
     hostname: insights
     user: "${UID:-1000}:${GID:-1000}"
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: insights
       API_BASE_URL: "http://api:8004"
       INSIGHTS_SCHEDULE_HOURS: "24"
@@ -1182,8 +1248,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - insights_logs:/logs
+      - *logs-tmpfs
 
   # One-shot analytics-engine embedding pipeline entry point (ADR 0013's monthly
   # FastRP recompute; see docs/maintenance.md#monthly-embedding-refresh). Shares the
@@ -1213,7 +1278,7 @@ services:
     profiles:
       - jobs
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *log-rotation-env]
       OTEL_SERVICE_NAME: embeddings
       LOG_LEVEL: INFO
       POSTGRES_DATABASE: groovemap
@@ -1240,27 +1305,16 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - *logs-tmpfs
 
 volumes:
   rabbitmq_data:
   postgres_data:
   neo4j_data:
-  neo4j_logs:
   neo4j_import:
   neo4j_plugins:
   valkey_data:
   discogs_data:
-  extractor_discogs_logs:
-  extractor_musicbrainz_logs:
-  schema_init_logs:
-  api_logs:
-  graphinator_logs:
-  brainzgraphinator_logs:
-  tableinator_logs:
-  dashboard_logs:
-  explore_logs:
-  brainztableinator_logs:
-  insights_logs:
   musicbrainz_data:
   victoria_metrics_data:
   victoria_traces_data:

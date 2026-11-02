@@ -297,7 +297,7 @@ def test_prod_long_running_services_restart_always() -> None:
     """
     prod = _prod_compose()["services"]
     effective = _effective_restart_settings()
-    one_shots = {"schema-init", "rabbitmq-dlq-policy-init", "embeddings"}
+    one_shots = {"schema-init", "rabbitmq-dlq-policy-init", "data-volume-init", "embeddings"}
 
     for name in prod:
         if name in one_shots:

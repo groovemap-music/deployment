@@ -17,6 +17,23 @@ user: "${UID:-1000}:${GID:-1000}"
 - Matches host user to avoid permission issues with volumes
 - Third-party infrastructure images keep their image-defined user; Compose
   does not falsely override a UID their entrypoint may require
+- **The one root exception: `data-volume-init`.** The extractor images create
+  `/discogs-data` and `/musicbrainz-data` owned by 1000:1000, and a fresh named
+  volume inherits that on first mount (Docker's copy-up), so an extractor running
+  as any other host UID could not write its own volume (the hosted UID 1001 smoke
+  failed on exactly this). `data-volume-init` is a one-shot that re-owns both
+  volumes to `${UID}:${GID}`. It runs the already-pinned third-party `rabbitmq`
+  image as `0:0` (no source-owned image runs as root), with `cap_drop: ALL` plus
+  only `CHOWN` and `DAC_READ_SEARCH`, `no-new-privileges`, a read-only root and
+  `network_mode: none`. `scripts/data-volume-init.sh` only changes the owner of
+  entries whose owner or group differs: it never deletes, `chmod`s or rewrites
+  contents, and it changes nothing when ownership already matches. The
+  extractors mount the volumes with `nocopy`: without it, Docker re-applies the
+  image directory's 1000:1000 ownership to a still-empty volume when the
+  extractor container is created, undoing the init. Overlays that redeclare
+  those mounts must use the long syntax with `nocopy: true`; Compose merges
+  volumes by target, so a short-syntax entry silently drops it (a rendered-config
+  test covers every supported overlay).
 
 ### 2. Capability Dropping
 
@@ -98,7 +115,7 @@ networks:
 
 Production sets `restart: always` on every long-running service in `docker-compose.prod.yml`, so a
 crashed container is restarted (with Docker's backoff between attempts) and comes back after a daemon
-or host restart. The one-shot `schema-init`, `rabbitmq-dlq-policy-init` and `embeddings` jobs keep the
+or host restart. The one-shot `schema-init`, `rabbitmq-dlq-policy-init`, `data-volume-init` and `embeddings` jobs keep the
 base file's policy.
 
 The overlay does not set `deploy.restart_policy`. Docker Compose lets it override `restart:`, and the
@@ -301,13 +318,16 @@ If you encounter permission errors:
    docker compose exec service id
    ```
 
-1. Fix volume permissions. This stack uses Docker named volumes, not a
-   `./volumes/` directory. The ones the application services write to are
-   `discogs_data`, `musicbrainz_data`, and the `*_logs` volumes (for example
-   `api_logs`, `graphinator_logs`). Compose prefixes each name with the
-   project name, which defaults to the checkout directory name (so
-   `deployment_discogs_data`). Find the full name, check who owns it, and
-   `chown` it to the service UID:GID with a one-off helper container:
+1. Volume permissions. This stack uses Docker named volumes, not a
+   `./volumes/` directory. The ones the extractors write to are `discogs_data`
+   and `musicbrainz_data`; the `data-volume-init` one-shot hands both to the
+   service `UID:GID` on every `just deploy`, so no manual step is needed. (`/logs`
+   is a UID-owned tmpfs, not a volume, so it needs no fix.) A manual `chown` is
+   only for the case the init cannot reach: a volume you removed the init from
+   through your own override, or inspecting one while the stack is down. Compose
+   prefixes each name with the project name, which defaults to the checkout
+   directory name (so `deployment_discogs_data`). Find the full name, check who
+   owns it, and `chown` it to the service UID:GID with a one-off helper container:
 
    ```bash
    docker volume ls --filter name=discogs_data

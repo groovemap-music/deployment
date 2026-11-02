@@ -322,6 +322,23 @@ and confirm its `environment` field is `production`. A local Compose validation
 proves the configuration supplied to containers; it does not prove that a live
 host has applied it or that every third-party image emits the same log fields.
 
+### Container log files (`/logs`)
+
+Each service that writes `/logs` gets a per-service tmpfs there, owned by `${UID}:${GID}`
+(Neo4j: `7474:7474`), mode `0750`, `noexec,nosuid`. Application services are capped at **64 MiB**
+of RAM; Neo4j gets a **1 GiB** cap because the pinned 2026.10.0 image ships 20 MB log files with
+up to seven archives (HTTP keeps five). That allows about 760 MiB across the five log streams,
+including HTTP even though it is disabled by default; with its optional GC log's five archives,
+the conservative budget is 880 MiB. Content is lost when the container is recreated; the durable
+copy is the container's stdout through Docker's json-file driver (`docker compose logs <service>`).
+
+The shared Python logger rotates `/logs/<service>.log` by `LOG_FILE_MAX_BYTES` (compose sets
+`20971520`, 20 MiB) with `LOG_FILE_BACKUP_COUNT` backups (compose sets `2`). The worst case is
+(1 + 2) x 20 MiB = 60 MiB, which fits the 64 MiB cap; raise the cap and the rotation settings
+together (a test checks that the budget fits). The monthly `embeddings` job uses the same file
+logger at `/logs/embeddings.log`. The Rust extractors log JSON to stdout only, so their `/logs`
+tmpfs stays empty.
+
 ### RabbitMQ Configuration
 
 RabbitMQ connections are configured using individual component variables.
@@ -376,7 +393,8 @@ named volumes (`discogs_data` and `musicbrainz_data`).
 
 **DISCOGS_ROOT Details**:
 
-- Must be writable by service user (UID 1000 in Docker)
+- Must be writable by the service user (`${UID}:${GID}` from `.env`); the
+  `data-volume-init` one-shot hands `discogs_data` and `musicbrainz_data` to that user
 - Requires ~76GB free space for full dataset
 - Contains downloaded XML files and metadata cache
 
@@ -1660,7 +1678,7 @@ infrastructure use their native commands. Inspect the exact commands with
 **Cache Directory Errors**:
 
 - Verify directory exists
-- Check write permissions (UID 1000 for Docker)
+- Check write permissions for the service user (`${UID}:${GID}` from `.env`)
 - Ensure sufficient disk space
 
 **Environment Variables Not Loading**:

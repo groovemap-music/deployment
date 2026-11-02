@@ -50,7 +50,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: smoke-homelab-${{ github.ref }}
+  group: smoke-homelab-${{ github.ref }}-${{ inputs.smoke_host_uid || '1000' }}
   cancel-in-progress: true
 
 jobs:

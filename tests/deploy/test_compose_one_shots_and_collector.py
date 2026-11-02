@@ -112,3 +112,63 @@ def test_the_embeddings_wrapper_refuses_to_run_without_real_values(tmp_path: Pat
     bad_date = run(SOURCE_DUMP_ID="discogs-2026-09", SOURCE_DUMP_DATE="September")
     assert bad_date.returncode == 2
     assert "ISO date" in bad_date.stderr
+
+
+# gm-deployment-lvhq: every supported overlay combination must render the extractor data mounts with
+# `nocopy`. Compose merges `volumes` by target, so one short-syntax redeclaration in an overlay
+# silently drops it, and Docker's copy-up then re-applies the image's 1000:1000 ownership to the
+# fresh volume, which a host UID other than 1000 cannot write.
+DATA_MOUNTS = {
+    "extractor-discogs": ("discogs_data", "/discogs-data"),
+    "extractor-musicbrainz": ("musicbrainz_data", "/musicbrainz-data"),
+}
+OVERLAY_COMBINATIONS = {
+    "base": ["docker-compose.yml"],
+    "prod": ["docker-compose.yml", "docker-compose.prod.yml"],
+    "smoke": ["docker-compose.yml", "docker-compose.smoke.yml"],
+    "released-fixture": ["docker-compose.yml", "docker-compose.released-fixture-smoke.yml"],
+    "media-smoke": ["docker-compose.yml", "docker-compose.media-smoke.yml"],
+    "erasure-smoke": ["docker-compose.yml", "docker-compose.erasure-smoke.yml"],
+    "shared-monitoring": ["docker-compose.yml", "docker-compose.shared-monitoring.yml"],
+    "homelab-storage-override": ["docker-compose.yml", "skills/groovemap-homelab/assets/override-storage.yml"],
+}
+
+
+@pytest.mark.parametrize("combination", sorted(OVERLAY_COMBINATIONS))
+def test_extractor_data_mounts_keep_nocopy_and_wait_for_the_volume_init(combination: str) -> None:
+    extra = {"UID": "1001", "GID": "1001"}
+    if combination == "shared-monitoring":
+        extra |= {
+            "GROOVEMAP_MONITORING": "shared",
+            "SHARED_VICTORIA_METRICS_URL": "http://vm.lan:8428",
+            "SHARED_VICTORIA_TRACES_URL": "https://traces.lan/vt",
+            "SHARED_GRAFANA_URL": "http://grafana:3000",
+            "SHARED_NODE_EXPORTER_ADDRESS": "node-exporter:9100",
+            "SHARED_CADVISOR_ADDRESS": "cadvisor.lan:8080",
+        }
+    services = _render(OVERLAY_COMBINATIONS[combination], extra_env=extra)["services"]
+    init = services["data-volume-init"]
+    assert init["user"] == "0:0"
+    assert init["environment"] == {"TARGET_UID": "1001", "TARGET_GID": "1001"}
+    assert sorted(init["cap_add"]) == ["CHOWN", "DAC_READ_SEARCH"] and init["cap_drop"] == ["ALL"]
+    assert init["network_mode"] == "none" and init["read_only"] is True and init["restart"] == "no"
+    assert {m["target"] for m in init["volumes"] if m["type"] == "volume"} == {"/volumes/discogs-data", "/volumes/musicbrainz-data"}
+    for name, (volume, target) in DATA_MOUNTS.items():
+        service = services.get(name)
+        if service is None:
+            continue  # an overlay that drops the extractor needs no data mount
+        mounts = [m for m in service["volumes"] if m["target"] == target]
+        assert len(mounts) == 1, (combination, name)
+        assert mounts[0]["source"] == volume and mounts[0]["type"] == "volume"
+        assert mounts[0]["volume"] == {"nocopy": True}, f"{combination}: {name} lost nocopy on {target}"
+        assert service["depends_on"]["data-volume-init"]["condition"] == "service_completed_successfully", (combination, name)
+
+
+def test_the_volume_init_script_is_a_no_op_for_matching_ownership_and_changes_nothing_else() -> None:
+    text = (ROOT / "scripts" / "data-volume-init.sh").read_text()
+    script = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#") or line.startswith("#!"))
+    assert script.startswith("#!/bin/sh\n") and "set -eu" in script
+    # Only ownership of mismatched entries is ever touched: no delete, chmod, or content rewrite.
+    for forbidden in ("rm ", "chmod", "-delete", "mv ", "cp "):
+        assert forbidden not in script, forbidden
+    assert "! -uid" in script and "! -gid" in script and "chown -h" in script and "-xdev" in script

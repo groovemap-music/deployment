@@ -60,6 +60,7 @@ helpers = _load("groovemap_deploy_helpers", "deploy_helpers.py")
 SERVICES: dict[str, str | None] = {
     "rabbitmq": None,
     "rabbitmq-dlq-policy-init": None,
+    "data-volume-init": None,
     "postgres": None,
     "neo4j": None,
     "valkey": None,
@@ -87,7 +88,7 @@ DISCOGS_SERVICES = ("extractor-discogs", "graphinator", "tableinator")
 MUSICBRAINZ_SERVICES = ("extractor-musicbrainz", "brainzgraphinator", "brainztableinator")
 # Services that run once and exit 0 by design, including an external store's check, which every
 # `docker compose up` runs again first (it leaves an exited container, listed after SERVICES).
-ONE_SHOTS = ("rabbitmq-dlq-policy-init", "schema-init", *stores.STORE_CHECK_SERVICES.values())
+ONE_SHOTS = ("rabbitmq-dlq-policy-init", "data-volume-init", "schema-init", *stores.STORE_CHECK_SERVICES.values())
 LABEL_VERSION = "org.opencontainers.image.version"
 LABEL_REVISION = "org.opencontainers.image.revision"
 DIGEST = re.compile(r"@sha256:([0-9a-f]{64})\b")

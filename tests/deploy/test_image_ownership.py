@@ -15,6 +15,7 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 THIRD_PARTY_SERVICES = (
     "rabbitmq",
     "rabbitmq-dlq-policy-init",
+    "data-volume-init",
     "postgres",
     "neo4j",
     "valkey",

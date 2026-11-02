@@ -1113,12 +1113,19 @@ PSQL_SHELL: str = stores.PSQL_SHELL
 MUSICBRAINZ_LATCH_SQL = "SELECT EXISTS (SELECT 1 FROM public.loader_extraction_latch WHERE loader = 'musicbrainz')"
 
 
+# Named /logs volumes the MusicBrainz services mounted before /logs became a per-service tmpfs
+# (gm-deployment-lvhq). The Compose file no longer declares them, but deploy never deletes volumes,
+# so on a host upgraded from that layout they still say MusicBrainz ran here.
+LEGACY_MUSICBRAINZ_LOG_VOLUMES = frozenset({"extractor_musicbrainz_logs", "brainzgraphinator_logs", "brainztableinator_logs"})
+
+
 def musicbrainz_exclusive_volumes(config: Mapping[str, Any] | None) -> set[str] | None:
     """Compose volume keys that only the MusicBrainz profile mounts, from `config --format json --profile '*'`.
 
     Phase 1 already creates every volume a non-MusicBrainz service mounts (the API mounts
     musicbrainz_data read-only), so only a volume with no other mounting service says MusicBrainz
-    ever ran. None when the render cannot tell (no services): the caller must not guess.
+    ever ran, plus the legacy MusicBrainz log volumes an upgraded host may still carry. None when
+    the render cannot tell (no services): the caller must not guess.
     """
     services = (config or {}).get("services")
     if not isinstance(services, dict) or not services:
@@ -1131,7 +1138,7 @@ def musicbrainz_exclusive_volumes(config: Mapping[str, Any] | None) -> set[str] 
             source = str(mount.get("source") or "")
             if mount.get("type", "volume") == "volume" and source:
                 (exclusive if only_musicbrainz else shared).add(source)
-    return exclusive - shared
+    return (exclusive - shared) | LEGACY_MUSICBRAINZ_LOG_VOLUMES
 
 
 def musicbrainz_latch(

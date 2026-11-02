@@ -99,6 +99,7 @@ and pinned by digest as `repository:tag@sha256:digest`:
 | --- | --- |
 | `rabbitmq` | `rabbitmq` |
 | `rabbitmq-dlq-policy-init` | `rabbitmq` |
+| `data-volume-init` | `rabbitmq` |
 | `postgres` | `postgres` |
 | `neo4j` | `neo4j` |
 | `valkey` | `valkey/valkey` |

@@ -53,6 +53,7 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | cAdvisor | `cadvisor` | Per-container CPU, memory, network, and OOM metrics | 8080 (internal) |
 | Node exporter | `node-exporter` | Host CPU, memory, load, and filesystem metrics | 9100 (internal) |
 | DLQ policy initializer | `rabbitmq-dlq-policy-init` | One-shot: declares the catalog dead-letter queue size-cap policy | — |
+| Data volume initializer | `data-volume-init` | One-shot: re-owns `discogs_data` and `musicbrainz_data` to `${UID}:${GID}` for the extractors | — |
 
 The `embeddings` service is a one-shot `analytics-engine` job in the `jobs` profile,
 run monthly rather than started by `docker compose up`; see
@@ -68,13 +69,11 @@ map](dockerfile-standards.md#compatibility-identifiers).
 Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
 (`postgres_data`), Valkey (`valkey_data`), Grafana (`grafana_data`),
 VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
-(`victoria_traces_data`). Neo4j separates `neo4j_data`, `neo4j_logs`,
+(`victoria_traces_data`). Neo4j separates `neo4j_data`,
 `neo4j_import`, and `neo4j_plugins`. The producers persist downloads in
-`discogs_data` and `musicbrainz_data`; the API mounts both read-only. The
-source-owned log volumes are `schema_init_logs`, `api_logs`,
-`extractor_discogs_logs`, `extractor_musicbrainz_logs`, `graphinator_logs`,
-`brainzgraphinator_logs`, `tableinator_logs`, `brainztableinator_logs`,
-`dashboard_logs`, `explore_logs`, and `insights_logs`.
+`discogs_data` and `musicbrainz_data`; the API mounts both read-only. `/logs`
+in every service is a size-capped tmpfs owned by the runtime UID, not a
+volume; logs are read with `docker compose logs`.
 
 Removing a container does not remove these volumes. Any `down --volumes` or
 volume replacement is a destructive, approval-gated operation with an explicit

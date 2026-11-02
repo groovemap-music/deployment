@@ -122,6 +122,7 @@ cases explicitly called unit-only were not exercised by that runtime. See
 | 9 | Follow-up: Explore theme release (`graph-explorer` v0.3.0) and the console's configurable targets | Reviewed digests promoted; the console reads its probe targets from the environment | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_status.py::test_reviewed_images_show_their_release_and_oci_labels`, `test_shared_monitoring.py::test_the_local_stack_sets_no_console_target_mode` | Combined run used the reviewed v0.3.0 pins, inspected their OCI identity and passed console health checks. Separate prior published-image light/dark theme tests passed. |
 | 10 | CI smoke found the Discogs gate never completes because discogs-sql-loader v0.3.0 writes no SQL completion latch | v0.4.0 (`sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b`) writes the latch when it receives extraction-complete signals; if v0.3.0 already acknowledged them, the gate stays fail-closed. A supported full reprocess is documented in the [lux recovery procedure](homelab.md#late-discogs-recovery) | `test_external_stores.py::test_released_versions_match_the_comments_beside_the_digests`, `test_deploy.py::test_latch_probe_reads_one_boolean_and_treats_every_failure_as_no_evidence`, `test_status.py::test_a_complete_gate_with_musicbrainz_not_yet_enabled_says_to_run_deploy` | One SQL latch row had four signals, generation 1 and `refreshed_at=2026-11-01T19:58:03.492945+00:00`; gate moved 3→0. A fresh run cannot reconstruct earlier ACKed signals. |
 | 11 | CI smoke found `discogs-graph-enricher` v0.3.0 received all four completion signals, but a concurrent cache version reset lost the artists and masters markers; queues drained with only 2/4 durable | Source fix is released as graph-enricher v0.4.0 (`sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39`) and promoted; late acknowledged signals still require the documented full reprocess | `discogs-graph-enricher` source suite: 567 unit tests and 14 real-Neo4j tests pass; 9 regression cases fail against the old implementation | Both consumers logged all four fixture receives; graph had four durable markers and all eight queues drained at gate exit 0. |
+| 12 | Hosted UID 1001 smoke: the Discogs fixture extraction `exited 124`. The extractor images create `/discogs-data` and `/musicbrainz-data` owned by 1000:1000, a fresh named volume inherits that, and the extractor (running as 1001) got `EACCES` before sleeping its 600 s failure cooldown | A root, capability-minimal `data-volume-init` one-shot re-owns both volumes to `${UID}:${GID}`; the extractors mount them `nocopy` so Docker's copy-up cannot re-apply 1000:1000; the smoke runs the fixture with `FAILURE_COOLDOWN_SECS=0` | `test_compose_one_shots_and_collector.py::test_extractor_data_mounts_keep_nocopy_and_wait_for_the_volume_init` (every overlay combination), `::test_the_volume_init_script_is_a_no_op_for_matching_ownership_and_changes_nothing_else`, one-shot inventories in `test_image_ownership.py`, `test_docker_compose_prod.py`, `test_secret_identities.py` | Phase 1 and phase 2 prove `data-volume-init` exited 0 and that the extractor, as the operator UID:GID, owns its data directory and creates and removes a probe file; proven by runs [41382628853](https://github.com/groovemap-music/deployment/actions/runs/41382628853) (UID 1000) and [41382714766](https://github.com/groovemap-music/deployment/actions/runs/41382714766) (UID 1001) at `b119a89`; negative: UID 1001 run [41348161866](https://github.com/groovemap-music/deployment/actions/runs/41348161866) failed with `exited 124` before this fix |
 
 Operator-facing summaries (`just status`, preflight, and the effective store and monitoring
 decisions) are covered by `test_status.py` and
@@ -189,7 +190,7 @@ end to end, plus the negative cases that must fail closed.
 
 1. With the stack's own monitoring, as every installation starts, phase 1
    reaches `up --wait` success. Every service in Compose's render is checked:
-   one-shots (`store-check-postgres`, `schema-init`, `rabbitmq-dlq-policy-init`)
+   one-shots (`store-check-postgres`, `schema-init`, `rabbitmq-dlq-policy-init`, `data-volume-init`)
    completed with 0, services with a healthcheck healthy (the collector and
    Grafana, on a fresh volume, included), read-only roots and users as rendered,
    and exactly the PostgreSQL clients on the homelab network. `secrets/` is 0700
@@ -241,6 +242,7 @@ runs the real Discogs extractor binary.
 | Broker readiness | stop the RabbitMQ application while leaving its Erlang node running | `ping` passes, the actual listener healthcheck fails, then it passes after `start_app`; policy initialization waits for both AMQP and management HTTP |
 | Old log-volume ownership | mount the loader image's historical named `/logs` volume as UID 1001 | the real image exits non-zero with `PermissionError` |
 | Invalid collector configuration | the bind-mounted `config/otel-collector.yaml` gains an unknown top-level key, in place | the running collector turns unhealthy through the healthcheck that validates the command's own `--config` source, naming the key |
+| Extractor data volumes under a non-1000 UID | after phase 1 (Discogs) and phase 2 (MusicBrainz): `data-volume-init` exited 0, and inside the running extractor, as the operator `UID:GID`, the data directory is owned by that UID and a probe file is created and removed; the fixture extractor runs with `FAILURE_COOLDOWN_SECS=0` so a failure shows its real error | the hosted UID 1001 run reproduces the original `exited 124` if the init or `nocopy` is missing |
 | Failing one-shot | the override gives `rabbitmq-dlq-policy-init` an invalid overflow mode | deploy fails naming it; it exited non-zero and none of the services that wait on it, directly or not, ever started |
 
 **lux's failures and the cases that cover them** (`gm-deployment-zg3x`):
@@ -329,6 +331,39 @@ had already proved SQL v0.4.0 reached 4/4 and refreshed, while graph v0.3.0 lost
 concurrent signals and correctly held the gate at 3 (2/4); graph v0.4.0 fixes
 that race. Earlier run 41253011030 used SQL v0.3.0 (`09f55827f972…`) and cannot
 establish a v0.4.0 defect.
+
+**Observed any-UID evidence (2026-11-02, `gm-deployment-lvhq`):** the `/logs` tmpfs and
+data-volume ownership changes were proven at candidate commit
+`b119a89885a7455539ed0e02f45cf69c7be03f0f`, with every candidate image input empty so env-init
+used the reviewed release table above, by
+[run 41382628853](https://github.com/groovemap-music/deployment/actions/runs/41382628853) as actual
+UID/GID `1000:1000` (682 s) and
+[run 41382714766](https://github.com/groovemap-music/deployment/actions/runs/41382714766) as actual
+UID/GID `1001:1001` (702 s); required CI
+[41382711703](https://github.com/groovemap-music/deployment/actions/runs/41382711703) passed at the
+same commit. Both ran both v0.4.0 loaders with the digests and source revisions above, and each
+recorded one genuine SQL latch row with all four signals, generation 1 and a stamped refresh
+(UID 1001: `refreshed_at=2026-11-02T03:30:57.709375+00:00`), both graph latches 4/4, all eight
+queues drained, the gate moving 3 to 0, then phase 2. Before gate 0 no MusicBrainz container
+existed even though `musicbrainz_data` did. In each run:
+
+- every rendered `/logs` writer, including the exited `schema-init` and the inactive
+  `embeddings` job, was proven a tmpfs owned and writable by the operator UID (Neo4j: 7474);
+- positive service logs had no `Permission denied` or `PermissionError`, while the separate
+  negative still fails: the old named `/logs` volume refuses UID 1001;
+- `data-volume-init` exited 0; under UID 1001 its first run re-owned exactly the two volume
+  roots (`re-owned 1 entries` each) and later runs re-owned 0. Inside the running extractors, as
+  the operator UID:GID, `/discogs-data` (phase 1) and `/musicbrainz-data` (phase 2) were owned by
+  that UID and accepted a probe file. The packaged Discogs fixture then staged and published.
+
+The preceding UID 1001 run
+[41348161866](https://github.com/groovemap-music/deployment/actions/runs/41348161866) at
+`d90b39da7ea9aed9673ca1944c934187a6a4c718`, before the data-volume fix, is the negative: the
+fixture extractor could not write the 1000-owned `discogs_data` and timed out (`exited 124`).
+The smoke's "volumes handled" count in its phase-2 data-volume line totals the init's log lines
+across all of its runs, not distinct volumes. The MusicBrainz producer remains the documented
+stand-in, so this proves phase-2 enablement and data-volume ownership, not a full MusicBrainz
+import.
 
 ## Live and performance checks
 
