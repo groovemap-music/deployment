@@ -24,7 +24,7 @@ HOST_UID = "1001"
 HOST_GID = "1002"
 NEO4J_UID = "7474"
 UNITS = {"k": 1024, "m": 1024**2, "g": 1024**3}
-# The shipped configs from the Compose-pinned 2026.10.0 image use 20 MB files
+# The shipped configs from the Compose-pinned 2026.10.1 image use 20 MB files
 # with up to 7 archives (HTTP uses 5): include an active file and every
 # appender, including HTTP even though it is disabled by default. Include the
 # optional GC log's 5 archives too. See the Neo4j Operations Manual's default

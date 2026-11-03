@@ -300,7 +300,7 @@ To tell, with the stack's project name (the `.env` `COMPOSE_PROJECT_NAME`, else 
 directory name) in `<project>`:
 
 ```bash
-docker run --rm --entrypoint ls -v <project>_grafana_data:/v grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f -ln /v
+docker run --rm --entrypoint ls -v <project>_grafana_data:/v grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205 -ln /v
 ```
 
 Owner `472` on `grafana.db` means the volume predates this change. Re-own it in place; this
@@ -309,7 +309,7 @@ changes ownership only and keeps every file:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml stop grafana
 docker run --rm --user root --entrypoint chown -v <project>_grafana_data:/v \
-  grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f \
+  grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205 \
   -R "$(id -u):$(id -g)" /v
 just deploy
 ```

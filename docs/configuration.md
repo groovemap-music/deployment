@@ -326,7 +326,7 @@ host has applied it or that every third-party image emits the same log fields.
 
 Each service that writes `/logs` gets a per-service tmpfs there, owned by `${UID}:${GID}`
 (Neo4j: `7474:7474`), mode `0750`, `noexec,nosuid`. Application services are capped at **64 MiB**
-of RAM; Neo4j gets a **1 GiB** cap because the pinned 2026.10.0 image ships 20 MB log files with
+of RAM; Neo4j gets a **1 GiB** cap because the pinned 2026.10.1 image ships 20 MB log files with
 up to seven archives (HTTP keeps five). That allows about 760 MiB across the five log streams,
 including HTTP even though it is disabled by default; with its optional GC log's five archives,
 the conservative budget is 880 MiB. Content is lost when the container is recreated; the durable
