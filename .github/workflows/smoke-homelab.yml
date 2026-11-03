@@ -49,13 +49,19 @@ on:
 permissions:
   contents: read
 
+# A `labeled` event for any label other than smoke-homelab starts no smoke (the scope job is
+# skipped), so it takes a group of its own: sharing the branch's group made it cancel the run the
+# pull request's `opened` or `synchronize` event had started. Dependabot labels each pull request
+# right after opening it, so every Dependabot pull request showed cancelled smoke checks.
 concurrency:
-  group: smoke-homelab-${{ github.ref }}-${{ inputs.smoke_host_uid || '1000' }}
+  group: smoke-homelab-${{ (github.event.action == 'labeled' && github.event.label.name != 'smoke-homelab') && format('other-label-{0}', github.run_id) || github.ref }}-${{ inputs.smoke_host_uid || '1000' }}
   cancel-in-progress: true
 
 jobs:
   scope:
     name: Decide whether the homelab smoke runs
+    # Adding any other label changes nothing the smoke covers.
+    if: github.event.action != 'labeled' || github.event.label.name == 'smoke-homelab'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
