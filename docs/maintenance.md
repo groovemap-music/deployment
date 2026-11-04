@@ -101,7 +101,7 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 
 Matching consumer and schema images (Discogs SQL loader `v0.4.1` and graph enricher `v0.5.0`;
 MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.1`; see
-[the v0.6.1 promotion](#promotion-of-database-schema-v061-discogs-sql-loader-v041-and-discogs-graph-enricher-v050-2026-11-04)):
+[the v0.6.1 promotion](#promotion-of-database-schema-v061-discogs-sql-loader-v041-discogs-graph-enricher-v050-and-graph-explorer-v031-2026-11-04)):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
@@ -117,12 +117,12 @@ Reviewed catalog API image (`v0.6.0`):
 | --- | --- | --- |
 | `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
 
-Reviewed console (`v0.3.0`), explorer (`v0.3.0`) and analytics (`v0.5.0`) images:
+Reviewed console (`v0.3.0`), explorer (`v0.3.1`) and analytics (`v0.5.0`) images:
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691` |
-| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:ad1c3b6a7e21beb9393fca5057050ff883475a72972ee11e8c7eed5863b5d31e` |
+| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:dc3c23e2adaeb8659fa97e92654775d65844a86076ee0a0b635246d5ca7b2c8a` |
 | `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
@@ -358,7 +358,7 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
-### Promotion of database-schema v0.6.1, discogs-sql-loader v0.4.1 and discogs-graph-enricher v0.5.0 (2026-11-04)
+### Promotion of database-schema v0.6.1, discogs-sql-loader v0.4.1, discogs-graph-enricher v0.5.0 and graph-explorer v0.3.1 (2026-11-04)
 
 Each digest was resolved from its released tag on GHCR (the index digest, with a `linux/amd64`
 image manifest) and verified with `gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest>
@@ -371,11 +371,11 @@ image manifest) and verified with `gh attestation verify oci://ghcr.io/groovemap
 | `database-schema:v0.6.1` | `sha256:591996b6fb1f07af8e795fe5ebd0cc08592a7702427a7b69c733d80911db1319` | `707b24121c51d1f6458df13e4576bb2ea3cb2792` | none: see below |
 | `discogs-sql-loader:v0.4.1` | `sha256:9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f` | `aa0dfb83129a04551c6223151674b00f14e308d8` | `v0.4.0` — `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
 | `discogs-graph-enricher:v0.5.0` | `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b` | `aebfe0bfb8a2a2537afd32e721874934553f2290` | `v0.4.0` — `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` |
+| `graph-explorer:v0.3.1` | `sha256:dc3c23e2adaeb8659fa97e92654775d65844a86076ee0a0b635246d5ca7b2c8a` | `dc9dbeeb71cad7594e2003c3e71833b830c1c679` | `v0.3.0` — `sha256:ad1c3b6a7e21beb9393fca5057050ff883475a72972ee11e8c7eed5863b5d31e` |
 
 Why: the first Discogs load on lux is stalled and Explore hangs on a large artist; these releases
-carry the fixes (see each repository's release notes). `graph-explorer` `v0.3.1` is **not** part of
-this promotion: its digest was not yet published, so `GRAPH_EXPLORER_IMAGE` stays at `v0.3.0`
-(`sha256:ad1c3b6a…`) until a follow-up records it.
+carry the fixes (see each repository's release notes). `graph-explorer` `v0.3.1` was published
+after the other three and is verified the same way (attestation exit 0, linux/amd64 labels).
 
 `database-schema` `v0.6.1` cannot be rolled back. Once it has run, no older `schema-init` may run
 against that database, so the previous digest (`v0.6.0`, `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465`)

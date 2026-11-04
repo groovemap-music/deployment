@@ -627,7 +627,7 @@ verification below:
   its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
   v0.5.0 pin (`sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b`; v0.4.0 carried the fix) together
   with the SQL loader v0.4.1 pin; the combined Linux smoke passed the full gate on the v0.4.0
-  pins (the run on v0.4.1 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-and-discogs-graph-enricher-v050-2026-11-04)). A pin-only upgrade
+  pins (the run on v0.4.1 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-discogs-graph-enricher-v050-and-graph-explorer-v031-2026-11-04)). A pin-only upgrade
   still cannot recreate signals already acknowledged by v0.3.0. See
   [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
@@ -705,52 +705,82 @@ left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the 
 
 Applies to the stalled first Discogs load. It extends the bounded `tableinator` plus `graphinator`
 window described in [Lux upgrade from 6af13ec/160fe7d](#lux-upgrade-from-6af13ec160fe7d). It needs
-explicit operator approval, and Ansible still owns the checkout, `.env` and override. Nothing here
+explicit operator approval for the window and, separately, for the homelab re-pin. Nothing here
 has been run on lux by this repository.
 
 **Read first.**
 
+- **Do not run the homelab GrooveMap playbook for this window.** After it moves the checkout it
+  runs `scripts/env-init.py`, which rewrites *every* `*_IMAGE` line to this repository's reviewed
+  digests (there is no per-image setting), and then `bash scripts/deploy.sh --no-wait --no-admin`,
+  a full production `up`. That would re-run `schema-init` with `tableinator` still writing and
+  recreate every service whose rendered configuration differs. The steps below move the checkout
+  and `.env` by hand and start nothing until the stopped-writer steps. The playbook's
+  `groovemap_ref` (in `playbooks/deploy-groovemap.yml`) must be advanced to the merged commit
+  before the playbook runs again; otherwise it checks the old commit out again and `env-init`
+  moves the pins back. That re-pin is a separate homelab change and approval.
 - `schema-init` `v0.6.1` must run with the writers stopped, and **no older `schema-init` may run
   afterwards**. There is no schema rollback: back out a consumer by its pin, never by running
   `schema-init` `v0.5.0` or `v0.6.0` again. Take the recovery bundle (`just recovery-manifest`)
   before the window.
-- **Do not run `just deploy` or a plain `docker compose up` for this window.** Compose recreates
-  every service whose rendered configuration differs, not only the three whose pin moved, and it
-  starts an exited one-shot such as `schema-init` again on every `up`. A checkout that is newer
-  than lux's also changes other services (for example the `/logs` tmpfs). `up` with a named
-  service and `--no-deps` touches only the services you name. Recreating a service does not
-  recreate the services that depend on it (checked with Compose 5.6.1), which is why a plain `up`
-  would not cascade from `schema-init`, but it would still run it while `tableinator` is up.
+- **`tableinator` is the only writer to stop** on lux (`musicbrainz-sql-loader` is not running
+  there). `api`, `insights` and `dashboard` only read these tables; their `depends_on: schema-init`
+  matters only when they start, so leave them running. Readers wait briefly during each
+  `ACCESS EXCLUSIVE` key swap. database-schema's
+  [Upgrading an existing database](https://github.com/groovemap-music/database-schema/blob/main/docs/architecture.md#upgrading-an-existing-database)
+  puts the swap at minutes on a partly loaded database and tens of minutes on the full 147M-row
+  tables; each swap is one guarded transaction per relation that commits or leaves the old key
+  whole, and a batch the old key refused is still on the queue.
+- **Do not run the window between 08:00 and 10:00 UTC.** The nightly `pg-backup` and
+  `groovemap-ops` dumps hold locks that would block the swap and queue readers behind it. Before
+  step 3, confirm no dump is running (see step 2).
+- **Do not run `just deploy`, a plain `docker compose up`, or the playbook during the window.**
+  Compose recreates every service whose rendered configuration differs and starts an exited
+  one-shot such as `schema-init` again on every `up`. `up` with a named service and `--no-deps`
+  touches only what you name. Recreating a service does not recreate its dependents (checked with
+  Compose 5.6.1), so a plain `up` would not cascade from `schema-init`, but it would run it while
+  `tableinator` is up.
 - **Do not restart the extractor and do not recreate unrelated services.** Record the extractor's
   container ID and start time before, and compare after.
-- `GRAPH_EXPLORER_IMAGE` stays at `v0.3.0` in this change. When graph-explorer `v0.3.1` is promoted
-  and Ansible sets it, add `explore` to step 5; until then, step 5 recreates `graphinator` only.
+- `explore` (graph-explorer `v0.3.1`) is recreated in the window too. It only reads, and it does not
+  touch the load.
 
-Use the same `-f` list `just deploy` would use (for lux: base, production, external PostgreSQL,
-shared monitoring, then your override), written once as `DC`:
+**Commands.** Run them as `datum` in `/opt/groovemap`. Lux sets `COMPOSE_FILE` in `.env` to
+`docker-compose.yml:docker-compose.prod.yml:docker-compose.external-postgres.yml:docker-compose.override.yml`
+(no shared-monitoring overlay), so use plain `docker compose` and write no `-f` list.
+`just discogs-import-status --prod -f docker-compose.override.yml` resolves to the same four files.
 
-```bash
-DC="docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  -f docker-compose.external-postgres.yml -f docker-compose.shared-monitoring.yml \
-  -f docker-compose.override.yml"
-```
-
-1. Baseline, read only: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort > before.txt`,
-   `docker inspect -f '{{.State.StartedAt}}' groovemap-extractor-discogs`, and
-   `just discogs-import-status --prod --json -f docker-compose.override.yml`. Have Ansible set only
-   `DATABASE_SCHEMA_IMAGE`, `DISCOGS_SQL_LOADER_IMAGE` and `DISCOGS_GRAPH_ENRICHER_IMAGE` to the
-   digests in [the promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-and-discogs-graph-enricher-v050-2026-11-04),
-   then `$DC config > after.yml` and review the diff: only those three services and `schema-init`
-   may differ. Stop and ask if anything else does.
-2. Stop the writer: `$DC stop tableinator`.
-3. Run `schema-init` once and require exit 0:
-   `$DC up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
-   Do not continue on any other value, and do not run an older image to retry.
-4. Start the loader on the new pin: `$DC up -d --no-deps tableinator`.
-5. Recreate the enricher: `$DC up -d --no-deps graphinator`.
-6. Verify the recreation was limited: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort | diff before.txt -`
-   shows changed IDs for `groovemap-schema-init`, `groovemap-tableinator` and `groovemap-graphinator`
-   only. The extractor's ID and `StartedAt` are unchanged.
+1. First save the current render, `docker compose config > before.yml`. Then move the checkout and
+   `.env` without starting anything: `git fetch origin && git checkout --detach <merge commit>`, `python3 scripts/env-init.py`
+   (rewrites only the `*_IMAGE` lines, keeps the previous file as `.env.<timestamp>.bak`, starts
+   nothing), then `docker compose config > after.yml` and `diff before.yml after.yml`. Lux's checkout is at `568dc3a`. Between
+   `568dc3a` and this change no Compose file, `.env.example` or `scripts/env-init.py` changed:
+   the differences are the three image pins plus the publication-hygiene scan, `pyproject.toml`
+   and docs. So the rendered diff must show `image:` changes on exactly `schema-init`,
+   `tableinator`, `graphinator` and `explore`. If any other service differs (for example because lux's
+   `.env` was not at `568dc3a`'s digests), stop and ask: the next steps would not touch it, but a
+   later `up` would. Also record `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort > before.txt`,
+   the extractor's `StartedAt`, and `just discogs-import-status --prod -f docker-compose.override.yml --json`.
+2. Pick a time outside 08:00-10:00 UTC and check no dump holds a lock:
+   `SELECT pid, usename, application_name, state, query_start, left(query, 80) FROM pg_stat_activity WHERE datname = 'groovemap' AND (query ILIKE '%pg_dump%' OR application_name ILIKE '%dump%' OR backend_type = 'client backend' AND state <> 'idle');`
+   against the shared PostgreSQL, with the operator's read-only access. Only `groovemap-*` readers
+   should appear. A running `pg_dump` (the `pg-backup` or `groovemap-ops` job) means wait.
+3. Stop the writer: `docker compose stop tableinator`.
+4. Run `schema-init` once and require exit 0:
+   `docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
+   Do not continue on any other value, and never run an older image to retry.
+   **If it blocks** (no output for several minutes, and the database-schema estimate above does
+   not explain it): look at `pg_stat_activity` and `pg_locks` for the blocker. Do not terminate a
+   dump or its backend. Run `docker stop groovemap-schema-init`, leave `tableinator` stopped (its queues hold the
+   messages), and retry step 4 after the dump ends; only then continue to step 5. Each relation's swap commits or leaves the
+   old key whole, and `schema-init` is idempotent (a converged database skips the swap), so a
+   retry resumes safely.
+5. Start the loader on the new pin: `docker compose up -d --no-deps tableinator`.
+6. Recreate the enricher and Explore: `docker compose up -d --no-deps graphinator explore`.
+7. Verify the recreation was limited: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort | diff before.txt -`
+   shows changed IDs for `groovemap-schema-init`, `groovemap-tableinator`, `groovemap-graphinator` and `groovemap-explore`
+   only. The extractor's ID and `StartedAt` are unchanged, and `api`, `insights` and `dashboard`
+   were not recreated.
 
 **Checks that the load has resumed.**
 
@@ -759,19 +789,27 @@ DC="docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   and unacknowledged counts should fall between runs, with both consumers attached.
 - Dead-letter queues: the same report prints messages in any `.dlq` queue as warnings. They must
   not grow after the window. A growing DLQ is a failure: stop and report it.
-- Both new images are running: `docker inspect -f '{{.Config.Image}}' groovemap-tableinator groovemap-graphinator`
+- Both new images are running: `docker inspect -f '{{.Config.Image}}' groovemap-tableinator groovemap-graphinator groovemap-explore`
   show the new digests; `just status` lists the reviewed pins.
 - When the import finishes, `loader_extraction_latch` (`loader = 'discogs'`) has all four
   `signals` and `refreshed_at` set, all four Neo4j markers exist, queues are empty, and
   `just discogs-import-status --prod -f docker-compose.override.yml` exits 0. Exit 2 is not
   completion. Until it exits 0, keep MusicBrainz off.
 
+**Rollback of a consumer.** Set its pin back to the digest in
+[the promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-discogs-graph-enricher-v050-and-graph-explorer-v031-2026-11-04) and recreate only that service with
+`up -d --no-deps`. database-schema states that the new shape serves the old loaders unchanged, so
+an older service image keeps working (same section as above, "Rolling back is a code rollback").
+That is the schema repository's statement; loader `v0.4.0` and enricher `v0.4.0` on schema
+`v0.6.1` have not been run end to end here. Never run an older `schema-init`.
+
 **After the SQL load finishes**, run the stub-name backfill from discogs-graph-enricher's
 `docs/stub-name-backfill.md`. It is a separate operator step and is not run in the window.
 
-The first plain `just deploy` or `up` after the import will start `schema-init` again (the same
-`v0.6.1`, idempotent) and recreate any service whose configuration changed; schedule it as the
-full-stack window the earlier section describes, not during the load.
+The first full deploy after the import (the homelab playbook once its `groovemap_ref` is advanced,
+or `just deploy`) starts `schema-init` again (the same `v0.6.1`, idempotent) and recreates any
+service whose configuration changed; schedule it as the full-stack window the earlier section
+describes, not during the load.
 
 ## Known limitations
 
