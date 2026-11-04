@@ -66,13 +66,13 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465",  # database-schema v0.6.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "591996b6fb1f07af8e795fe5ebd0cc08592a7702427a7b69c733d80911db1319",  # database-schema v0.6.1  gitleaks:allow
     "CATALOG_API_IMAGE": "b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5",  # catalog-api v0.6.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d",  # discogs-ingestion v0.4.0  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a",  # musicbrainz-ingestion v0.3.0  gitleaks:allow
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39",  # discogs-graph-enricher v0.4.0  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b",  # discogs-graph-enricher v0.5.0  gitleaks:allow
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057",  # musicbrainz-graph-enricher v0.4.0  gitleaks:allow
-    "DISCOGS_SQL_LOADER_IMAGE": "be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b",  # discogs-sql-loader v0.4.0  gitleaks:allow
+    "DISCOGS_SQL_LOADER_IMAGE": "9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f",  # discogs-sql-loader v0.4.1  gitleaks:allow
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809",  # musicbrainz-sql-loader v0.5.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691",  # operations-console v0.3.0  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "ad1c3b6a7e21beb9393fca5057050ff883475a72972ee11e8c7eed5863b5d31e",  # graph-explorer v0.3.0  gitleaks:allow
@@ -82,13 +82,13 @@ RELEASED_IMAGE_DIGESTS = {
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.6.0",
+    "DATABASE_SCHEMA_IMAGE": "0.6.1",
     "CATALOG_API_IMAGE": "0.6.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.0",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.3.0",
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.4.0",
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.5.0",
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "0.4.0",
-    "DISCOGS_SQL_LOADER_IMAGE": "0.4.0",
+    "DISCOGS_SQL_LOADER_IMAGE": "0.4.1",
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.5.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.3.0",
     "GRAPH_EXPLORER_IMAGE": "0.3.0",

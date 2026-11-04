@@ -49,6 +49,8 @@ SUBNET="${SMOKE_HOMELAB_SUBNET:-172.29.0.0/16}"
 GATE_TIMEOUT="${SMOKE_HOMELAB_GATE_TIMEOUT:-600}"
 # Explicit candidates affect only this scratch stack. Defaults come from env-init's
 # reviewed release table, so ordinary CI follows later promotions automatically.
+# The previous SQL release (v0.4.0), kept as an explicit candidate: it is the rollback target and
+# the first release that writes the latch. The reviewed release (v0.4.1) needs no entry here.
 KNOWN_SQL_LATCH_IMAGE=ghcr.io/groovemap-music/discogs-sql-loader@sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b
 SQL_LOADER_IMAGE="${SMOKE_HOMELAB_SQL_LOADER_IMAGE:-}"
 GRAPH_LOADER_IMAGE="${SMOKE_HOMELAB_GRAPH_LOADER_IMAGE:-}"

@@ -99,16 +99,15 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader `v0.4.0` and graph enricher `v0.4.0`;
-MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.0`, which
-keeps the `v0.5.0` DDL, including `activity.event_idempotency` and
-`activity.purge_idempotency_keys`, and adds the pre-provisioned mode):
+Matching consumer and schema images (Discogs SQL loader `v0.4.1` and graph enricher `v0.5.0`;
+MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.1`; see
+[the v0.6.1 promotion](#promotion-of-database-schema-v061-discogs-sql-loader-v041-and-discogs-graph-enricher-v050-2026-11-04)):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:591996b6fb1f07af8e795fe5ebd0cc08592a7702427a7b69c733d80911db1319` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
@@ -358,6 +357,49 @@ extractor or write latch/marker rows. Recovery requires an operator-approved ful
 after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
+
+### Promotion of database-schema v0.6.1, discogs-sql-loader v0.4.1 and discogs-graph-enricher v0.5.0 (2026-11-04)
+
+Each digest was resolved from its released tag on GHCR (the index digest, with a `linux/amd64`
+image manifest) and verified with `gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest>
+--owner groovemap-music --signer-repo groovemap-music/automation` (exit 0 for all three). The
+`linux/amd64` image labels were read back: `org.opencontainers.image.version`, `.revision` and
+`.source` match the release, and each image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.6.1` | `sha256:591996b6fb1f07af8e795fe5ebd0cc08592a7702427a7b69c733d80911db1319` | `707b24121c51d1f6458df13e4576bb2ea3cb2792` | none: see below |
+| `discogs-sql-loader:v0.4.1` | `sha256:9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f` | `aa0dfb83129a04551c6223151674b00f14e308d8` | `v0.4.0` — `sha256:be15077013672f69384bd75fd591801bdabd80400eaa2fd4a686e2d82f6bbb0b` |
+| `discogs-graph-enricher:v0.5.0` | `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b` | `aebfe0bfb8a2a2537afd32e721874934553f2290` | `v0.4.0` — `sha256:6f5dd84d18aa69cc40705bbabde269cefc7d7642e0818f1db2fba2588bde9c39` |
+
+Why: the first Discogs load on lux is stalled and Explore hangs on a large artist; these releases
+carry the fixes (see each repository's release notes). `graph-explorer` `v0.3.1` is **not** part of
+this promotion: its digest was not yet published, so `GRAPH_EXPLORER_IMAGE` stays at `v0.3.0`
+(`sha256:ad1c3b6a…`) until a follow-up records it.
+
+`database-schema` `v0.6.1` cannot be rolled back. Once it has run, no older `schema-init` may run
+against that database, so the previous digest (`v0.6.0`, `sha256:a16e4a2c5139e065a6e2a71390279732b349e58347aab8bdef33aa6e0f9b1465`)
+is recorded for history only. The two consumers roll back by a pin change to their digest above,
+on the untested assumption that SQL loader `v0.4.0` and graph enricher `v0.4.0` still run against the `v0.6.1` schema.
+
+Where the old digests remain on purpose: the earlier promotion records in this file and the
+2026-11-01 observed-evidence table in the testing guide describe the images those runs used, and
+`KNOWN_SQL_LATCH_IMAGE` in `scripts/smoke-homelab.sh` keeps SQL loader `v0.4.0` as an explicit
+smoke candidate. Everything that states the *current* pin was updated, and
+`test_released_versions_match_the_comments_beside_the_digests` keeps each digest and version in step.
+
+Evidence produced here: on an arm64 Mac with the images emulated as `linux/amd64`, in a disposable
+Docker network with the stack's pinned PostgreSQL 18 and Neo4j, `schema-init` `v0.6.0` built a fresh
+database and exited 0; rows were inserted (two `public.artists`, one `loader_extraction_latch`);
+`v0.6.1` then ran over that data, exited 0 and left every row intact; a second `v0.6.1` run also
+exited 0. Everything was removed afterwards. This does not stand in for the combined smoke.
+
+Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
+digests is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) and needs a push, which
+this change does not do. See the [Lux upgrade](homelab.md#lux-upgrade-schema-init-v061-sql-loader-v041-graph-enricher-v050)
+for the window.
+
+Rolling back a consumer is a pin change to its rollback digest above for that image alone.
 
 ### Identifier lookup verification (2026-09-21)
 
