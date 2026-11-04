@@ -28,6 +28,7 @@ architecture overview.
 - [Transactional email live verification](transactional-email-verification.md)
 - [Testing](testing-guide.md)
 - [Performance](performance-guide.md)
+- [Query performance baseline](query-performance-baseline.md) and the [2026-11-04 audit](query-performance-audit-2026-11-04.md)
 - [Platform targeting](platform-targeting.md)
 - [Usage examples](usage-examples.md)
 - [Source-history provenance](extraction.md)
