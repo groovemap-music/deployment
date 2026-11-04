@@ -72,7 +72,7 @@ rely on it. Slow Cypher has to be measured from the API side or profiled by hand
 | `track_planning` | Off. The manual warns of a noticeable penalty with many concurrent connections. Do not enable. |
 | Reading the views and `perf-baseline.sql` | A few catalog reads; the table list sorts `pg_total_relation_size` over user tables. Negligible beside the workload. |
 | `PROFILE` | The full cost of the statement plus a small per-operator counting overhead. The cases range from about 3 seconds to the 120 second cap. |
-| API journeys | 33 journeys x 5 requests, 2.2 s apart: about 6 minutes of serial traffic, plus whatever the slow journeys take. |
+| API journeys | 35 journeys x 5 requests, 2.2 s apart: about 6 minutes of serial traffic, plus whatever the slow journeys take. |
 
 ## PgBouncer
 

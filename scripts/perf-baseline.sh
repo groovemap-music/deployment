@@ -35,17 +35,21 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 # journey name | path with query string. GET only. Names with spaces are percent-encoded.
 # Heavy cases the audit names: David Bowie (artist 10263), the Not On Label label, the Rock genre.
+# On lux (2026-11-04) the Not On Label node is id 1818 with a NULL name, so by-name journeys for it return 404 and are
+# reported as "bad"; that is a finding, not a script fault. Columbia (351k releases) is the heavy named label.
 journeys=(
   "explore.artist.bowie|/api/explore?name=David%20Bowie&type=artist"
+  "explore.label.columbia|/api/explore?name=Columbia&type=label"
   "explore.label.not-on-label|/api/explore?name=Not%20On%20Label&type=label"
   "explore.genre.rock|/api/explore?name=Rock&type=genre"
   "explore.style.trance|/api/explore?name=Trance&type=style"
   "expand.artist.bowie.releases|/api/expand?node_id=10263&type=artist&category=releases&limit=50"
   "expand.artist.bowie.labels|/api/expand?node_id=10263&type=artist&category=labels&limit=50"
   "expand.genre.rock.releases|/api/expand?node_id=Rock&type=genre&category=releases&limit=50"
-  "expand.label.not-on-label.releases|/api/expand?node_id=Not%20On%20Label&type=label&category=releases&limit=50"
+  "expand.label.not-on-label.releases|/api/expand?node_id=1818&type=label&category=releases&limit=50"
   "trends.artist.bowie|/api/trends?name=David%20Bowie&type=artist"
   "trends.genre.rock|/api/trends?name=Rock&type=genre"
+  "trends.label.columbia|/api/trends?name=Columbia&type=label"
   "trends.label.not-on-label|/api/trends?name=Not%20On%20Label&type=label"
   "trends.style.trance|/api/trends?name=Trance&type=style"
   "path.bowie-to-cash|/api/path?from_name=David%20Bowie&from_type=artist&to_name=Johnny%20Cash&to_type=artist&max_depth=6"
@@ -131,14 +135,14 @@ explore.artist.bowie
 PROFILE MATCH (a:Artist {name: 'David Bowie'}) RETURN a.id AS id, COUNT { MATCH (r:Release)-[:BY]->(a) RETURN DISTINCT r } AS release_count, COUNT { MATCH (r:Release)-[:BY]->(a), (r)-[:ON]->(l:Label) RETURN DISTINCT l } AS label_count;
 trends.artist.bowie
 PROFILE MATCH (r:Release)-[:BY]->(a:Artist {name: 'David Bowie'}) WHERE r.year > 0 WITH r.year AS year, count(DISTINCT r) AS count RETURN year, count ORDER BY year;
-trends.label.not-on-label
-PROFILE MATCH (r:Release)-[:ON]->(l:Label {name: 'Not On Label'}) WHERE r.year > 0 WITH r.year AS year, count(DISTINCT r) AS count RETURN year, count ORDER BY year;
+trends.label.not-on-label.id1818
+PROFILE MATCH (r:Release)-[:ON]->(l:Label {id: '1818'}) WHERE r.year > 0 WITH r.year AS year, count(DISTINCT r) AS count RETURN year, count ORDER BY year;
 trends.genre.rock
 PROFILE MATCH (g:Genre {name: 'Rock'}) CALL { WITH g MATCH (g)<-[:IS]-(r:Release) RETURN r.year AS year } WITH year WHERE year IS NOT NULL AND year > 0 WITH year, count(*) AS count RETURN year, count ORDER BY year;
 path.bowie-to-cash
 PROFILE MATCH (a:Artist {id: '10263'}), (b:Artist {name: 'Johnny Cash'}) MATCH p = shortestPath((a)-[:BY|ON|IS|ALIAS_OF|MEMBER_OF|DERIVED_FROM*..6]-(b)) RETURN length(p) AS hops;
 expand.label.not-on-label.releases
-PROFILE MATCH (l:Label {name: 'Not On Label'})<-[:ON]-(r:Release) RETURN count(r) AS releases;
+PROFILE MATCH (l:Label {id: '1818'})<-[:ON]-(r:Release) RETURN count(r) AS releases;
 EOF
 }
 
