@@ -79,7 +79,7 @@ days to rebuild.
   graph-enricher v0.4.0; the reviewed pin is now v0.5.0 at
   `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b`.
 - **A completion latch or graph marker is missing:** do not restart the extractor, write a marker,
-  or replay broker messages manually. After both reviewed Discogs consumers (SQL loader v0.4.1, graph enricher v0.5.0) are healthy,
+  or replay broker messages manually. After both reviewed Discogs consumers (SQL loader v0.4.3, graph enricher v0.5.0) are healthy,
   recovery requires the operator's approval, a read-only baseline, an
   encrypted recovery bundle and confirmed database/storage headroom. The supported option is a
   full new Discogs reprocess through the authenticated Catalog API admin endpoint

@@ -619,15 +619,15 @@ verification below:
   override on an exporter is no longer needed.
 - **A hand-written Discogs latch or a gate you stopped waiting on.** discogs-sql-loader v0.3.0
   did not write the completion latch. v0.4.0
-  and the reviewed v0.4.1 (`sha256:9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f`) write it when they
+  and the reviewed v0.4.3 (`sha256:9bb930d1f5aa6687d774c1e981dfdbae50086a1d88e1d04110a58326114e32c3`; never v0.4.1, which closes healthy consumers) write it when they
   receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
   acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
   fail-closed, do not restart the extractor or insert a latch row manually. The
   `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
   its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
   v0.5.0 pin (`sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b`; v0.4.0 carried the fix) together
-  with the SQL loader v0.4.1 pin; the combined Linux smoke passed the full gate on the v0.4.0
-  pins (the run on v0.4.1 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-discogs-graph-enricher-v050-and-graph-explorer-v031-2026-11-04)). A pin-only upgrade
+  with the SQL loader v0.4.3 pin; the combined Linux smoke passed the full gate on the v0.4.0
+  pins (the run on v0.4.3 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04)). A pin-only upgrade
   still cannot recreate signals already acknowledged by v0.3.0. See
   [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
@@ -701,7 +701,7 @@ A `grafana_data` volume created earlier needs the one-time re-own in
 [Grafana now runs as your user](#grafana-now-runs-as-your-user). Existing `*_logs` volumes are
 left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the bounded deploy.
 
-## Lux upgrade: schema-init v0.6.1, SQL loader v0.4.1, graph enricher v0.5.0
+## Lux upgrade: schema-init v0.6.3, SQL loader v0.4.3, graph enricher v0.5.0
 
 Applies to the stalled first Discogs load. It extends the bounded `tableinator` plus `graphinator`
 window described in [Lux upgrade from 6af13ec/160fe7d](#lux-upgrade-from-6af13ec160fe7d). It needs
@@ -719,16 +719,19 @@ has been run on lux by this repository.
   `groovemap_ref` (in `playbooks/deploy-groovemap.yml`) must be advanced to the merged commit
   before the playbook runs again; otherwise it checks the old commit out again and `env-init`
   moves the pins back. That re-pin is a separate homelab change and approval.
-- `schema-init` `v0.6.1` must run with the writers stopped, and **no older `schema-init` may run
-  afterwards**. There is no schema rollback: back out a consumer by its pin, never by running
-  `schema-init` `v0.5.0` or `v0.6.0` again. Take the recovery bundle (`just recovery-manifest`)
+- `schema-init` `v0.6.3` (lux is on `v0.6.0`) must run with the writers stopped, and **no older
+  `schema-init` may run afterwards**. There is no schema rollback: back out a consumer by its pin,
+  never by running `schema-init` `v0.5.0`, `v0.6.0`, `v0.6.1` or `v0.6.2` again. **`v0.6.1`,
+  `v0.6.2` and SQL loader `v0.4.1` must never be used.** Take the recovery bundle (`just recovery-manifest`)
   before the window.
 - **`tableinator` is the only writer to stop** on lux (`musicbrainz-sql-loader` is not running
   there). `api`, `insights` and `dashboard` only read these tables; their `depends_on: schema-init`
   matters only when they start, so leave them running. Readers wait briefly during each
   `ACCESS EXCLUSIVE` key swap. database-schema's
   [Upgrading an existing database](https://github.com/groovemap-music/database-schema/blob/main/docs/architecture.md#upgrading-an-existing-database)
-  puts the swap at minutes on a partly loaded database and tens of minutes on the full 147M-row
+  puts the swap at minutes on a partly loaded database (which is what lux is now: expect
+  `schema-init` `v0.6.3` to take minutes, not hours, and treat several quiet minutes with no output
+  as normal until step 4's blocked case applies) and tens of minutes on the full 147M-row
   tables; each swap is one guarded transaction per relation that commits or leaves the old key
   whole, and a batch the old key refused is still on the queue.
 - **Do not run the window between 08:00 and 10:00 UTC.** The nightly `pg-backup` and
@@ -744,6 +747,9 @@ has been run on lux by this repository.
   container ID and start time before, and compare after.
 - `explore` (graph-explorer `v0.3.1`) is recreated in the window too. It only reads, and it does not
   touch the load.
+- **Neo4j is restarted in this window**, with the budget from homelab's `docs/guides/groovemap.md`
+  (step 5a). That is the only change to a service outside this repository's four image pins, and it
+  is applied by hand: do not run the homelab playbook.
 
 **Commands.** Run them as `datum` in `/opt/groovemap`. Lux sets `COMPOSE_FILE` in `.env` to
 `docker-compose.yml:docker-compose.prod.yml:docker-compose.external-postgres.yml:docker-compose.override.yml`
@@ -771,7 +777,8 @@ has been run on lux by this repository.
    the old pins, which are your rollback record), never copy or paste it, and then have the operator
    decide whether to keep or delete it. Confirm with `ls -l .env .env.*.bak`.
 
-   Compare the renders without printing a value. This prints only the names of changed services and
+   Compare the renders without printing a value (before the Neo4j `.env` edit in step 5a, so the
+   comparison shows the image pins only). This prints only the names of changed services and
    which top-level keys changed:
 
    ```bash
@@ -804,8 +811,8 @@ has been run on lux by this repository.
    against the shared PostgreSQL, with the operator's read-only access. Only `groovemap-*` readers
    should appear. A running `pg_dump` (the `pg-backup` or `groovemap-ops` job) means wait.
 3. Stop the writer: `docker compose stop tableinator`.
-4. Run `schema-init` once and require exit 0:
-   `docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
+4. Run `schema-init` (`v0.6.3`) once, time it (`time`), record the duration for the promotion record, and require exit 0:
+   `time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
    Do not continue on any other value, and never run an older image to retry.
    **If it blocks** (no output for several minutes, and the database-schema estimate above does
    not explain it): look at `pg_stat_activity` and `pg_locks` for the blocker. Do not terminate a
@@ -814,9 +821,21 @@ has been run on lux by this repository.
    old key whole, and `schema-init` is idempotent (a converged database skips the swap), so a
    retry resumes safely.
 5. Start the loader on the new pin: `docker compose up -d --no-deps tableinator`.
-6. Recreate the enricher and Explore: `docker compose up -d --no-deps graphinator explore`.
+5a. **Restart Neo4j with the resized budget** (homelab `docs/guides/groovemap.md`: 8g heap, 48g page
+   cache, 60G container limit). Set the three `.env` keys, recreate `neo4j` only, and wait for it to
+   be healthy before touching `graphinator`:
+
+   ```bash
+   sed -i -E 's/^NEO4J_HEAP_SIZE=.*/NEO4J_HEAP_SIZE=8g/; s/^NEO4J_PAGECACHE_SIZE=.*/NEO4J_PAGECACHE_SIZE=48g/; s/^NEO4J_MEMORY_LIMIT=.*/NEO4J_MEMORY_LIMIT=60G/' .env
+   grep -E '^NEO4J_(HEAP_SIZE|PAGECACHE_SIZE|MEMORY_LIMIT)=' .env
+   docker compose up -d --no-deps neo4j
+   until [ "$(docker inspect -f '{{.State.Health.Status}}' groovemap-neo4j)" = healthy ]; do sleep 10; done
+   ```
+
+6. Recreate the enricher and Explore, only after Neo4j reports healthy:
+   `docker compose up -d --no-deps graphinator explore`.
 7. Verify the recreation was limited: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort | diff "$W/before.txt" -`
-   shows changed IDs for `groovemap-schema-init`, `groovemap-tableinator`, `groovemap-graphinator` and `groovemap-explore`
+   shows changed IDs for `groovemap-schema-init`, `groovemap-tableinator`, `groovemap-neo4j`, `groovemap-graphinator` and `groovemap-explore`
    only. The extractor's ID and `StartedAt` (`"$W/extractor-startedat.txt"`) are unchanged, and `api`, `insights` and `dashboard`
    were not recreated.
 
@@ -830,6 +849,12 @@ has been run on lux by this repository.
   and unacknowledged counts should fall between runs, with both consumers attached.
 - Dead-letter queues: the same report prints messages in any `.dlq` queue as warnings. They must
   not grow after the window. A growing DLQ is a failure: stop and report it.
+- **Sample PostgreSQL wait events (read-only).** Once the queues are draining, take a few samples
+  a minute apart with the operator's read-only access (no `pg_terminate_backend`, no setting
+  changes), to see what the loader waits on:
+  `SELECT wait_event_type, wait_event, state, count(*) FROM pg_stat_activity WHERE datname = 'groovemap' AND backend_type = 'client backend' GROUP BY 1, 2, 3 ORDER BY 4 DESC;`
+  Record the output for the promotion record. Lock waits (`wait_event_type = 'Lock'`) that persist
+  across samples point at a blocker: look at `pg_locks`, do not terminate anything, and report.
 - Both new images are running: `docker inspect -f '{{.Config.Image}}' groovemap-tableinator groovemap-graphinator groovemap-explore`
   show the new digests; `just status` lists the reviewed pins.
 - When the import finishes, `loader_extraction_latch` (`loader = 'discogs'`) has all four
@@ -838,17 +863,17 @@ has been run on lux by this repository.
   completion. Until it exits 0, keep MusicBrainz off.
 
 **Rollback of a consumer.** Set its pin back to the digest in
-[the promotion record](maintenance.md#promotion-of-database-schema-v061-discogs-sql-loader-v041-discogs-graph-enricher-v050-and-graph-explorer-v031-2026-11-04) and recreate only that service with
+[the promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04) and recreate only that service with
 `up -d --no-deps`. database-schema states that the new shape serves the old loaders unchanged, so
 an older service image keeps working (same section as above, "Rolling back is a code rollback").
 That is the schema repository's statement; loader `v0.4.0` and enricher `v0.4.0` on schema
-`v0.6.1` have not been run end to end here. Never run an older `schema-init`.
+`v0.6.3` have not been run end to end here. Never run an older `schema-init`.
 
 **After the SQL load finishes**, run the stub-name backfill from discogs-graph-enricher's
 `docs/stub-name-backfill.md`. It is a separate operator step and is not run in the window.
 
 The first full deploy after the import (the homelab playbook once its `groovemap_ref` is advanced,
-or `just deploy`) starts `schema-init` again (the same `v0.6.1`, idempotent) and recreates any
+or `just deploy`) starts `schema-init` again (the same `v0.6.3`, idempotent) and recreates any
 service whose configuration changed; schedule it as the full-stack window the earlier section
 describes, not during the load.
 
