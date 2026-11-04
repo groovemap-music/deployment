@@ -750,17 +750,55 @@ has been run on lux by this repository.
 (no shared-monitoring overlay), so use plain `docker compose` and write no `-f` list.
 `just discogs-import-status --prod -f docker-compose.override.yml` resolves to the same four files.
 
-1. First save the current render, `docker compose config > before.yml`. Then move the checkout and
-   `.env` without starting anything: `git fetch origin && git checkout --detach <merge commit>`, `python3 scripts/env-init.py`
-   (rewrites only the `*_IMAGE` lines, keeps the previous file as `.env.<timestamp>.bak`, starts
-   nothing), then `docker compose config > after.yml` and `diff before.yml after.yml`. Lux's checkout is at `568dc3a`. Between
-   `568dc3a` and this change no Compose file, `.env.example` or `scripts/env-init.py` changed:
-   the differences are the three image pins plus the publication-hygiene scan, `pyproject.toml`
-   and docs. So the rendered diff must show `image:` changes on exactly `schema-init`,
-   `tableinator`, `graphinator` and `explore`. If any other service differs (for example because lux's
-   `.env` was not at `568dc3a`'s digests), stop and ask: the next steps would not touch it, but a
-   later `up` would. Also record `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort > before.txt`,
-   the extractor's `StartedAt`, and `just discogs-import-status --prod -f docker-compose.override.yml --json`.
+1. **A rendered Compose file contains every secret in clear text** (`JWT_SECRET_KEY` and the
+   PostgreSQL, Neo4j and RabbitMQ passwords appear on lux). Never write a render into the checkout
+   (mode 755) or paste one into a ticket or a chat. Keep every working file in a private directory
+   outside the repository, and delete it in step 8:
+
+   ```bash
+   umask 077
+   W="$(mktemp -d /tmp/gm-window.XXXXXX)"
+   docker compose config --format json > "$W/before.json"
+   docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort > "$W/before.txt"   # names, IDs, images only
+   docker inspect -f '{{.State.StartedAt}}' groovemap-extractor-discogs > "$W/extractor-startedat.txt"
+   ```
+
+   Then move the checkout and `.env` without starting anything:
+   `git fetch origin && git checkout --detach <merge commit>`, then `python3 scripts/env-init.py`.
+   `env-init` rewrites only the `*_IMAGE` lines and starts nothing. It keeps the previous file as
+   `.env.<timestamp>.bak` in `/opt/groovemap`, with the same mode as `.env` (0600 on lux). Treat that
+   backup as a secret-bearing file: leave it in place at 0600 until the window is verified (it holds
+   the old pins, which are your rollback record), never copy or paste it, and then have the operator
+   decide whether to keep or delete it. Confirm with `ls -l .env .env.*.bak`.
+
+   Compare the renders without printing a value. This prints only the names of changed services and
+   which top-level keys changed:
+
+   ```bash
+   docker compose config --format json > "$W/after.json"
+   python3 - "$W/before.json" "$W/after.json" <<'PY'
+   import json, sys
+   b, a = (json.load(open(f))["services"] for f in sys.argv[1:3])
+   changed = {s: sorted(k for k in set(b.get(s, {})) | set(a.get(s, {})) if b.get(s, {}).get(k) != a.get(s, {}).get(k))
+              for s in sorted(set(b) | set(a)) if b.get(s) != a.get(s)}
+   for s, keys in changed.items():
+       print(s, keys)
+   print(len(changed), "service(s) changed")
+   PY
+   ```
+
+   Delete the two render files now: `rm -f "$W/before.json" "$W/after.json"`.
+
+   Lux's checkout is at `568dc3a`, and all eleven `*_IMAGE` pins in lux's `.env` equal that commit's
+   reviewed digests (checked read-only by the operator). Between `568dc3a` and this change no
+   Compose file, `.env.example` or `scripts/env-init.py` changed: the differences are the four
+   image pins (database-schema, SQL loader, graph enricher, graph-explorer) plus the
+   publication-hygiene scan, `pyproject.toml` and docs. So the output must be exactly `explore
+   ['image']`, `graphinator ['image']`, `schema-init ['image']`, `tableinator ['image']` and
+   `4 service(s) changed`. If any other service differs, stop and ask: the next steps would not
+   touch it, but a later `up` would. Also record
+   `just discogs-import-status --prod -f docker-compose.override.yml --json` (it prints queue and
+   latch state, no credentials; save it to `"$W"` only if you want it).
 2. Pick a time outside 08:00-10:00 UTC and check no dump holds a lock:
    `SELECT pid, usename, application_name, state, query_start, left(query, 80) FROM pg_stat_activity WHERE datname = 'groovemap' AND (query ILIKE '%pg_dump%' OR application_name ILIKE '%dump%' OR backend_type = 'client backend' AND state <> 'idle');`
    against the shared PostgreSQL, with the operator's read-only access. Only `groovemap-*` readers
@@ -777,10 +815,13 @@ has been run on lux by this repository.
    retry resumes safely.
 5. Start the loader on the new pin: `docker compose up -d --no-deps tableinator`.
 6. Recreate the enricher and Explore: `docker compose up -d --no-deps graphinator explore`.
-7. Verify the recreation was limited: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort | diff before.txt -`
+7. Verify the recreation was limited: `docker ps --format '{{.Names}} {{.ID}} {{.Image}}' | sort | diff "$W/before.txt" -`
    shows changed IDs for `groovemap-schema-init`, `groovemap-tableinator`, `groovemap-graphinator` and `groovemap-explore`
-   only. The extractor's ID and `StartedAt` are unchanged, and `api`, `insights` and `dashboard`
+   only. The extractor's ID and `StartedAt` (`"$W/extractor-startedat.txt"`) are unchanged, and `api`, `insights` and `dashboard`
    were not recreated.
+
+8. Delete the working files: `rm -rf "$W"; unset W`. They hold container IDs and names only (the
+   renders were deleted in step 1), and nothing else in this procedure writes a secret to disk (`schema-init`, `docker stop`, `up` and the status commands write none).
 
 **Checks that the load has resumed.**
 
