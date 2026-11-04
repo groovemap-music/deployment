@@ -341,6 +341,7 @@ explore/coverage-e2e/
 # Performance test results
 ###
 perftest-results/
+perf-baseline-results/
 
 ###
 # Beadhive / beads / bv
