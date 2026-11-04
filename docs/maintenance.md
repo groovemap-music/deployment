@@ -395,7 +395,7 @@ runs against the `v0.6.3` schema.
 Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
 digests (schema `v0.6.3`, loader `v0.4.3`) reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
 needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
-recorded here before merge to main. Run URL: _pending_. See the
+recorded here before merge to main. Run URL: [41928210952](https://github.com/groovemap-music/deployment/actions/runs/41928210952) (passed on `16fb1d1`: gate 0, 37 passes, 0 false alarms, 4 `extraction_complete`). See the
 [Lux upgrade](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v043-graph-enricher-v050) for the window.
 
 ### Promotion of database-schema v0.6.1, discogs-sql-loader v0.4.1, discogs-graph-enricher v0.5.0 and graph-explorer v0.3.1 (2026-11-04)
