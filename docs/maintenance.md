@@ -406,7 +406,7 @@ Each digest was resolved from its released tag on GHCR (the index digest, with a
 image manifest) and verified with `gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest>
 --owner groovemap-music --signer-repo groovemap-music/automation` (exit 0 for all three). The
 `linux/amd64` image labels were read back: `org.opencontainers.image.version`, `.revision` and
-`.source` match the release, and each image user is `1000:1000`. `discogs-sql-loader` `v0.4.3` was verified the same way (attestation exit 0, revision `c74843c`).
+`.source` match the release, and each image user is `1000:1000`.
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
 | --- | --- | --- | --- |
