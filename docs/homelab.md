@@ -619,15 +619,15 @@ verification below:
   override on an exporter is no longer needed.
 - **A hand-written Discogs latch or a gate you stopped waiting on.** discogs-sql-loader v0.3.0
   did not write the completion latch. v0.4.0
-  and the reviewed v0.4.2 (`sha256:5c4f064be5c2a26320f3274ee741275248e1cc60c5f758d8a7666ce605979f13`; never v0.4.1, which closes healthy consumers) write it when they
+  and the reviewed v0.4.3 (`sha256:9bb930d1f5aa6687d774c1e981dfdbae50086a1d88e1d04110a58326114e32c3`; never v0.4.1, which closes healthy consumers) write it when they
   receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
   acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
   fail-closed, do not restart the extractor or insert a latch row manually. The
   `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
   its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
   v0.5.0 pin (`sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b`; v0.4.0 carried the fix) together
-  with the SQL loader v0.4.2 pin; the combined Linux smoke passed the full gate on the v0.4.0
-  pins (the run on v0.4.2 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v042-2026-11-04)). A pin-only upgrade
+  with the SQL loader v0.4.3 pin; the combined Linux smoke passed the full gate on the v0.4.0
+  pins (the run on v0.4.3 and v0.5.0 is recorded in the [promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04)). A pin-only upgrade
   still cannot recreate signals already acknowledged by v0.3.0. See
   [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
@@ -701,7 +701,7 @@ A `grafana_data` volume created earlier needs the one-time re-own in
 [Grafana now runs as your user](#grafana-now-runs-as-your-user). Existing `*_logs` volumes are
 left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the bounded deploy.
 
-## Lux upgrade: schema-init v0.6.3, SQL loader v0.4.2, graph enricher v0.5.0
+## Lux upgrade: schema-init v0.6.3, SQL loader v0.4.3, graph enricher v0.5.0
 
 Applies to the stalled first Discogs load. It extends the bounded `tableinator` plus `graphinator`
 window described in [Lux upgrade from 6af13ec/160fe7d](#lux-upgrade-from-6af13ec160fe7d). It needs
@@ -863,7 +863,7 @@ has been run on lux by this repository.
   completion. Until it exits 0, keep MusicBrainz off.
 
 **Rollback of a consumer.** Set its pin back to the digest in
-[the promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v042-2026-11-04) and recreate only that service with
+[the promotion record](maintenance.md#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04) and recreate only that service with
 `up -d --no-deps`. database-schema states that the new shape serves the old loaders unchanged, so
 an older service image keeps working (same section as above, "Rolling back is a code rollback").
 That is the schema repository's statement; loader `v0.4.0` and enricher `v0.4.0` on schema
