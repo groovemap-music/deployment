@@ -434,6 +434,10 @@ services:
 
   tableinator:
     restart: always
+    # Optional hard cap. Unset or 0 leaves the loader unlimited; one value sets both limits, so the
+    # container cannot spill into swap. It lives here because `docker update` is lost on recreate.
+    mem_limit: ${TABLEINATOR_MEMORY_LIMIT:-0}
+    memswap_limit: ${TABLEINATOR_MEMORY_LIMIT:-0}
     environment:
       <<: *otel-prod-env
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
