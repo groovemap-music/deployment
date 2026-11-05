@@ -44,8 +44,9 @@ rely on it. Slow Cypher has to be measured from the API side or profiled by hand
    (`pg_stat_statements.track_utility = on`), and on PostgreSQL 18 that text includes the literal in `CREATE ROLE ... PASSWORD '...'` and
    `ALTER ROLE ... PASSWORD '...'` (verified on `postgres:18-alpine`: the plaintext password is readable in the view). The script therefore
    refuses to run while it is on. Before running it, the server owner sets it off, which needs a reload and no restart
-   (`ALTER SYSTEM SET pg_stat_statements.track_utility = off; SELECT pg_reload_conf();`), and decides separately whether to purge entries
-   already collected (`pg_stat_statements_reset()` is a separate approval, and any password set while tracking was on should be rotated).
+   (`ALTER SYSTEM SET pg_stat_statements.track_utility = off; SELECT pg_reload_conf();`), and must purge entries
+   already collected (`pg_stat_statements_reset()` is a separate approval, and any password set while tracking was on should be rotated):
+   the script also refuses, rolling back, while any stored statement mentions a password.
    The production overlay does not set it, because changing the Postgres command line restarts the service; add
    `-c pg_stat_statements.track_utility=off` to it at the next planned restart. (2) `pg_read_all_stats` is cluster-wide: it shows every
    role's statements in every database. Grant it only to a dedicated reporting role, never to an application or loader role, and undo it with

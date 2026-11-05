@@ -41,6 +41,18 @@ END
 $$;
 
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+-- Turning tracking off does not purge what the preloaded library has already collected (it has been
+-- counting since the server started). Superuser sees every role's text, so this covers all roles. If any
+-- stored statement mentions a password, roll back (the extension and the grant with it): the server owner
+-- decides on pg_stat_statements_reset() (a separate approval) and rotates those passwords, then re-runs.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_stat_statements WHERE query ~* '\m(password|encrypted)\M') THEN
+    RAISE EXCEPTION 'stored statements already contain password text; turning track_utility off does not purge them. Reset with pg_stat_statements_reset() (separate approval), rotate those passwords, then re-run';
+  END IF;
+END
+$$;
+
 GRANT pg_read_all_stats TO :"reader";
 
 -- Verify: one row, and the reader can see other roles' statements once it has the grant.
