@@ -120,6 +120,16 @@ EXTERNAL_STORE_FLOORS = {
 # while the reviewed console is below this floor. Met by the v0.3.0 promotion (gm-deployment-8nbg).
 CONSOLE_TARGETS_FLOOR = {"OPERATIONS_CONSOLE_IMAGE": "0.3.0"}
 
+# Releases that only work together: (image, its first release that needs the other, the image it
+# needs, the first release of that image that has it). check-images refuses a reviewed set that
+# breaks a pair, so it cannot be promoted. The rule is inert until the first version is filled in, and
+# a filled pair stays refused until the second is too. The promotion replaces UNRELEASED with versions.
+PAIRED_IMAGE_FLOORS = (
+    # gm-discogs-sql-loader-gna2 writes purge_vetoed on loader_extraction_latch and its startup probe
+    # requires the column, so against an older schema it declines the latch and reports degraded.
+    ("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED),
+)
+
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
 # store checks use the stack's own postgres and valkey images, so one Dependabot bump moves both.
 OVERLAY_IMAGES = {
@@ -207,10 +217,33 @@ def check_declarations() -> None:
     for variable, floor in CONSOLE_TARGETS_FLOOR.items():
         assert variable in IMAGE_OWNERS, f"the console targets floor names {variable}, which is not an owned image"
         assert floor == UNRELEASED or re.fullmatch(r"\d+\.\d+\.\d+", floor), f"the console targets floor for {variable} is X.Y.Z or UNRELEASED"
+    for image, image_floor, needed, needed_floor in PAIRED_IMAGE_FLOORS:
+        for variable, floor in ((image, image_floor), (needed, needed_floor)):
+            assert variable in IMAGE_OWNERS, f"a paired floor names {variable}, which is not an owned image"
+            assert floor == UNRELEASED or re.fullmatch(r"\d+\.\d+\.\d+", floor), f"the paired floor for {variable} is X.Y.Z or UNRELEASED"
+    problems = paired_floor_problems(RELEASED_IMAGE_VERSIONS)
+    assert not problems, "; ".join(problems)
     assert set(INTERNAL_IMAGES).isdisjoint(THIRD_PARTY_REPOSITORIES), "a service runs either a released GrooveMap image or a public one"
     assert all(
         repository and "@" not in repository and ":" not in repository.rsplit("/", 1)[-1] for repository in THIRD_PARTY_REPOSITORIES.values()
     ), "a reviewed third-party repository is a bare name, with no tag or digest"
+
+
+def version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def paired_floor_problems(versions: Mapping[str, str], floors: tuple[tuple[str, str, str, str], ...] = PAIRED_IMAGE_FLOORS) -> list[str]:
+    """Each pair in `floors` that the reviewed `versions` break. See PAIRED_IMAGE_FLOORS."""
+    problems = []
+    for image, image_floor, needed, needed_floor in floors:
+        if image_floor == UNRELEASED or version_key(versions[image]) < version_key(image_floor):
+            continue
+        if needed_floor == UNRELEASED:
+            problems.append(f"{image} {versions[image]} needs a {needed} release that does not exist yet")
+        elif version_key(versions[needed]) < version_key(needed_floor):
+            problems.append(f"{image} {versions[image]} needs {needed} {needed_floor} or newer, and the reviewed set has {versions[needed]}")
+    return problems
 
 
 def parse_assignments(text: str) -> dict[str, str]:
