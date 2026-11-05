@@ -619,15 +619,15 @@ verification below:
   override on an exporter is no longer needed.
 - **A hand-written Discogs latch or a gate you stopped waiting on.** discogs-sql-loader v0.3.0
   did not write the completion latch. v0.4.0
-  and the reviewed v0.4.4 (`sha256:ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278`; never v0.4.1, which closes healthy consumers) write it when they
+  and the reviewed v0.4.5 (`sha256:dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f`; never v0.4.1, which closes healthy consumers) write it when they
   receives the extraction-complete signals. It cannot recreate a missing latch if v0.3.0 already
   acknowledged those signals; an empty queue is not evidence of completion. Keep the gate
   fail-closed, do not restart the extractor or insert a latch row manually. The
   `discogs-graph-enricher` v0.3.0 image also has a CI-discovered concurrency race that can leave
   its durable completion marker at 2/4 after all queues drain. Promote the reviewed graph-enricher
-  v0.6.0 pin (`sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab`; v0.4.0 carried the fix) together
-  with the SQL loader v0.4.4 pin; the combined Linux smoke passed the full gate on the v0.4.0
-  pins (the run on v0.4.4 and v0.6.0 is recorded in the [promotion record](maintenance.md#promotion-of-discogs-sql-loader-v044-and-discogs-graph-enricher-v060-2026-11-05)). A pin-only upgrade
+  v0.6.1 pin (`sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee`; v0.4.0 carried the fix) together
+  with the SQL loader v0.4.5 pin; the combined Linux smoke passed the full gate on the v0.4.0
+  pins (the run on v0.4.5 and v0.6.1 is recorded in the [promotion record](maintenance.md#promotion-of-the-reset-release-set-2026-11-05)). A pin-only upgrade
   still cannot recreate signals already acknowledged by v0.3.0. See
   [late Discogs recovery](#late-discogs-recovery).
 - **A manual wait for the RabbitMQ DLQ initializer.** `up --wait` now succeeds: the queue services
@@ -703,9 +703,10 @@ left untouched; the updated Compose files use UID-owned `/logs` tmpfs after the 
 
 ## Lux upgrade: schema-init v0.6.3, SQL loader v0.4.4, graph enricher v0.6.0
 
-> **Superseded in part.** The loader and enricher in this window are now `v0.4.4` and `v0.6.0`.
-> After `schema-init`, stage them as in
-> [SQL loader v0.4.4 and graph enricher v0.6.0, staged after schema v0.6.3](#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063):
+> **Superseded in part.** The reviewed set is now the one in
+> [Lux reset: the release set on a fresh database](#lux-reset-the-release-set-on-a-fresh-database):
+> loader `v0.4.5`, enricher `v0.6.1` (`v0.4.4` and `v0.6.0` are rollback targets). After `schema-init`, stage them as in
+> [the staged window](#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063):
 > `tableinator` first, `graphinator` only on its own go-ahead, so do not run step 6 as written
 > (it recreates `graphinator` and `explore` together).
 
@@ -885,6 +886,10 @@ describes, not during the load.
 
 ## Lux upgrade: SQL loader v0.4.4 and graph enricher v0.6.0, staged after schema v0.6.3
 
+> **Superseded for the reset.** The reset runs the pins and the order in
+> [Lux reset: the release set on a fresh database](#lux-reset-the-release-set-on-a-fresh-database).
+> The staging rules below (one service at a time, `up -d --no-deps`, the `graphinator` go-ahead) still apply.
+
 Applies after `schema-init` `v0.6.3` has run on lux (the window above), or in place of that
 window's steps 5 and 6 when it has not yet reached them. The schema does not change: **do not run
 `schema-init` here and do not stop anything but the service you are replacing.** Pins:
@@ -902,8 +907,13 @@ operator approval for each stage; the `graphinator` stage needs its own go-ahead
   the old pins in `.env.<timestamp>.bak`), with the render comparison before and after. The changed
   services must be exactly `graphinator ['image']` and `tableinator ['image']` (plus any other
   service whose pin changed since lux's checkout; stop and ask for anything unexpected).
-- Keep the 30 GiB memory cap on `tableinator` that lux already sets. This change touches no limit;
-  do not raise, lower or remove it.
+- Keep the 30 GiB memory cap on `tableinator`. It lives in configuration: `TABLEINATOR_MEMORY_LIMIT=30g`
+  in lux's `.env`, which sets both `mem_limit` and `memswap_limit` in `docker-compose.prod.yml`. Do not
+  raise, lower or remove it, and do not set it with `docker update`, which the next recreate drops
+  (that happened on 2026-11-05). Until homelab's Ansible carries the value, add it to `.env` by hand
+  before recreating `tableinator`, then confirm:
+  `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-tableinator` prints
+  `32212254720 32212254720`.
 - `graphinator`'s first start on `v0.6.0` is a **live Neo4j write** (the stats refresh; about 12
   minutes and 0.8 GB, both estimates). That is why it is a separate stage.
 
@@ -943,6 +953,66 @@ not continue the load.
 [promotion record](maintenance.md#promotion-of-discogs-sql-loader-v044-and-discogs-graph-enricher-v060-2026-11-05) (or the `.env.<timestamp>.bak` pin) and recreate only that
 service with `up -d --no-deps`. The newly written Neo4j properties stay; `v0.5.0` ignores them.
 
+## Lux reset: the release set on a fresh database
+
+Applies to the reset: a new, empty PostgreSQL and Neo4j, then the Discogs load. Pins, all from the
+[promotion record](maintenance.md#promotion-of-the-reset-release-set-2026-11-05): `database-schema`
+`v0.7.0` (`sha256:da6e53bb865f3172161e07fcca34d8fecef587facdf566ae6efff378e9ebc771`), `catalog-api`
+`v0.7.0` (`sha256:143d5dd329adfe42a2ba9fe8785df45430603e07aac807af0cc8471263ec927a`),
+`discogs-sql-loader` `v0.4.5` (`sha256:dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f`),
+`discogs-graph-enricher` `v0.6.1` (`sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee`),
+`analytics-engine` `v0.6.0` (`sha256:000a053102c52f377a9f6ff2edd492c205fbb1973d55fcad168ecc7abb81d031`) and
+`graph-explorer` `v0.3.2` (`sha256:da5b49f70a2d8fdd0c6254e6cf9de2b7c20da79ce90d8922a8349aff068a9fb8`).
+Nothing here has been run on lux by this repository, and it needs explicit operator approval for
+each stage.
+
+**Read first.**
+
+- Move the checkout and `.env` by hand as in step 1 of the
+  [staged window](#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063)
+  (`git checkout --detach <merge commit>`, then `python3 scripts/env-init.py`, which rewrites only
+  `*_IMAGE` lines and keeps the old pins in `.env.<timestamp>.bak`), with the render comparison before
+  and after. Do not use `just deploy`, a plain `docker compose up` or the homelab playbook: they end in
+  a whole-stack `up`.
+- **Set `TABLEINATOR_MEMORY_LIMIT=30g` in lux's `.env` before the loader starts**, and keep it for
+  every recreate of `tableinator`. It sets both `mem_limit` and `memswap_limit` in
+  `docker-compose.prod.yml`; the 30 GiB cap is unchanged by this release set. Do not set it with
+  `docker update`, which the next recreate drops (that happened on 2026-11-05), and do not raise, lower
+  or remove it. Until homelab's Ansible carries the value, add it by hand, then confirm after the
+  loader starts: `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'
+  groovemap-tableinator` prints `32212254720 32212254720`. See
+  [configuration](configuration.md) (`TABLEINATOR_MEMORY_LIMIT`).
+- Never run an older `schema-init`. `database-schema` `v0.7.0` keeps the Identity Ledger as plain
+  tables (they were materialized views through `v0.6.3`), so an older `catalog-api` answers 503 on the
+  ledger routes once it is applied.
+
+**Order.**
+
+1. **`catalog-api` and `schema-init` together, on the fresh database.** `catalog-api` `v0.7.0` runs on
+   the old views and the new tables, so there is no window where the API is older than the schema.
+   `graph-explorer` `v0.3.2` ships with it and not before: an older API shows only the first 100
+   credits with no error. Require `schema-init` to exit 0 and `catalog-api` to report `healthy`.
+2. **The loaders, one service at a time.** `tableinator` (SQL loader `v0.4.5`) with the cap above, then
+   `graphinator` (graph enricher `v0.6.1`) on its own go-ahead. Release the two together: credit-name
+   padding is stripped in each, and one alone splits the Person keys. The `graphinator` first-start
+   stats refresh in the
+   [staged window](#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063)
+   (Stage 2) is a Neo4j write; publish nothing to its queues until `stats_version` reads 1. How long
+   it takes on an empty Neo4j has not been measured.
+3. **`analytics-engine` last.** `v0.6.0` writes `label_ids` and `artist_ids` and fails with
+   `UndefinedColumn` on a schema older than `v0.7.0`. The rarity table, and the rarity routes, stay
+   empty until one complete rarity run finishes after both upgrades; run it once and read the route
+   afterwards.
+
+**Capability floors** (all met by this set; the check is `just check`'s `scripts/check-images.py`):
+`operations-console` `v0.3.0` and `mcp-server` `v0.2.2` carry route contracts that equal the producer's
+files at `catalog-api` `v0.7.0`, so neither is redeployed. The `gm-discogs-sql-loader-gna2` pair
+stays `UNRELEASED`: neither loader `v0.4.5` nor schema `v0.7.0` has `purge_vetoed`.
+
+**Rollback.** Per service, set its pin back to the rollback digest in the promotion record (or the
+`.env.<timestamp>.bak` pin) and recreate only that service with `up -d --no-deps`. Roll `catalog-api`
+back only together with the schema it matches.
+
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.
@@ -976,8 +1046,8 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   insert the latch manually or restart the extractor to try to recreate it.
 - **The reviewed `discogs-graph-enricher` v0.3.0 can lose two completion markers in a concurrent
   cache version reset.** Empty queues do not prove all four durable markers were written. The
-  source fix is released as v0.4.0, and v0.6.0 (the reviewed pin,
-  `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab`) includes it; the combined Linux
+  source fix is released as v0.4.0, and v0.6.1 (the reviewed pin,
+  `sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee`) includes it; the combined Linux
   smoke proved all four markers and drained queues for a fresh fixture pass. This does not recover
   an earlier acknowledged terminal signal.
 - **An active first import is not a Compose-wide rollout window.** Take the read-only config and

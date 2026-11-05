@@ -176,6 +176,7 @@ The following groups are interpolated by the executable stack:
 | `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
+| `TABLEINATOR_MEMORY_LIMIT` | Optional production overlay hard cap on the SQL loader, for example `30g`. Sets both `mem_limit` and `memswap_limit`, so the container cannot spill into swap. Unset leaves it unlimited. Set it here, not with `docker update`, which a recreate drops |
 | `EXTERNAL_POSTGRES_HOST`, `EXTERNAL_POSTGRES_PORT`, `EXTERNAL_POSTGRES_DATABASE`, `EXTERNAL_VALKEY_HOST`, `EXTERNAL_VALKEY_PORT`, `EXTERNAL_VALKEY_DB`, `EXTERNAL_VALKEY_KEY_PREFIX` | External-store overlays only, selected by `GROOVEMAP_POSTGRES` and `GROOVEMAP_VALKEY`; see [External PostgreSQL and Valkey](#external-postgresql-and-valkey) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
@@ -1571,6 +1572,9 @@ NEO4J_HEAP_SIZE=8g
 NEO4J_PAGECACHE_SIZE=16g
 NEO4J_MEMORY_LIMIT=48G
 NEO4J_TRANSACTION_MEMORY_MAX=8G
+
+# Optional hard cap on the SQL loader, memory and swap alike (unset: no limit)
+# TABLEINATOR_MEMORY_LIMIT=30g
 ```
 
 Hosts, data paths, log levels, and consumer timings are literal Compose values,
