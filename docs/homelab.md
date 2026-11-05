@@ -902,8 +902,13 @@ operator approval for each stage; the `graphinator` stage needs its own go-ahead
   the old pins in `.env.<timestamp>.bak`), with the render comparison before and after. The changed
   services must be exactly `graphinator ['image']` and `tableinator ['image']` (plus any other
   service whose pin changed since lux's checkout; stop and ask for anything unexpected).
-- Keep the 30 GiB memory cap on `tableinator` that lux already sets. This change touches no limit;
-  do not raise, lower or remove it.
+- Keep the 30 GiB memory cap on `tableinator`. It lives in configuration: `TABLEINATOR_MEMORY_LIMIT=30g`
+  in lux's `.env`, which sets both `mem_limit` and `memswap_limit` in `docker-compose.prod.yml`. Do not
+  raise, lower or remove it, and do not set it with `docker update`, which the next recreate drops
+  (that happened on 2026-11-05). Until homelab's Ansible carries the value, add it to `.env` by hand
+  before recreating `tableinator`, then confirm:
+  `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-tableinator` prints
+  `32212254720 32212254720`.
 - `graphinator`'s first start on `v0.6.0` is a **live Neo4j write** (the stats refresh; about 12
   minutes and 0.8 GB, both estimates). That is why it is a separate stage.
 
