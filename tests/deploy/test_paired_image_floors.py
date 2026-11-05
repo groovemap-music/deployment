@@ -51,11 +51,6 @@ def test_the_rule_is_inert_while_both_are_unreleased(policy: dict[str, Any]) -> 
     assert policy["paired_floor_problems"]({LOADER: "9.9.9", SCHEMA: "0.0.1"}, pair(policy, unreleased, unreleased)) == []
 
 
-def test_half_a_promotion_is_refused(policy: dict[str, Any]) -> None:
-    problems = policy["paired_floor_problems"]({LOADER: "0.5.0", SCHEMA: "0.7.0"}, pair(policy, "0.5.0", policy["UNRELEASED"]))
-    assert problems == [f"{LOADER} 0.5.0 needs a {SCHEMA} release that does not exist yet"]
-
-
 def test_the_reviewed_set_passes_today(policy: dict[str, Any]) -> None:
     assert policy["paired_floor_problems"](policy["RELEASED_IMAGE_VERSIONS"]) == []
 
@@ -76,11 +71,26 @@ def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", UNRELEASED)',
+        '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", "0.7.0")',
+    ],
+)
+def test_check_images_refuses_half_a_pair(tmp_path: Path, row: str) -> None:
+    source = (ROOT / "scripts" / "check-images.py").read_text()
+    broken = source.replace('("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED)', row)
+    assert broken != source
+    with pytest.raises(AssertionError, match="both UNRELEASED or both set"):
+        _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
+
+
 def test_check_images_refuses_a_malformed_floor(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     broken = source.replace(
         '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED)',
-        '("DISCOGS_SQL_LOADER_IMAGE", "next", "DATABASE_SCHEMA_IMAGE", UNRELEASED)',
+        '("DISCOGS_SQL_LOADER_IMAGE", "next", "DATABASE_SCHEMA_IMAGE", "0.7.0")',
     )
     with pytest.raises(AssertionError, match=r"X\.Y\.Z or UNRELEASED"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)

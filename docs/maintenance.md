@@ -42,7 +42,7 @@ with [the October 2026 operations console rollout](rollout-2026-10-operations-co
 `just check` refuses a reviewed set that breaks a pair. When promoting `gm-discogs-sql-loader-gna2`,
 replace the two `UNRELEASED` values with the first `discogs-sql-loader` release that writes
 `purge_vetoed` and the first `database-schema` release that has the column. Without that schema the
-loader declines the latch and reports degraded. Filling in only the loader's value is refused.
+loader declines the latch and reports degraded. Filling in only one of the two is refused.
 
 ## Wave-2 image promotion (identity and activity)
 
