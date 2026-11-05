@@ -117,7 +117,13 @@ class FakeDocker:
                 return subprocess.CompletedProcess(argv, 0, self.relations, "")
             # Like the real server, a query naming a table that does not exist fails whole.
             latch_present, job_present = (field == "t" for field in self.relations.strip().split("|")) if "|" in self.relations else (True, True)
-            missing = None if latch_present and (job_present or "loader_derived_refresh_job" not in sql) else "loader_extraction_latch" if not latch_present else "loader_derived_refresh_job"
+            missing = (
+                None
+                if latch_present and (job_present or "loader_derived_refresh_job" not in sql)
+                else "loader_extraction_latch"
+                if not latch_present
+                else "loader_derived_refresh_job"
+            )
             if missing:
                 return subprocess.CompletedProcess(argv, 1, "", f'ERROR:  relation "public.{missing}" does not exist\n')
             return subprocess.CompletedProcess(argv, 0, self.latch, "")
