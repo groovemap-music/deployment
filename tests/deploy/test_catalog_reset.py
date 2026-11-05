@@ -441,6 +441,7 @@ class Host(reset.Stores):  # type: ignore[name-defined]
         self.valkey = ""
         self.nodes = "0"
         self.complete = "1"
+        self.poll = "false"
         self.counts: dict[str, str] = {}
         self.render_images: dict[str, Any] = {}
 
@@ -461,6 +462,10 @@ class Host(reset.Stores):  # type: ignore[name-defined]
         if "-c" in argv and "psql" in argv:
             return self.sql(argv[argv.index("-c") + 1])
         joined = " ".join(argv)
+        if argv[:2] == ["git", "rev-parse"]:
+            return "abc123\n"
+        if "printenv" in joined:
+            return f"{self.poll}\n"
         if "list_queues" in joined:
             return self.queues
         if "--scan" in joined:
@@ -530,6 +535,7 @@ def arguments(directory: Path | None) -> argparse.Namespace:
         schema_timeout=60,
         min_free_gb=1,
         rehearsal_skip_release_floor=True,
+        rehearsal_report=None,
         accept_shared_change=False,
     )
 
@@ -1025,6 +1031,10 @@ def flight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     def go(**overrides: Any) -> None:
         namespace = arguments(directory)
         namespace.rehearsal_skip_release_floor = False
+        report = directory.parent / "REPORT.json"
+        images = {service: host.render_images.get(service, {}).get("image") for service in reset.REPORT_SERVICES}
+        report.write_text(json.dumps({"result": "PASS", "dirty": False, "commit": "abc123", "images": images}))
+        namespace.rehearsal_report = str(report)
         for key, value in overrides.items():
             setattr(namespace, key, value)
         reset.stage_preflight(host, good, namespace)
@@ -1152,6 +1162,209 @@ def test_preflight_records_what_each_service_runs(flight: Any) -> None:
     )
     go()
     assert json.loads((directory / "done-preflight").read_text())["images"]["api"] == "old-image"
+
+
+def test_preflight_needs_a_rehearsal_report(flight: Any) -> None:
+    _host, go, *_ = flight
+    with pytest.raises(reset.ResetError, match="--rehearsal-report is required"):
+        go(rehearsal_report=None)
+
+
+def test_preflight_needs_the_report_to_exist(flight: Any, tmp_path: Path) -> None:
+    _host, go, *_ = flight
+    with pytest.raises(reset.ResetError, match="no rehearsal report"):
+        go(rehearsal_report=str(tmp_path / "missing.json"))
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"result": "FAIL"}, "result is FAIL"),
+        ({"dirty": True}, "uncommitted"),
+        ({"dirty": None}, "uncommitted"),
+        ({"commit": "other"}, "this checkout is abc123"),
+        ({"images": {}}, "differs from the image"),
+    ],
+)
+def test_preflight_refuses_a_report_that_does_not_cover_this_set(flight: Any, tmp_path: Path, change: dict[str, Any], reason: str) -> None:
+    host, go, *_ = flight
+    images = {service: host.render_images.get(service, {}).get("image") for service in reset.REPORT_SERVICES}
+    report = {"result": "PASS", "dirty": False, "commit": "abc123", "images": images, **change}
+    path = tmp_path / "other.json"
+    path.write_text(json.dumps(report))
+    with pytest.raises(reset.ResetError, match=reason):
+        go(rehearsal_report=str(path))
+
+
+def test_preflight_refuses_a_report_for_one_moved_image(flight: Any, tmp_path: Path) -> None:
+    host, go, *_ = flight
+    images = {service: host.render_images.get(service, {}).get("image") for service in reset.REPORT_SERVICES}
+    path = tmp_path / "other.json"
+    path.write_text(json.dumps({"result": "PASS", "dirty": False, "commit": "abc123", "images": {**images, "api": "x@sha256:moved"}}))
+    with pytest.raises(reset.ResetError, match="api differs"):
+        go(rehearsal_report=str(path))
+
+
+def test_preflight_warns_when_this_commit_moves_a_store(flight: Any, capsys: pytest.CaptureFixture[str]) -> None:
+    host, go, _directory, _good, monkeypatch = flight
+    host.render_images["neo4j"] = {"image": "neo4j@sha256:new"}
+    original = host.answer
+
+    def answer(argv: list[str], *rest: Any) -> str:
+        if "ps" in argv and argv[-1] == "neo4j":
+            return "id\n"
+        if "inspect" in argv:
+            return "neo4j@sha256:old\n"
+        return str(original(argv, *rest))
+
+    monkeypatch.setattr(host, "answer", answer)
+    go()
+    assert "moves the neo4j digest" in capsys.readouterr().out
+
+
+# --- after a rollback, and after a finish that died ---
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["stage_reset_neo4j", "stage_reset_rabbitmq", "stage_reset_valkey", "stage_bootstrap", "stage_start", "stage_after_load"],
+)
+def test_no_forward_stage_runs_once_a_rollback_has_started(state: Path, stack: Any, stage: str) -> None:
+    for step in ("reset-postgres", "reset-neo4j", "reset-rabbitmq", "reset-valkey", "bootstrap", "start", "rollback-started"):
+        (state / f"done-{step}").write_text("")
+    host = Host()
+    with pytest.raises(reset.ResetError, match="rolled back"):
+        run_stage(getattr(reset, stage), host, stack, state)
+    assert "compose up" not in host.text()
+    assert "volume rm" not in host.text()
+
+
+def test_rollback_after_a_finish_that_died_says_run_finish_again(state: Path, stack: Any) -> None:
+    (state / "done-reset-postgres").write_text("")
+    (state / "done-neo4j-copied").write_text("9 900")
+    host = Host()
+    host.volumes.add("v_pre_reset")
+    with pytest.raises(reset.ResetError, match="Run finish again"):
+        run_stage(reset.stage_rollback, host, stack, state)
+    assert "cp -a" not in host.text()
+    assert "compose stop" not in host.text()
+    assert not (state / "done-rollback").exists()
+
+
+def test_a_resumed_rollback_is_not_mistaken_for_a_dead_finish(state: Path, stack: Any) -> None:
+    (state / "done-reset-postgres").write_text("")
+    (state / "done-rollback-started").write_text("")
+    run_stage(reset.stage_rollback, Host(), stack, state)
+    assert (state / "done-rollback").exists()
+
+
+def test_capture_checks_the_user_tables_again_after_the_stop(tmp_path: Path, stack: Any) -> None:
+    directory = tmp_path / "s"
+    directory.mkdir(mode=0o700)
+    host = Host()
+    host.counts["oauth_tokens"] = "1"
+    with pytest.raises(reset.ResetError, match="oauth_tokens"):
+        run_stage(reset.stage_capture, host, stack, directory)
+    assert list(directory.iterdir()) == []
+
+
+# --- the ledger poll ---
+
+
+def started(state: Path) -> None:
+    (state / "done-bootstrap").write_text("")
+
+
+def test_start_turns_the_poll_off_for_the_up_and_leaves_env_alone(state: Path, stack: Any) -> None:
+    started(state)
+    host = Host()
+    run_stage(reset.stage_start, host, stack, state)
+    up = next(call for call in host.calls if "tableinator" in call and "up" in call)
+    assert up[:2] == ["env", "IDENTITY_LEDGER_REFRESH_ENABLED=false"]
+    assert (state / "done-start").exists()
+
+
+def test_start_stops_if_the_poll_is_still_on(state: Path, stack: Any) -> None:
+    started(state)
+    host = Host()
+    host.poll = "true"
+    with pytest.raises(reset.ResetError, match="partial catalog"):
+        run_stage(reset.stage_start, host, stack, state)
+    assert not (state / "done-start").exists()
+
+
+def after_load_host(state: Path) -> Host:
+    (state / "done-start").write_text("")
+    host = Host()
+    host.poll = "true"
+    host.counts["action = 'identity.reattach.auto'"] = "1"
+    return host
+
+
+def test_after_load_recreates_api_with_the_poll_on_and_then_starts_insights(state: Path, stack: Any) -> None:
+    host = after_load_host(state)
+    run_stage(reset.stage_after_load, host, stack, state)
+    text = host.text()
+    assert text.index("--force-recreate api") < text.index("--wait-timeout 600 insights")
+    assert not [call for call in host.calls if call[0] == "env"]
+
+
+def test_after_load_stops_if_the_poll_did_not_come_back(state: Path, stack: Any) -> None:
+    host = after_load_host(state)
+    host.poll = "false"
+    with pytest.raises(reset.ResetError, match="did not come back"):
+        run_stage(reset.stage_after_load, host, stack, state)
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "match"),
+    [("load", "0", "no complete Discogs load"), ("complete", "0", "no complete extraction"), ("handled", "0", "has not finished")],
+)
+def test_after_load_waits_for_the_load_the_graph_and_the_watcher(state: Path, stack: Any, name: str, value: str, match: str) -> None:
+    host = after_load_host(state)
+    if name == "complete":
+        host.complete = value
+    elif name == "handled":
+        host.counts["action = 'identity.reattach.auto'"] = value
+    else:
+        host.counts[name] = value
+    with pytest.raises(reset.ResetError, match=match):
+        run_stage(reset.stage_after_load, host, stack, state)
+    assert "compose up" not in host.text()
+
+
+def test_after_load_needs_start(state: Path, stack: Any) -> None:
+    with pytest.raises(reset.ResetError, match="have not completed: start"):
+        run_stage(reset.stage_after_load, Host(), stack, state)
+
+
+# --- durable state ---
+
+
+def test_state_is_replaced_whole_and_leaves_no_temporary(tmp_path: Path) -> None:
+    path = tmp_path / "capture.json"
+    reset.write_private(path, "one")
+    reset.write_private(path, "two")
+    assert path.read_text() == "two"
+    assert [item.name for item in tmp_path.iterdir()] == ["capture.json"]
+
+
+def test_state_is_synced_before_it_replaces_the_old_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    synced: list[int] = []
+    monkeypatch.setattr(reset.os, "fsync", synced.append)
+    reset.write_private(tmp_path / "capture.json", "x")
+    assert len(synced) == 2
+
+
+def test_status_reports_free_disk(stack: Any, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    host = Host()
+    original = host.answer
+    monkeypatch.setattr(host, "answer", lambda argv, *rest: "2147483648\n" if "df -Pk" in " ".join(argv) else original(argv, *rest))
+    namespace = arguments(None)
+    namespace.duration = 0
+    namespace.interval = 1
+    reset.stage_status(host, stack, namespace)
+    assert "free=2048GB" in capsys.readouterr().out
 
 
 # --- bootstrap verification ---
@@ -1330,6 +1543,7 @@ def test_the_runbook_covers_every_stage_in_order() -> None:
             "bootstrap",
             "start",
             "status",
+            "after-load",
             "finish",
         )
     ]

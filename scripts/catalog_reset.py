@@ -75,6 +75,11 @@ EVIDENCE_LOG_LINES = "20000"
 BLOCKED_FROM_MINUTE = 7 * 60 + 30
 BLOCKED_UNTIL_MINUTE = 10 * 60
 
+# Off for the load: while writes continue the poll rebuilds the ledger every 6 hours, on a partial
+# catalog, in one transaction. The watcher's own refresh after the re-attachment fills it at the end.
+LEDGER_POLL_VARIABLE = "IDENTITY_LEDGER_REFRESH_ENABLED"
+LEDGER_POLL_OFF = ("env", f"{LEDGER_POLL_VARIABLE}=false")
+
 # In the order they stop. The extractor first, so nothing new is published; then the consumers;
 # then everything else holding a PostgreSQL session. `insights` stays down until the gate exits 0,
 # because its rarity transaction blocks vacuum for the whole database (runbook, step 14).
@@ -191,6 +196,7 @@ DROP DATABASE IF EXISTS groovemap_pre_reset;
 DROP DATABASE IF EXISTS groovemap_reset_failed;
 """
 SQL_MARKER_COUNT = "SELECT count(*) FROM public.admin_audit_log WHERE action LIKE 'identity.reattach.auto%'"
+SQL_HANDLED_DONE = "SELECT count(*) FROM public.admin_audit_log WHERE action = 'identity.reattach.auto'"
 SQL_LOAD_COMPLETE = (
     "SELECT count(*) FROM public.loader_extraction_latch WHERE loader = 'discogs' "
     "AND signals @> ARRAY['artists', 'labels', 'masters', 'releases']::text[] AND refreshed_at IS NOT NULL"
@@ -205,6 +211,7 @@ VALKEY_AUTH = 'VALKEYCLI_AUTH="$(cat /run/secrets/valkey_password 2>/dev/null)";
 # Emptied first, so a re-run after an interrupted copy leaves no stale files. `&&`: never copy into a
 # volume that could not be emptied.
 COPY_VOLUME = "find /to -mindepth 1 -delete && cp -a /from/. /to/"
+FREE_DISK = "df -Pk /v | awk 'NR==2 {print $4}'"
 TALLY_VOLUME = "find /v -type f -printf '%s\\n' | awk '{n++; s+=$1} END {print n+0, s+0}'"
 
 # Each service, the image variable that pins it, and the floor the reset needs: (version, inclusive).
@@ -217,6 +224,10 @@ SERVICE_IMAGES = {
     "extractor-discogs": "DISCOGS_INGESTION_IMAGE",
     "insights": "ANALYTICS_ENGINE_IMAGE",
 }
+# Every image the rehearsal's report must match: what the operator is about to run.
+REPORT_SERVICES = (*SERVICE_IMAGES, "neo4j", "rabbitmq", "valkey")
+# Run by the stack, pinned in Compose rather than .env, so rollback's pins cannot move them back.
+STORE_SERVICES = ("neo4j", "rabbitmq", "valkey")
 RELEASE_FLOOR = {
     "DATABASE_SCHEMA_IMAGE": ("0.7.0", True),
     "DISCOGS_SQL_LOADER_IMAGE": ("0.4.4", False),
@@ -495,9 +506,19 @@ def load_state(directory: Path) -> dict[str, Any]:
 
 
 def write_private(path: Path, text: str) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    """Atomic and durable: rollback trusts these files, so a crash must leave the old one or the new one whole."""
+    temporary = path.with_name(f".{path.name}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w") as stream:
         stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def done(directory: Path, step: str) -> bool:
@@ -508,6 +529,12 @@ def record(stores: Stores, directory: Path, step: str, value: str = "") -> None:
     """Durable progress: rollback, re-runs and later stages read these instead of guessing."""
     if stores.apply:
         write_private(directory / f"done-{step}", value)
+
+
+def refuse_after_rollback(directory: Path) -> None:
+    """A rollback owns the stores from the moment it starts. Running forward now would undo it."""
+    if done(directory, "rollback-started"):
+        fail("this reset was rolled back; use a new --state-dir for a new reset")
 
 
 def require_steps(directory: Path, *steps: str) -> None:
@@ -643,6 +670,49 @@ def require_release_set(stores: Stores, stack: Stack, args: argparse.Namespace) 
     if not limit or str(limit) == "0":
         fail("tableinator has no memory limit in this render; the leak proof must run under the cap (gm-deployment-3qs7)")
     ok(f"the release floor is met and tableinator is capped at {limit}")
+    require_rehearsal(stores, render, args.rehearsal_report)
+
+
+def rehearsal_problems(report: dict[str, Any], commit: str, render: dict[str, Any]) -> list[str]:
+    """What stops a rehearsal's report from vouching for this commit and these images."""
+    problems = []
+    if report.get("result") != "PASS":
+        problems.append(f"its result is {report.get('result')}")
+    if report.get("dirty") is not False:
+        problems.append("it ran on a checkout with uncommitted changes")
+    if report.get("commit") != commit:
+        problems.append(f"it ran on {report.get('commit')}, and this checkout is {commit}")
+    images = report.get("images", {})
+    for service in REPORT_SERVICES:
+        if images.get(service) != render.get(service, {}).get("image"):
+            problems.append(f"{service} differs from the image it ran")
+    return problems
+
+
+def require_rehearsal(stores: Stores, render: dict[str, Any], path: str | None) -> None:
+    """A rehearsal on other pins proves nothing about this release set."""
+    if not path:
+        fail("--rehearsal-report is required: rehearse this commit first (runbook, Before the day)")
+    report_path = Path(path)
+    if not report_path.is_file():
+        fail(f"no rehearsal report at {path}")
+    commit = stores.run(["git", "rev-parse", "HEAD"]).stdout.strip()
+    problems = rehearsal_problems(json.loads(report_path.read_text()), commit, render)
+    if problems:
+        fail("the rehearsal report does not cover this release set: " + "; ".join(problems))
+    ok(f"a passing rehearsal covers commit {commit[:12]} and these images")
+
+
+def warn_moved_stores(stores: Stores) -> None:
+    """Rollback's pins are .env lines, and these are not: a new store image would meet the old data."""
+    render = stores.render()["services"]
+    for service in STORE_SERVICES:
+        containers = stores.run(stores.compose("ps", "--quiet", service), timeout=60).stdout.split()
+        if not containers:
+            continue
+        running = stores.run(["docker", "inspect", "--format", "{{.Config.Image}}", containers[0]], timeout=60).stdout.strip()
+        if running != render.get(service, {}).get("image"):
+            print(f"WARNING: this commit moves the {service} digest, which a rollback does not move back (runbook, Before the day)")
 
 
 def require_empty_user_tables(stores: Stores) -> None:
@@ -696,8 +766,7 @@ def stage_preflight(stores: Stores, stack: Stack, args: argparse.Namespace) -> N
     version = marker.removeprefix(".extraction_status_").removesuffix(".json")
     metadata = json.loads(read_volume_file(stores, stack, ".discogs_metadata.json"))
     require_dump(listing, metadata, version)
-    free_script = "df -Pk /v | awk 'NR==2 {print $4}'"
-    free_kb = int(stores.utility(free_script, f"{stack.neo4j_volume}:/v:ro", timeout=60, image=stack.utility_image).strip())
+    free_kb = int(stores.utility(FREE_DISK, f"{stack.neo4j_volume}:/v:ro", timeout=60, image=stack.utility_image).strip())
     free_gb = free_kb // (1024 * 1024)
     if free_gb < args.min_free_gb:
         fail(f"{free_gb} GB free on the Docker volume disk, below the {args.min_free_gb} GB the runbook's estimate needs")
@@ -705,6 +774,7 @@ def stage_preflight(stores: Stores, stack: Stack, args: argparse.Namespace) -> N
     if volume_exists(stores, stack.retained_volume):
         fail(f"{stack.retained_volume} already exists; a previous reset has not finished")
     ok(f"targets: database {DATABASE}, volume {stack.neo4j_volume}, Compose project {stack.project}")
+    warn_moved_stores(stores)
     write_private(directory / "done-preflight", json.dumps({"images": running_images(stores)}, indent=2, sort_keys=True) + "\n")
 
 
@@ -740,6 +810,8 @@ def stage_capture(stores: Stores, stack: Stack, args: argparse.Namespace) -> Non
     if RETAINED_DATABASE in own_databases(stores):
         fail(f"{RETAINED_DATABASE} exists: the reset has started, so {DATABASE} no longer holds what must be captured")
     require_no_sessions(stores)
+    # Again, now that nothing can write: pre-flight may be hours old, and a row here would be lost.
+    require_empty_user_tables(stores)
     users = stores.query(DATABASE, KEEP_USERS_SQL)
     audit = stores.query(DATABASE, KEEP_AUDIT_SQL)
     user_rows = max(0, len(users.splitlines()) - 1)
@@ -802,6 +874,7 @@ def stage_reset_neo4j(stores: Stores, stack: Stack, args: argparse.Namespace) ->
     state = load_state(directory)
     require_window()
     require_steps(directory, "reset-postgres")
+    refuse_after_rollback(directory)
     require_untouched(stores, state, accept=args.accept_shared_change)
     if done(directory, "reset-neo4j"):
         ok(f"{stack.neo4j_volume} was already removed by this reset; nothing to do")
@@ -846,6 +919,7 @@ def stage_reset_rabbitmq(stores: Stores, _stack: Stack, args: argparse.Namespace
     directory = state_dir(args.state_dir)
     state = load_state(directory)
     require_window()
+    refuse_after_rollback(directory)
     require_untouched(stores, state, accept=args.accept_shared_change)
     purge_queues(stores)
     record(stores, directory, "reset-rabbitmq")
@@ -868,6 +942,7 @@ def stage_reset_valkey(stores: Stores, stack: Stack, args: argparse.Namespace) -
     directory = state_dir(args.state_dir)
     state = load_state(directory)
     require_window()
+    refuse_after_rollback(directory)
     require_untouched(stores, state, accept=args.accept_shared_change)
     clear_valkey(stores, stack)
     record(stores, directory, "reset-valkey")
@@ -897,6 +972,7 @@ def stage_bootstrap(stores: Stores, stack: Stack, args: argparse.Namespace) -> N
     directory = state_dir(args.state_dir)
     state = load_state(directory)
     require_window()
+    refuse_after_rollback(directory)
     if done(directory, "bootstrap"):
         ok("bootstrap already completed; not running schema-init again")
         return
@@ -948,23 +1024,57 @@ def stage_start(stores: Stores, stack: Stack, args: argparse.Namespace) -> None:
     require_window()
     directory = state_dir(args.state_dir)
     state = load_state(directory)
+    refuse_after_rollback(directory)
     require_steps(directory, "bootstrap")
     if done(directory, "start"):
         fail("the stack was already started for this reset; a second `up` would run schema-init during the load")
     # One call without --no-deps, so depends_on holds every schema client behind schema-init, and no
     # client of the schema starts first. The extractor stays out of it: consumers must bind first.
+    # The ledger poll is off for this `up` only, so .env stays as it is: the setting is on the container,
+    # and any later recreate of `api` returns to the default. `after-load` does that on purpose.
     names = [service for service in APPLICATIONS if service in stack.services]
-    stores.mutate(stores.compose("up", "--detach", "--wait", "--wait-timeout", "900", *CONSUMERS, *names), timeout=960)
+    stores.mutate([*LEDGER_POLL_OFF, *stores.compose("up", "--detach", "--wait", "--wait-timeout", "900", *CONSUMERS, *names)], timeout=960)
     stores.mutate(stores.compose("up", "--detach", "--wait", "--wait-timeout", "600", EXTRACTOR), timeout=660)
     if stores.apply:
         if stores.run(stores.compose("ps", "--all", "--quiet", ANALYTICS)).stdout.strip():
             fail(f"a {ANALYTICS} container exists; remove it now, its rarity transaction must not overlap the load")
+        if ledger_poll(stores) != "false":
+            fail("the ledger poll is on: it would rebuild the ledger on a partial catalog every 6 hours in one transaction")
+        ok("the ledger poll is off for the load")
         record(stores, directory, "start")
         require_untouched(stores, state, accept=args.accept_shared_change)
     print(f"{ANALYTICS} stays stopped until the gate exits 0. Now trigger the forced run from the console (runbook, step 12).")
 
 
-def stage_status(stores: Stores, _stack: Stack, args: argparse.Namespace) -> None:
+def ledger_poll(stores: Stores) -> str:
+    return stores.run(stores.compose("exec", "-T", "api", "printenv", LEDGER_POLL_VARIABLE), check=False, timeout=60).stdout.strip()
+
+
+def stage_after_load(stores: Stores, _stack: Stack, args: argparse.Namespace) -> None:
+    """Once the gate exits 0: back to the normal ledger poll, then `insights`."""
+    directory = state_dir(args.state_dir)
+    state = load_state(directory)
+    require_window()
+    refuse_after_rollback(directory)
+    require_steps(directory, "start")
+    if int(stores.scalar(DATABASE, SQL_LOAD_COMPLETE)) < 1:
+        fail(f"{DATABASE} has no complete Discogs load")
+    complete = stores.docker_exec("neo4j", CYPHER_SHELL, CYPHER_COMPLETE).split()
+    if not complete or not complete[-1].isdigit() or int(complete[-1]) == 0:
+        fail("Neo4j has no complete extraction")
+    if int(stores.scalar(DATABASE, SQL_HANDLED_DONE)) < 1:
+        fail("the identity watcher has not finished; wait for its identity.reattach.auto row")
+    # With --no-deps: the schema has run, and neither of these may start schema-init beside the loaders.
+    stores.mutate(stores.compose("up", "--detach", "--no-deps", "--wait", "--wait-timeout", "600", "--force-recreate", "api"), timeout=660)
+    stores.mutate(stores.compose("up", "--detach", "--no-deps", "--wait", "--wait-timeout", "600", ANALYTICS), timeout=660)
+    if stores.apply:
+        if ledger_poll(stores) != "true":
+            fail("the ledger poll did not come back on")
+        ok(f"the ledger poll is on again and {ANALYTICS} is running; its computations start in about 30 seconds")
+        require_untouched(stores, state, accept=args.accept_shared_change)
+
+
+def stage_status(stores: Stores, stack: Stack, args: argparse.Namespace) -> None:
     """Read-only samples of what the runbook watches, with a hard deadline."""
     deadline = time.monotonic() + args.duration
     previous: dict[str, tuple[int, int, int]] | None = None
@@ -996,9 +1106,10 @@ def stage_status(stores: Stores, _stack: Stack, args: argparse.Namespace) -> Non
             rate = f" drain={(before - depth) / (at - previous_at):.0f}/s"
         sessions = stores.scalar(MAINTENANCE_DATABASE, SQL_SESSIONS)
         size = stores.scalar(MAINTENANCE_DATABASE, "SELECT pg_size_pretty(pg_database_size('groovemap'))")
+        free_kb = stores.utility(FREE_DISK, f"{stack.discogs_volume}:/v:ro", timeout=60, image=stack.utility_image).strip()
         print(
             f"{dt.datetime.now(UTC):%H:%M:%S} queued={depth} unacked={unacked}{rate} consumers={sum(value[2] for value in consumer.values())} "
-            f"dlq={sum(value[0] + value[1] for value in dead.values())} sessions={sessions} db={size}"
+            f"dlq={sum(value[0] + value[1] for value in dead.values())} sessions={sessions} db={size} free={int(free_kb) // (1024 * 1024)}GB"
         )
         print(stats.rstrip(), flush=True)
         previous, previous_at = queues, at
@@ -1052,6 +1163,8 @@ def stage_rollback(stores: Stores, stack: Stack, args: argparse.Namespace) -> No
     databases = own_databases(stores)
     if DATABASE not in databases and RETAINED_DATABASE not in databases:
         fail(f"neither {DATABASE} nor {RETAINED_DATABASE} exists. This is a restore from the dump")
+    if done(directory, "reset-postgres") and RETAINED_DATABASE not in databases and not done(directory, "rollback-started"):
+        fail(f"{RETAINED_DATABASE} is gone, so a finish has dropped it. Run finish again; this is not a rollback")
     require_old_pins(stores, directory)
     require_verified_copy(stores, stack, directory)
     stop_writers(stores, stack, directory, "rollback")
@@ -1123,6 +1236,7 @@ STAGES = {
     "bootstrap": stage_bootstrap,
     "start": stage_start,
     "status": stage_status,
+    "after-load": stage_after_load,
     "rollback": stage_rollback,
     "finish": stage_finish,
 }
@@ -1141,6 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--accept-shared-change", action="store_true", help="carry on past a change on the shared server, after you have looked at it"
     )
+    parser.add_argument("--rehearsal-report", help="preflight: the REPORT.json of a passing rehearsal of this commit and these images")
     parser.add_argument("--min-free-gb", type=int, default=400, help="preflight: free disk the re-ingest needs beside the retained copies")
     parser.add_argument("--schema-timeout", type=int, default=1800, help="deadline in seconds for store-check and schema-init")
     parser.add_argument("--interval", type=int, default=60, help="status: seconds between samples")

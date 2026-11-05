@@ -9,8 +9,8 @@ merge, and it gives a clean baseline on final code.
 commands below need a person on lux: no agent deletes on a host. It has been rehearsed on a
 disposable stack ([Rehearsal](#rehearsal)).
 
-Run everything as `datum` in `/opt/groovemap`. Lux sets `COMPOSE_FILE` in `.env`, so write no `-f`
-list. Each stage below is `just catalog-reset <stage>` (`scripts/catalog_reset.py`). Without
+Run everything as `datum` in `/opt/groovemap`, **inside `tmux`**: a dropped session must not take a
+stage with it. Lux sets `COMPOSE_FILE` in `.env`, so write no `-f` list. Each stage below is `just catalog-reset <stage>` (`scripts/catalog_reset.py`). Without
 `--apply` a stage prints what it would do and changes nothing, so read that output first.
 
 ## What happens to each store
@@ -141,9 +141,25 @@ Each of these must hold, or do not start:
     `rarity-scores/page` and that the promoted `catalog-api` serves it.
 - **Lux's tableinator cap is in configuration** (`gm-deployment-3qs7`), so the leak proof runs under
   the same 30 GiB limit that a recreate keeps. It shares the host with the neighbours' PostgreSQL.
-- **This rehearsal has passed on the promoted release set**, not only on the set it last ran on
-  ([Rehearsal](#rehearsal)): `just rehearse-catalog-reset --evidence <directory>`, from the commit
-  being deployed. Above all that proves the kept rows load into the `v0.7.0` schema.
+- **The rehearsal has passed on exactly this commit and these images** ([Rehearsal](#rehearsal)):
+  `just rehearse-catalog-reset --evidence <directory>` from a clean checkout of the commit being
+  deployed. Above all, that proves the kept rows load into the `v0.7.0` schema. Its `REPORT.json`
+  records the commit and every image, and `preflight` refuses without a report that matches, so copy
+  it to lux.
+- **Check whether the commit moves a store's digest.** `neo4j`, `rabbitmq` and `valkey` are pinned in
+  the Compose files, not `.env`, so a rollback's pins do not move them back:
+
+  ```bash
+  git diff <lux commit> <merge commit> -- docker-compose.yml docker-compose.prod.yml | grep -E '^[-+] +image: (neo4j|rabbitmq|valkey)'
+  ```
+
+  Not known yet, because the promoted commit does not exist. `preflight` warns as well. A moved Neo4j
+  is harmless forward, on a fresh volume. It matters on rollback, where the new image opens the old
+  store, so if it moved, read that release's store-format notes and record on the bead before the
+  go-ahead whether rollback can run on it.
+- **Agents and read-only tools stay off from step 4 to step 6.** `gm-lux-sql` opens a session on
+  `groovemap`, which stops the rename, so a stray audit query becomes an aborted stage. Say so in the
+  channels the agents use.
 - **The checkout and pins move by hand**, as in step 1 of the
   [Lux window](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v044-graph-enricher-v060):
   `git fetch origin && git checkout --detach <merge commit>`, then `python3 scripts/env-init.py`.
@@ -151,7 +167,10 @@ Each of these must hold, or do not start:
   `insights` and the extractor in the wrong order. Advancing `groovemap_ref` is a separate homelab
   change. `preflight` refuses a render that is not on the reviewed digests, below the release floor
   or without the cap.
-- **Silence the expected-container alerts** for the stack on the homelab side.
+- **Silence the expected-container alerts** for the stack on the homelab side, and expect
+  `GrooveMapBackupFailed` (critical) during the load: the nightly dump of a database under heavy
+  writes can miss its 5-second lock wait. It is not a reason to stop, but do confirm that the
+  failure is that lock wait.
 - **Start after the night's dumps finish, some time after 10:00 UTC.** No stage from `stop` to
   `start` starts in 07:30 to 10:00 UTC (08:00 to 10:00 is the nightly dump window, and the half hour
   before it keeps a stage from running into it). `groovemap-ops` starts at 01:00 Pacific and may run
@@ -173,8 +192,8 @@ with it. Here the two move together, and no old `catalog-api` ever reaches the n
 So do not start or recreate `api` between steps 4 and 11, and do not start a schema client with
 `--no-deps` in steps 10 and 11: `schema-init` reaches the database through `depends_on`, which also
 holds every client behind it. The tool does this. A `--no-deps` start is correct in two places only:
-`insights` in step 14, on a schema that has already run, and [Rollback](#rollback), where the old
-database keeps the schema it has.
+`after-load`, on a schema that has already run, and [Rollback](#rollback), where the old database
+keeps the schema it has.
 
 ## Procedure
 
@@ -214,7 +233,7 @@ the only copy that survives `finish`.
 
 ```bash
 umask 077; W="$HOME/gm-catalog-reset-$(date -u +%Y%m%d)"; mkdir -m 0700 "$W"
-just catalog-reset preflight --state-dir "$W"
+just catalog-reset preflight --state-dir "$W" --rehearsal-report <path to REPORT.json>
 ```
 
 Write `$W` down: the run takes days, and later stages and rollback need it in a new shell. `stop`
@@ -225,7 +244,8 @@ what each service is running, which is rollback's record of the old pins.
 Read-only, with the stack still up. It checks the window, the admin session (`docker exec postgres
 psql -U datum`), that the running stack really is connected to that server, that `groovemap` is owned
 by `groovemap` and no retained copy exists, no dump is running, the reviewed digests, the
-[release floor](#before-the-day) and the tableinator cap, the [empty tables](#what-is-kept), the
+[release floor](#before-the-day), the tableinator cap, a rehearsal report for this commit and these
+images, the [empty tables](#what-is-kept), the
 four dump files with their checksums, and at least 400 GB free. It prints every target and the other
 databases by name. Stop on anything unexpected.
 
@@ -273,10 +293,10 @@ copy exists. If it stops part way, see [Rollback](#rollback).
 just catalog-reset reset-neo4j --state-dir "$W" --apply
 ```
 
-Refuses until `reset-postgres` has completed. Stops Neo4j, copies the volume, compares file count and bytes, records the verified copy, and only
-then removes the container and the volume. Safe to run again: an interrupted copy starts over, a
+compares file count and bytes, records the copy the container and the volume. Safe to run again: an interrupted copy starts over, a
 recorded copy is not repeated. A fresh volume takes its password from `secrets/neo4j_password.txt` at
-first boot.
+first boot. "Verified" here and below means the same file count and the same total bytes. It is not a
+content hash.
 
 ### 8. RabbitMQ
 
@@ -319,6 +339,14 @@ just catalog-reset start --state-dir "$W" --apply
 every computation 30 seconds after it starts, and its rarity transaction blocks vacuum for the
 whole database. The extractor logs `already processed, skipping`, which is expected, and waits.
 
+**The ledger poll is off for the load.** While writes continue, it would rebuild the Identity Ledger
+on a partial catalog every 6 hours, in one transaction (about 6 to 7 minutes each at full size), and
+a transaction like that holds back vacuum across the database during the heaviest writes. `start`
+passes `IDENTITY_LEDGER_REFRESH_ENABLED=false` for its `up` only, so `.env` does not change, and it
+refuses to continue if the poll is on. The watcher's own refresh after the re-attachment builds the
+ledger at the end. Until then the works list and density answer `503`, which nobody can use during
+a load anyway.
+
 If its log instead shows a new version, a newer dump has been published and the extractor is already
 downloading and processing it without a trigger. That is a valid run: skip step 12.
 
@@ -344,7 +372,7 @@ just catalog-reset status --interval 300 --duration 3600
 ```
 
 Read-only. Each sample prints queue depth, drain rate, consumers, dead letters, sessions on
-`groovemap` and its size, and `docker stats` for `tableinator`, `graphinator` and Neo4j. Grafana's
+`groovemap`, its size, free disk (`free=`), and `docker stats` for `tableinator`, `graphinator` and Neo4j. Grafana's
 ingestion and consumers dashboards show the same series over time.
 
 | Watch | Healthy | Stop and report when |
@@ -354,7 +382,7 @@ ingestion and consumers dashboards show the same series over time.
 | Queue rate | `drain` above zero while `queued` is above zero | `drain` is 0 for 30 minutes with `queued` above zero and consumers attached |
 | DLQs | `dlq=0` | It grows at all. Each DLQ is capped at 50,000 messages or 512 MiB with drop-head, so a long run can lose dead letters |
 | `insights` | No container | One appears. Remove it with `docker compose rm --force --stop insights` |
-| Disk | At least 200 GB free | Below 200 GB |
+| Disk | `free=` at least 200 GB | Below 200 GB |
 | Shared server | Neighbours' latency unchanged | Any neighbour reports trouble: stop the loader, not the neighbour |
 
 **Task count:** the leak was retained batch handlers, and the loader exports no asyncio task count.
@@ -362,7 +390,8 @@ ingestion and consumers dashboards show the same series over time.
 memory slope remains the direct signal. Exporting a real count belongs to the loader.
 
 The nightly dumps run in this time, against a partly loaded database, and the operator accepts that
-by starting: do not stop them, and expect them to take longer and add I/O. Do not run a schema
+by starting: do not stop them, and expect them to take longer, add I/O, and possibly raise
+`GrooveMapBackupFailed`. Do not run a schema
 change, `schema-init` or `just deploy` while the load runs.
 
 If the extractor crashes, `restart: always` brings it back and it resumes from its marker. Do not
@@ -387,8 +416,11 @@ On lux the graph finished first, but the leak fix may change that order. If `gm_
 Only then:
 
 ```bash
-docker compose up --detach --no-deps --wait insights
+just catalog-reset after-load --state-dir "$W" --apply
 ```
+
+It refuses until PostgreSQL's load, the graph's completion and the watcher's row are all there. It
+recreates `api` so the ledger poll is back on, confirms that, and starts `insights`.
 
 It runs every computation in turn, 30 seconds after starting, rarity near the end. Expect 1 to 1.5
 hours for rarity alone. Confirm with `💾 Release rarity scores stored` in its log and:
@@ -430,7 +462,9 @@ All of these, recorded on the bead with before and after numbers, before `finish
 
 ## Finish
 
-Once the operator accepts the proof:
+**Once the operator accepts the proof, and at a quiet moment for the neighbours.** `DROP DATABASE`
+forces a checkpoint and unlinks 185 GB on the shared server, so pick a time when nothing else there
+is busy, and not 07:30 to 10:00 UTC.
 
 ```bash
 just catalog-reset finish --state-dir "$W"
@@ -439,12 +473,14 @@ rm -rf "$W"
 ```
 
 It refuses unless `groovemap` has a complete Discogs load and Neo4j has a complete extraction, and it
-refuses after a rollback that did not finish. Keep the pre-reset dump until the next
+refuses after a rollback that did not finish. If it dies part way, run it again: it is safe to repeat,
+and `rollback` refuses in that state, because the retained database is gone. Keep the pre-reset dump until the next
 good monthly restore drill. Follow the Lux window's note on the first full-stack deploy afterwards.
 
 ## Rollback
 
 Works at any point after `capture` and before `finish`, and can be run again if it stops part way.
+Once it has started, every forward stage refuses that `$W`.
 It changes nothing in the stores until it has checked the old pins and the retained graph.
 
 1. **Put the old pins back, in `.env` only.** Replace the `*_IMAGE` lines from the backup that
@@ -530,6 +566,7 @@ just rehearse-catalog-reset --evidence <directory>
 
 Run 2026-11-05 on an arm64 Mac under emulation, on the pins of the time, with the
 `scripts/rehearse_catalog_reset.py` in this commit. **63 of 63 checks passed, in 18 minutes.** It uses the operator's own stages.
+Its `REPORT.json` records the commit, whether the checkout was clean, and each image.
 The stack is the Lux file set against a shared PostgreSQL 18 with TLS, holding two neighbour databases
 and a neighbour session that stays open throughout. A local server answers as `data.discogs.com`, so
 the released extractor's real listing, checksum and reuse logic ran against a dump of 304 records.
@@ -547,6 +584,7 @@ the released extractor's real listing, checksum and reuse logic ran against a du
 | Rollback can run again | A completed rollback with its last record removed, so it re-ran the graph copy | Finished, and the same catalog |
 | Rollback ignores an unverified copy | Simulated: a hand-made partial retained volume with no copy recorded | The intact graph was kept and the partial volume ignored |
 | The guards stop | Rows in a table it cannot carry, a straggler session, a second capture, `finish` before the load | Each refused, and nothing changed |
+| The ledger poll | On, then off for the load | Off during the load, the ledger built by the watcher anyway, on again after `after-load` |
 | Rarity | No rows | `completed`, 160 rows |
 
 It found three real problems that reading had not: the dump check matched its own query text, an
@@ -565,6 +603,8 @@ pass writes nodes after the gate reports complete.
 - Real interruptions. No copy was killed part way: the partial cases above are constructed, and the
   crash paths are covered by the scripted tests.
 - Lux's real override: its proxy, shared network and collector were not used.
+- Its report vouches for that run's commit and images only. The one behind these numbers is not the
+  release set, so `preflight` on lux refuses it, as intended.
 - A real Docker daemon restart. Stopped writers are removed so that none can return, and the
   rehearsal checks that none remain, but the daemon was not restarted. `insights` and the stores were
   not tested through one, and a restart during the load would restart whatever is running.
@@ -600,5 +640,10 @@ It rejected both earlier versions. Fixed since:
   a partial projection.
 
 85 mutations of the guards, including every kind the review named, now fail
-`tests/deploy/test_catalog_reset.py`. The final version has not had a third review pass, and its
-limits are the list above.
+`tests/deploy/test_catalog_reset.py`.
+
+The bead's own reviewer, on `d6afe8d`, found the design sound and bounced it on
+smaller points, now fixed: a rollback after a dead `finish` is refused and says to run `finish` again,
+every forward stage refuses once a rollback has started, `capture` re-checks the user tables after
+the stop, `preflight` needs a matching rehearsal report, the ledger poll is off for the load, and
+`$W`'s records are fsynced and replaced atomically. Its limits are the list above.

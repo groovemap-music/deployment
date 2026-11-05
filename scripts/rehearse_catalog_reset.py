@@ -51,6 +51,7 @@ PUBLISHED = ("rabbitmq", "neo4j", "valkey", "api", "dashboard", "explore")
 MONITORING = ("grafana", "victoria-metrics", "victoria-traces", "cadvisor", "node-exporter")
 CONSUMERS = ("tableinator", "graphinator")
 APPLICATIONS = ("api", "dashboard", "explore")
+REPORT_SERVICES = ("schema-init", "api", "tableinator", "graphinator", "extractor-discogs", "insights", "neo4j", "rabbitmq", "valkey")
 MIRROR_IMAGE = "python:3.14.7-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6"
 
 
@@ -469,6 +470,11 @@ class Rehearsal:
             path.chmod(0o600)
         shutil.copy2(self.tls / "mirror-ca.crt", secrets_dir / "postgres_ca.crt")
         self.run(["bash", "scripts/create-secrets.sh"], timeout=60)
+        # What this rehearsal vouches for: `preflight --rehearsal-report` checks both on the day.
+        self.report["commit"] = self.run(["git", "rev-parse", "HEAD"], cwd=ROOT).stdout.strip()
+        self.report["dirty"] = self.run(["git", "status", "--porcelain"], cwd=ROOT).stdout.strip() != ""
+        services = json.loads(self.compose("config", "--format", "json", timeout=60).stdout)["services"]
+        self.report["images"] = {service: services[service]["image"] for service in REPORT_SERVICES}
         # A VM's file sharing (Colima virtiofs) does not show the host owner to the container, so a
         # 0600 bind mount is unreadable as the same UID. Throwaway values in a throwaway copy.
         if sys.platform == "darwin":
@@ -666,9 +672,13 @@ class Rehearsal:
         )
         self.check(after["checksum"] > downloads["checksum"], "the forced run did re-verify against the published CHECKSUM")
 
-    def rarity_run(self) -> None:
-        self.say("insights after the gate: the rarity run")
-        self.compose("up", "-d", "--no-deps", "--wait", "--wait-timeout", "300", "insights", timeout=360)
+    def after_load(self) -> None:
+        self.say("After the gate: the ledger poll back on, then insights and the rarity run")
+        off = self.compose("exec", "-T", "api", "printenv", "IDENTITY_LEDGER_REFRESH_ENABLED", timeout=30).stdout.strip()
+        self.check(off == "false", "the ledger poll stayed off for the load")
+        refreshed = self.admin_sql("groovemap", "SELECT count(*) FROM public.identity_ledger_refresh_state")
+        self.check(refreshed == "1", "the watcher's own refresh built the ledger with the poll off")
+        self.reset("after-load", state=self.state)
         sql = "SELECT status FROM insights.computation_log WHERE insight_type = 'release_rarity' ORDER BY started_at DESC LIMIT 1"
         self.wait("release_rarity to finish", lambda: self.admin_sql("groovemap", sql) in ("completed", "failed"), 600)
         status = self.admin_sql("groovemap", sql)
@@ -734,7 +744,7 @@ class Rehearsal:
         self.check(after["database_oid"] != before["database_oid"], "groovemap is a new database")
         self.check(self.accounts() == before_accounts, "both accounts are still byte-identical after the re-ingest")
         self.login()
-        self.rarity_run()
+        self.after_load()
         self.check(self.neighbours() == before_neighbours, "neighbour databases are byte-identical and their session never dropped")
         self.say("Rollback")
         self.reset("rollback", state=self.state)

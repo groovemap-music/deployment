@@ -26,7 +26,8 @@ LEDGER_DEFAULTS = {
 
 def test_base_api_enables_the_ledger_refresh_poll() -> None:
     api = _base_compose()["services"]["api"]
-    assert api["environment"]["IDENTITY_LEDGER_REFRESH_ENABLED"] == "true"
+    # On by default. Only the catalog reset's `start` stage passes false, for the length of a load.
+    assert api["environment"]["IDENTITY_LEDGER_REFRESH_ENABLED"] == "${IDENTITY_LEDGER_REFRESH_ENABLED:-true}"
 
 
 def test_prod_overlay_does_not_switch_the_poll_off() -> None:
