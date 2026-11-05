@@ -99,15 +99,15 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader `v0.4.3` and graph enricher `v0.5.0`;
+Matching consumer and schema images (Discogs SQL loader `v0.4.4` and graph enricher `v0.6.0`;
 MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.3`; see
-[the v0.6.3 and v0.4.3 promotion](#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04)):
+[the v0.4.4 and v0.6.0 promotion](#promotion-of-discogs-sql-loader-v044-and-discogs-graph-enricher-v060-2026-11-05)):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:4b4bd73446996751f703a65b8599b9cc2d5d3e76579bf2afd5cdd5524785b7a1` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:9bb930d1f5aa6687d774c1e981dfdbae50086a1d88e1d04110a58326114e32c3` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
@@ -358,7 +358,43 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
+### Promotion of discogs-sql-loader v0.4.4 and discogs-graph-enricher v0.6.0 (2026-11-05)
+
+This replaces the `discogs-sql-loader` `v0.4.3` and `discogs-graph-enricher` `v0.5.0` pins of the
+[v0.6.3 record](#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04), which stays as the record of what was reviewed first. `database-schema`
+stays at `v0.6.3` (`sha256:4b4bd73446996751f703a65b8599b9cc2d5d3e76579bf2afd5cdd5524785b7a1`).
+`v0.4.4` carries the leak fix and `v0.6.0` the stats refresh. **Do not use `v0.4.3` or `v0.5.0`
+for a new deploy**; they remain only as rollback targets (below).
+
+Each digest is the index digest of the released tag on GHCR. `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for both. The `linux/amd64` image labels were read back:
+`org.opencontainers.image.version`, `.revision` and `.source` match the release, each tag's commit
+on GitHub equals the label revision, and each image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `discogs-sql-loader:v0.4.4` | `sha256:ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278` | `01524449a40cba615bb89748ed7d11ab938929db` | `v0.4.3` — `sha256:9bb930d1f5aa6687d774c1e981dfdbae50086a1d88e1d04110a58326114e32c3` |
+| `discogs-graph-enricher:v0.6.0` | `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab` | `ac67d919e3f86114a44914824f946bed5b5017b3` | `v0.5.0` — `sha256:0baf478b8203c19d095dda1ccf1cb7fbf7957ad763234da9c6534a660f18f79b` |
+
+**Superseded:** `discogs-sql-loader` `v0.4.3` and `discogs-graph-enricher` `v0.5.0`. Their records
+below stay for history. `v0.4.2`, `v0.4.1` and `v0.6.1`/`v0.6.2` remain unusable as before.
+
+Rollback is a pin change back to the digests in the table (or to the pins in the
+`.env.<timestamp>.bak` that `env-init` leaves, which hold what lux actually ran), recreating only
+the affected service with `up -d --no-deps`. `v0.6.0` writes Neo4j properties (`stats_version`,
+`Artist.release_count`, `HAS_STYLE` edges) that `v0.5.0` ignores; rolling back does not remove them.
+Never run an older `schema-init`.
+
+Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
+digests reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
+needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
+recorded here before merge to main. Run URL: [42077610387](https://github.com/groovemap-music/deployment/actions/runs/42077610387) (passed on `fb902f5`). See the
+[Lux upgrade](homelab.md#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063) for the window.
+
 ### Promotion of database-schema v0.6.3 and discogs-sql-loader v0.4.3 (2026-11-04)
+
+> **Partly superseded** by the [v0.4.4 and v0.6.0 promotion](#promotion-of-discogs-sql-loader-v044-and-discogs-graph-enricher-v060-2026-11-05): the `discogs-sql-loader` `v0.4.3` and `discogs-graph-enricher` `v0.5.0` pins below are now rollback targets only. The `database-schema` `v0.6.3` pin is current.
 
 This replaces the pins of the promotion below, which stays as the record of what was reviewed
 first. **Do not use `discogs-sql-loader` `v0.4.1`** (`sha256:9a1bc0108afadfc945606098bde4950bc42b53148bf3e9ca07c50f71feea669f`): it has a regression
@@ -396,7 +432,7 @@ Evidence still owed (not produced by this change): the combined Linux `smoke-hom
 digests (schema `v0.6.3`, loader `v0.4.3`) reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
 needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
 recorded here before merge to main. Run URL: [41928210952](https://github.com/groovemap-music/deployment/actions/runs/41928210952) (passed on `16fb1d1`: gate 0, 37 passes, 0 false alarms, 4 `extraction_complete`). See the
-[Lux upgrade](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v043-graph-enricher-v050) for the window.
+[Lux upgrade](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v044-graph-enricher-v060) for the window.
 
 ### Promotion of database-schema v0.6.1, discogs-sql-loader v0.4.1, discogs-graph-enricher v0.5.0 and graph-explorer v0.3.1 (2026-11-04)
 
@@ -438,7 +474,7 @@ exited 0. Everything was removed afterwards. This does not stand in for the comb
 
 Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
 digests is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) and needs a push, which
-this change does not do. See the [Lux upgrade](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v043-graph-enricher-v050)
+this change does not do. See the [Lux upgrade](homelab.md#lux-upgrade-schema-init-v063-sql-loader-v044-graph-enricher-v060)
 for the window.
 
 Rolling back a consumer is a pin change to its rollback digest above for that image alone.
