@@ -156,6 +156,20 @@ smoke-released:
 discogs-import-status *args:
     {{operator_python}} scripts/discogs_import_status.py "$@"
 
+# The one-off catalog reset and re-ingest (docs/catalog-reset.md). Each stage only prints what it
+# would do unless given --apply. Destructive and operator-run only: never part of `check`, and never
+# run without the operator's explicit go-ahead for that window.
+[positional-arguments]
+catalog-reset *args:
+    {{operator_python}} scripts/catalog_reset.py "$@"
+
+# Rehearses docs/catalog-reset.md end to end on a disposable stack with a shared PostgreSQL beside
+# neighbour databases: populate, reset, forced re-ingest, rollback, second reset, finish. Removed by
+# label on every exit. Starts containers, so it is never part of `check`.
+[positional-arguments]
+rehearse-catalog-reset *args: _require-uv
+    uv run python scripts/rehearse_catalog_reset.py "$@"
+
 down:
     docker compose down
 

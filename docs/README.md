@@ -18,6 +18,7 @@ architecture overview.
 ## Operations and assurance
 
 - [Maintenance](maintenance.md)
+- [Catalog reset and fresh ingest](catalog-reset.md): the one-off reset of imported data on lux, what is kept, rollback and proof.
 - [October 2026 operations console rollout](rollout-2026-10-operations-console.md): releasing and deploying the console redesign, the broker-stats retirement, source-routed triggers and role-based health ports.
 - [Monitoring](monitoring.md)
 - [Observability](observability.md)
