@@ -847,6 +847,7 @@ def stage_reset_postgres(stores: Stores, _stack: Stack, args: argparse.Namespace
     directory = state_dir(args.state_dir)
     state = load_state(directory)
     require_window()
+    refuse_after_rollback(directory)
     if state["keep_user_rows"] < 1:
         fail("the capture holds no users; refusing to reset")
     if done(directory, "reset-postgres"):

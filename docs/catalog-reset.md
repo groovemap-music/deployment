@@ -293,8 +293,9 @@ copy exists. If it stops part way, see [Rollback](#rollback).
 just catalog-reset reset-neo4j --state-dir "$W" --apply
 ```
 
-compares file count and bytes, records the copy the container and the volume. Safe to run again: an interrupted copy starts over, a
-recorded copy is not repeated. A fresh volume takes its password from `secrets/neo4j_password.txt` at
+Refuses until `reset-postgres` has completed. Stops Neo4j, copies the volume, compares file count and
+bytes, records the copy, and only then removes the container and the volume. Safe to run again: an
+interrupted copy starts over, a recorded copy is not repeated. A fresh volume takes its password from `secrets/neo4j_password.txt` at
 first boot. "Verified" here and below means the same file count and the same total bytes. It is not a
 content hash.
 

@@ -1239,6 +1239,22 @@ def test_no_forward_stage_runs_once_a_rollback_has_started(state: Path, stack: A
     assert "volume rm" not in host.text()
 
 
+def test_reset_postgres_cannot_swap_a_rolled_back_database_out_again(state: Path, stack: Any) -> None:
+    (state / "done-rollback-started").write_text("")
+    host = Host()
+    with pytest.raises(reset.ResetError, match="rolled back"):
+        run_stage(reset.stage_reset_postgres, host, stack, state)
+    assert "RENAME" not in host.text()
+
+
+def test_after_load_starts_insights_without_schema_init(state: Path, stack: Any) -> None:
+    """The loaders are up, so `depends_on` must not run schema-init beside them."""
+    host = after_load_host(state)
+    run_stage(reset.stage_after_load, host, stack, state)
+    insights = next(call for call in host.calls if call[-1] == "insights" and "up" in call)
+    assert "--no-deps" in insights
+
+
 def test_rollback_after_a_finish_that_died_says_run_finish_again(state: Path, stack: Any) -> None:
     (state / "done-reset-postgres").write_text("")
     (state / "done-neo4j-copied").write_text("9 900")
