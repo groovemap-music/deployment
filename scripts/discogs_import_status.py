@@ -167,6 +167,10 @@ class ProbeError(RuntimeError):
     """A store could not be asked, or its answer could not be read."""
 
 
+class ProbeExit(ProbeError):
+    """The probe command ran and exited non-zero (a query error, as opposed to a timeout or a missing docker)."""
+
+
 @dataclass(frozen=True)
 class LatchRow:
     """One `loader_extraction_latch` row for loader 'discogs'."""
@@ -554,7 +558,7 @@ class Compose:
         if completed.returncode != 0:
             message = (completed.stderr or completed.stdout or "").strip().splitlines()
             reason = message[-1] if message else "no output"
-            raise ProbeError(f"{service}: exit {completed.returncode}: {reason}")
+            raise ProbeExit(f"{service}: exit {completed.returncode}: {reason}")
         return completed.stdout
 
     def psql(self, sql: str) -> str:
@@ -569,15 +573,30 @@ class Compose:
 
 
 def probe_latch(compose: Compose) -> tuple[LatchRow, ...]:
-    latch_present, job_present = parse_relations(compose.psql(RELATIONS_SQL))
-    if not latch_present:
-        raise ProbeError("public.loader_extraction_latch does not exist (schema-init not run, or a database-schema release before the latch)")
-    sql = LATCH_SQL.format(
+    """Read the latch with the refresh job joined in: one psql call, which is all it takes on a current schema.
+
+    Only if that query fails does it spend more calls to find out why (`RELATIONS_SQL`): a schema without the latch is
+    reported as such, one without the refresh job reads the latch alone, and any other failure is re-raised as it was.
+    """
+    try:
+        return parse_latch(compose.psql(_latch_sql(job_present=True)))
+    except ProbeExit as failure:
+        latch_present, job_present = parse_relations(compose.psql(RELATIONS_SQL))
+        if not latch_present:
+            raise ProbeError(
+                "public.loader_extraction_latch does not exist (schema-init not run, or a database-schema release before the latch)"
+            ) from failure
+        if job_present:
+            raise
+        return parse_latch(compose.psql(_latch_sql(job_present=False)))
+
+
+def _latch_sql(job_present: bool) -> str:
+    return LATCH_SQL.format(
         job_state="job.state" if job_present else "NULL",
         job_error="job.last_error" if job_present else "NULL",
         job_join=JOB_JOIN if job_present else "",
     )
-    return parse_latch(compose.psql(sql))
 
 
 def probe_graph(compose: Compose) -> tuple[GraphCompletion, ...]:

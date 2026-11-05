@@ -602,7 +602,7 @@ def test_the_gate_reads_the_external_database_through_the_store_check_image() ->
     assert report.status is Status.COMPLETE
     files = [fake.calls[0][index + 1] for index, word in enumerate(fake.calls[0]) if word == "-f"]
     assert files == ["docker-compose.yml", "docker-compose.prod.yml", POSTGRES_OVERLAY, VALKEY_OVERLAY]
-    assert [call[call.index("-T") + 1] for call in fake.calls] == ["store-check-postgres", "store-check-postgres", "neo4j", "rabbitmq"]
+    assert [call[call.index("-T") + 1] for call in fake.calls] == ["store-check-postgres", "neo4j", "rabbitmq"]
 
 
 def test_an_unreachable_external_store_cannot_be_determined() -> None:
