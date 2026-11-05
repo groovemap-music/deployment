@@ -858,7 +858,6 @@ LOG_LEVEL=WARNING
 
 **Debug Level Features**:
 
-- Neo4j query logging with parameters
 - PostgreSQL query logging
 - RabbitMQ message details
 - Cache hit/miss statistics

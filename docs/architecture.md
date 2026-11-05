@@ -1081,7 +1081,7 @@ See [Monitoring](monitoring.md) for details.
 |  **Style**  |     757      |
 |  **Genre**  |      16      |
 
-**Relationships: ~134.3 million**
+**Relationships: ~263 million** (counted on lux, 2026-11-04; the per-type table below predates this count and sums to less)
 
 | Relationship Type |     Count     | Description                        |
 | :---------------: | :-----------: | :--------------------------------- |

@@ -19,8 +19,8 @@ This is the procedure behind the query performance audit; the dated results live
 | Neo4j: every query over a threshold | **not available**: the query log is Enterprise-only | catalog-api instrumentation, see the audit |
 
 Neo4j runs the Community edition here (`neo4j:<version>-community` in `docker-compose.yml`), and the operations manual marks
-the query log as Enterprise-only. `NEO4J_db_logs_query_*` in the base and production overlays therefore should record nothing (confirm on lux; the audit gives the check); do not
-rely on it. Slow Cypher has to be measured from the API side or profiled by hand.
+the query log as Enterprise-only. `NEO4J_db_logs_query_*` settings were therefore removed from the base and production overlays; `/logs/query.log` on lux is 0 bytes.
+Do not rely on a query log. Slow Cypher has to be measured from the API side or profiled by hand.
 
 ## Procedure
 

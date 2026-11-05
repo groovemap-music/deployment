@@ -106,19 +106,19 @@ services:
       - "postgres"
       # --- Memory ---
       - "-c"
-      - "shared_buffers=2GB"
+      - "shared_buffers=6GB"
       - "-c"
-      - "effective_cache_size=6GB"
+      - "effective_cache_size=18GB"
       - "-c"
       - "work_mem=64MB"
       - "-c"
-      - "maintenance_work_mem=512MB"
+      - "maintenance_work_mem=1GB"
       - "-c"
       - "huge_pages=try"
       - "-c"
       - "wal_buffers=64MB"
       - "-c"
-      - "max_wal_size=4GB"
+      - "max_wal_size=8GB"
       - "-c"
       - "min_wal_size=1GB"
       - "-c"
@@ -201,13 +201,13 @@ services:
     environment:
       JAVA_TOOL_OPTIONS: '--enable-native-access=ALL-UNNAMED'
       NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TRANSACTION_MEMORY_MAX:-8G}
-      # --- Memory: heap 8G + page cache 16G = ~24G (fits 25GB store in cache); the transaction
+      # --- Memory: heap 8G + page cache 16G = ~24G (the 263M-relationship graph on lux runs a larger page cache via NEO4J_PAGECACHE_SIZE); the transaction
       # cap must stay below the heap or it bounds nothing (`just deploy` sizes all four) ---
       NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_SIZE:-8g}
       NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_SIZE:-8g}
       NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE_SIZE:-16g}
       NEO4J_server_memory_pagecache_flush_buffer_size__in__pages: '512'
-      # --- JVM Tuning for large heap with 131M relationships ---
+      # --- JVM Tuning for large heap with 263M relationships (measured on lux 2026-11-04) ---
       NEO4J_server_jvm_additional: >-
         -XX:+UseG1GC
         -XX:G1HeapRegionSize=16m
@@ -227,9 +227,8 @@ services:
       NEO4J_db_checkpoint_iops_limit: '4000'
       NEO4J_db_checkpoint_interval_time: '15m'
       NEO4J_db_checkpoint_interval_tx: '1000000'
-      # --- Query Logging ---
-      NEO4J_db_logs_query_threshold: '5s'
-      NEO4J_db_logs_query_plan__description__enabled: 'true'
+      # No query-log settings: the query log is Enterprise-only and this stack runs Community,
+      # so db.logs.query.* is inert (see docs/query-performance-baseline.md).
       NEO4J_db_transaction_timeout: '600s'
       NEO4J_db_transaction_bookmark__ready__timeout: '30s'
       NEO4J_dbms_cypher_min__replan__interval: '5s'

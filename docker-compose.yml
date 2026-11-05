@@ -261,8 +261,6 @@ services:
       NEO4J_apoc_import_file_use__neo4j__config: 'true'
       NEO4J_AUTH: neo4j/groovemap
       NEO4J_db_checkpoint_iops_limit: '2000'
-      NEO4J_db_logs_query_enabled: 'INFO'
-      NEO4J_db_logs_query_threshold: '10s'
       NEO4J_db_transaction_timeout: '120s'
       NEO4J_dbms_logs_debug_level: WARN
       NEO4J_dbms_memory_transaction_total_max: 6G

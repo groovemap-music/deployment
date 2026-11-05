@@ -93,8 +93,8 @@ The base stack raises `max_wal_size` to 4 GiB and sets
 
 | Area | Production value |
 | --- | --- |
-| Memory | `shared_buffers=2GB`, `effective_cache_size=6GB`, `work_mem=64MB`, `maintenance_work_mem=512MB` |
-| WAL | `wal_buffers=64MB`, `min_wal_size=1GB`, `max_wal_size=4GB` |
+| Memory | `shared_buffers=6GB`, `effective_cache_size=18GB`, `work_mem=64MB`, `maintenance_work_mem=1GB` |
+| WAL | `wal_buffers=64MB`, `min_wal_size=1GB`, `max_wal_size=8GB` |
 | Parallelism | 4 workers per gather, 8 total workers, 4 maintenance workers |
 | Connections | `max_connections=100` |
 | Diagnostics | `pg_stat_statements`, queries over 1 second, checkpoints, and temp files logged |
@@ -115,7 +115,10 @@ limit to 48 GiB and the transaction-memory cap to 8 GiB through
 `just deploy` sizes all four from the host's memory, with the cap at 70% of the heap.
 
 The production overlay also raises checkpoint IOPS, expands the Bolt thread
-pool, logs queries over five seconds, and sets a ten-minute transaction timeout.
+pool, and sets a ten-minute transaction timeout. It sets no query-log options: Neo4j
+Community has no query log (Enterprise-only), so slow Cypher is measured from the API side or
+with `PROFILE` (see `query-performance-baseline.md`). The graph holds about 263 million
+relationships (counted on lux, 2026-11-04), which is what the heap and page-cache sizing must serve.
 Heap, page cache, transaction memory, and the container limit must fit together;
 render the actual environment rather than adding the documented defaults.
 
