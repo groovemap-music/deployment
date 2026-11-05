@@ -295,8 +295,9 @@ Every ledger payload carries `refreshed_at`, the
 instant the last refresh started, so a console shows how old the data is. A failed refresh is
 logged with `alert=identity_ledger_refresh_failed` and keeps the previous rows. See
 [`catalog-api`'s README](https://github.com/groovemap-music/catalog-api/blob/main/api/README.md#keeping-the-identity-ledger-fresh).
-The variables are `catalog-api` settings, not Compose interpolation inputs; change one with a
-reviewed override file.
+These are `catalog-api` settings, not Compose interpolation inputs; change one with a reviewed
+override file. `IDENTITY_LEDGER_REFRESH_ENABLED` is the exception: the [catalog reset](catalog-reset.md)
+passes it to Compose to turn the poll off for the length of one load.
 
 ### Structured log environment
 

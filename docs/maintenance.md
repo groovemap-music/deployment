@@ -1211,6 +1211,11 @@ that server's backups, upgrades, restarts and monitoring belong to its operator,
 PostgreSQL row above is their evidence to record. This stack neither backs it up nor measures
 its disk. See [Existing PostgreSQL and Valkey](homelab.md#existing-postgresql-and-valkey).
 
+## Catalog reset
+
+A full reset of imported data with one fresh ingest is a separate, operator-approved procedure:
+see [Catalog reset and fresh ingest](catalog-reset.md).
+
 ## One-time data migrations
 
 The retained scripts default to read-only counts and require `--apply` to

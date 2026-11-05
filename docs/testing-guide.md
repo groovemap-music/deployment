@@ -365,6 +365,16 @@ across all of its runs, not distinct volumes. The MusicBrainz producer remains t
 stand-in, so this proves phase-2 enablement and data-volume ownership, not a full MusicBrainz
 import.
 
+## The catalog-reset rehearsal
+
+`just rehearse-catalog-reset --evidence <directory>` (`scripts/rehearse_catalog_reset.py`) runs
+[the catalog reset](catalog-reset.md) end to end with the operator's own tool, on a disposable stack:
+a shared PostgreSQL holding neighbour databases, the Lux Compose file set, and a local stand-in for
+`data.discogs.com` serving a small dump. It populates the stack, resets it, re-ingests, rolls back,
+then resets again through `finish`, and writes `REPORT.json`. It runs on Linux or on an arm64 Mac
+under emulation, is removed by Compose label on every exit, and is never part of `just check` or CI.
+`tests/deploy/test_catalog_reset.py` pins the tool's guards in `just check`.
+
 ## Live and performance checks
 
 The following commands are intentionally outside `just check` and CI because
