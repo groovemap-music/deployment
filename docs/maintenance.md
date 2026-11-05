@@ -36,6 +36,14 @@ The October 2026 console, broker-stats, trigger-source and health-port releases
 are coupled and have their own ordering constraints; release and roll them out
 with [the October 2026 operations console rollout](rollout-2026-10-operations-console.md).
 
+### Paired release floors
+
+`PAIRED_IMAGE_FLOORS` in `scripts/check-images.py` ties releases that only work together, and
+`just check` refuses a reviewed set that breaks a pair. When promoting `gm-discogs-sql-loader-gna2`,
+replace the two `UNRELEASED` values with the first `discogs-sql-loader` release that writes
+`purge_vetoed` and the first `database-schema` release that has the column. Without that schema the
+loader declines the latch and reports degraded. Filling in only one of the two is refused.
+
 ## Wave-2 image promotion (identity and activity)
 
 The native-identity and first-party-events program
