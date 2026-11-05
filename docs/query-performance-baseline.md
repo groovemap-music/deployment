@@ -40,6 +40,17 @@ rely on it. Slow Cypher has to be measured from the API side or profiled by hand
    psql -v ON_ERROR_STOP=1 -v reader=<reader> -d groovemap -f scripts/pg-stat-statements.sql
    ```
 
+   **Two security conditions.** (1) `pg_stat_statements` keeps the text of utility statements by default
+   (`pg_stat_statements.track_utility = on`), and on PostgreSQL 18 that text includes the literal in `CREATE ROLE ... PASSWORD '...'` and
+   `ALTER ROLE ... PASSWORD '...'` (verified on `postgres:18-alpine`: the plaintext password is readable in the view). The script therefore
+   refuses to run while it is on. Before running it, the server owner sets it off, which needs a reload and no restart
+   (`ALTER SYSTEM SET pg_stat_statements.track_utility = off; SELECT pg_reload_conf();`), and decides separately whether to purge entries
+   already collected (`pg_stat_statements_reset()` is a separate approval, and any password set while tracking was on should be rotated).
+   The production overlay does not set it, because changing the Postgres command line restarts the service; add
+   `-c pg_stat_statements.track_utility=off` to it at the next planned restart. (2) `pg_read_all_stats` is cluster-wide: it shows every
+   role's statements in every database. Grant it only to a dedicated reporting role, never to an application or loader role, and undo it with
+   `REVOKE pg_read_all_stats FROM <reader>`.
+
    The script checks `shared_preload_libraries` first (no restart is needed, and it refuses to create views that would stay
    empty), runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` and `GRANT pg_read_all_stats TO <reader>` in one transaction, and
    prints the installed version and whether the reader holds the grant. `pg_read_all_stats` lets the report see statements run by

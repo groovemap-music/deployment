@@ -8,6 +8,9 @@
 --   psql -v ON_ERROR_STOP=1 -v reader=<role that runs the report> -d groovemap -f scripts/pg-stat-statements.sql
 --
 -- `reader` must be passed; without it psql stops here instead of granting to a guessed role.
+-- pg_read_all_stats is CLUSTER-WIDE, not per database: it shows the text and timings of every role's
+-- statements in every database on the server. Grant it only to a dedicated reporting role, never to an
+-- application or loader role. To undo: REVOKE pg_read_all_stats FROM <reader>;
 
 \if :{?reader}
 \else
@@ -22,6 +25,17 @@ DO $$
 BEGIN
   IF current_setting('shared_preload_libraries') NOT LIKE '%pg_stat_statements%' THEN
     RAISE EXCEPTION 'pg_stat_statements is not in shared_preload_libraries; the view would stay empty';
+  END IF;
+END
+$$;
+
+-- Utility statements are tracked by default, and their text includes literals: on PostgreSQL 18 a
+-- `CREATE ROLE x PASSWORD '...'` or `ALTER ROLE x PASSWORD '...'` is stored with the plaintext password
+-- (verified), readable by every holder of pg_read_all_stats. Refuse until utility tracking is off.
+DO $$
+BEGIN
+  IF current_setting('pg_stat_statements.track_utility') = 'on' THEN
+    RAISE EXCEPTION 'pg_stat_statements.track_utility is on: role passwords in DDL would be readable through the view. As a superuser run ALTER SYSTEM SET pg_stat_statements.track_utility = off; SELECT pg_reload_conf(); (no restart), then re-run';
   END IF;
 END
 $$;
