@@ -564,8 +564,8 @@ The new database may come out smaller, since it is unbloated. That is not measur
 just rehearse-catalog-reset --evidence <directory>
 ```
 
-Run 2026-11-05 on an arm64 Mac under emulation, on the pins of the time, with the
-`scripts/rehearse_catalog_reset.py` in this commit. **63 of 63 checks passed, in 18 minutes.** It uses the operator's own stages.
+Run 2026-11-05 on an arm64 Mac under emulation, on the pins of the time, at commit `19c4aee` with a
+clean checkout. **65 of 65 checks passed, in 20 minutes.** It uses the operator's own stages.
 Its `REPORT.json` records the commit, whether the checkout was clean, and each image.
 The stack is the Lux file set against a shared PostgreSQL 18 with TLS, holding two neighbour databases
 and a neighbour session that stays open throughout. A local server answers as `data.discogs.com`, so
@@ -639,7 +639,7 @@ It rejected both earlier versions. Fixed since:
   hand-kept, `trim` was a weaker rule than `strip_person_name`, and the identity proof could pass on
   a partial projection.
 
-85 mutations of the guards, including every kind the review named, now fail
+112 mutations of the guards, including every kind the reviews named, now fail
 `tests/deploy/test_catalog_reset.py`.
 
 The bead's own reviewer, on `d6afe8d`, found the design sound and bounced it on
