@@ -26,18 +26,26 @@ rely on it. Slow Cypher has to be measured from the API side or profiled by hand
 
 1. **Postgres: create the extension** *(approval; owner of the shared server)*. The library is already preloaded on lux. The
    extension is not created in the `groovemap` database, and nothing in this repository creates it either, so the views do not exist.
-   Run as a superuser, in the `groovemap` database only:
 
-   ```sql
-   SELECT name, default_version, installed_version FROM pg_available_extensions WHERE name = 'pg_stat_statements';
-   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-   GRANT pg_read_all_stats TO <the role that runs the report>;
+   **Who owns it.** This repository owns the reviewed script, [`scripts/pg-stat-statements.sql`](../scripts/pg-stat-statements.sql),
+   and this runbook. The **server owner (the homelab operator, who holds superuser) runs it**, once per database, after approving.
+   It is not a `database-schema` migration: `pg_stat_statements` is not a trusted extension, so a role without superuser cannot
+   `CREATE EXTENSION` it, and schema migrations run as the application role. It is not run by `just deploy`, CI or `just check`.
+   A bundled stack (`docker-compose.prod.yml` preloads the library) gets it the same way, by running the script as the container's
+   `postgres` superuser; no `initdb` hook is added, because one fires only on an empty data directory and would hide the
+   existing-volume case.
+
+   ```sh
+   # as a superuser, against the groovemap database only; <reader> is the role that runs perf-baseline.sh postgres
+   psql -v ON_ERROR_STOP=1 -v reader=<reader> -d groovemap -f scripts/pg-stat-statements.sql
    ```
 
-   `pg_stat_statements` is not a trusted extension, so a database owner without superuser cannot run `CREATE EXTENSION`. The shared
-   server is owned by the homelab operator; GrooveMap's role needs no new privilege other than `pg_read_all_stats`, which lets
-   the report see statements run by other roles (the loaders, the API). It needs no restart, because the library is preloaded.
-   Check first with `SHOW shared_preload_libraries;` and `SHOW pg_stat_statements.track;`.
+   The script checks `shared_preload_libraries` first (no restart is needed, and it refuses to create views that would stay
+   empty), runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` and `GRANT pg_read_all_stats TO <reader>` in one transaction, and
+   prints the installed version and whether the reader holds the grant. `pg_read_all_stats` lets the report see statements run by
+   other roles (the loaders, the API); GrooveMap's roles need no other new privilege. Re-running it changes nothing. To undo:
+   `DROP EXTENSION pg_stat_statements;` (the preloaded library then keeps collecting but nothing can read it). Check first with
+   `SHOW shared_preload_libraries;` and `SHOW pg_stat_statements.track;`.
 
 2. **Postgres: capture twice instead of resetting.** Take one report before the measured window and one after, and subtract
    (`calls`, `total_exec_time`, `rows`). Do not call `pg_stat_statements_reset()` unless the operator asks for it: it discards the
@@ -68,7 +76,7 @@ rely on it. Slow Cypher has to be measured from the API side or profiled by hand
 
 | Step | Cost |
 | --- | --- |
-| `pg_stat_statements`, `track=all`, `max=10000` | One shared-memory hash update per statement. The PostgreSQL manual gives no figure; it is commonly a low single-digit percentage of CPU. **Not measured here**: confirm it by comparing the `api` summary before and after step 1. Shared memory scales with `pg_stat_statements.max`. |
+| `pg_stat_statements`, `track=all`, `max=10000` | **Creating the extension adds no cost**: the preloaded library already counts every statement in shared memory, and `CREATE EXTENSION` only adds the views and functions that read it. Measured on `postgres:18-alpine` (8 clients, 20 s runs, 3 interleaved rounds, pgbench scale 20, `track_io_timing=on` as on lux): `SELECT`-only 56,169 / 66,547 / 61,295 tps without the extension versus 57,749 / 68,336 / 57,610 with it, and TPC-B-like 7,422 / 6,983 / 7,697 versus 7,581 / 7,242 / 7,642. The difference is inside run-to-run noise (about 10%). The *preload itself* (what lux already pays) measured about 3 to 8% on `SELECT`-only (78,397 / 79,295 / 81,152 tps without versus 75,982 / 75,737 / 74,590 with) and was indistinguishable on TPC-B-like (6,331 / 7,543 / 7,747 versus 5,318 / 7,930 / 8,182). A laptop container is a different host; confirm on lux by comparing the `api` summary before and after step 1. Shared memory scales with `pg_stat_statements.max`. |
 | `track_planning` | Off. The manual warns of a noticeable penalty with many concurrent connections. Do not enable. |
 | Reading the views and `perf-baseline.sql` | A few catalog reads; the table list sorts `pg_total_relation_size` over user tables. Negligible beside the workload. |
 | `PROFILE` | The full cost of the statement plus a small per-operator counting overhead. The cases range from about 3 seconds to the 120 second cap. |
