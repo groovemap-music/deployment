@@ -113,7 +113,14 @@ class FakeDocker:
             return subprocess.CompletedProcess(argv, 1, "", f'service "{service}" is not running\n')
         if service == "postgres":
             sql = argv[-1]
-            return subprocess.CompletedProcess(argv, 0, self.relations if "to_regclass" in sql else self.latch, "")
+            if "to_regclass" in sql:
+                return subprocess.CompletedProcess(argv, 0, self.relations, "")
+            # Like the real server, a query naming a table that does not exist fails whole.
+            latch_present, job_present = (field == "t" for field in self.relations.strip().split("|")) if "|" in self.relations else (True, True)
+            missing = None if latch_present and (job_present or "loader_derived_refresh_job" not in sql) else "loader_extraction_latch" if not latch_present else "loader_derived_refresh_job"
+            if missing:
+                return subprocess.CompletedProcess(argv, 1, "", f'ERROR:  relation "public.{missing}" does not exist\n')
+            return subprocess.CompletedProcess(argv, 0, self.latch, "")
         if service == "neo4j":
             return subprocess.CompletedProcess(argv, 0, self.graph, "")
         if service == "rabbitmq":
@@ -220,7 +227,7 @@ def test_four_signals_without_the_refresh_stamp_are_in_progress() -> None:
 def test_without_the_refresh_job_relation_the_latch_alone_is_read() -> None:
     fake = FakeDocker(relations="t|f\n", latch=latch_output(latch_row("20261001", ALL, False, "2026-10-01")))
     report = report_for(fake)
-    latch_query = fake.calls[1][-1]
+    latch_query = fake.calls[-1][-1]
     assert "loader_derived_refresh_job" not in latch_query
     assert signal(report, "postgres refresh").detail == "20261001: derived-relation refresh not yet stamped"
     assert report.status is Status.IN_PROGRESS
@@ -257,6 +264,58 @@ def test_a_missing_relation_cannot_be_determined() -> None:
     assert report.status is Status.UNKNOWN
     assert "public.loader_extraction_latch does not exist" in signal(report, "postgres latch").detail
     assert signal(report, "neo4j latch").status is Status.UNKNOWN
+
+
+def _psql_calls(fake: FakeDocker) -> list[str]:
+    return [argv[-1] for argv in fake.calls if argv[argv.index("-T") + 1] == "postgres"]
+
+
+def test_the_latch_is_read_in_one_psql_call_on_a_current_schema() -> None:
+    fake = FakeDocker()
+    assert report_for(fake).status is Status.COMPLETE
+    assert len(_psql_calls(fake)) == 1
+    assert "loader_derived_refresh_job" in _psql_calls(fake)[0]
+
+
+def test_a_schema_without_the_refresh_job_still_reads_the_latch() -> None:
+    latch = latch_output(latch_row("20261001", ALL, True, "2026-10-01"))
+    fake = FakeDocker(relations="t|f\n", latch=latch)
+    report = report_for(fake)
+    assert signal(report, "postgres latch").status is Status.COMPLETE
+    assert report.status is Status.COMPLETE
+    queries = _psql_calls(fake)
+    assert len(queries) == 3
+    assert "loader_derived_refresh_job" in queries[0] and "to_regclass" in queries[1] and "loader_derived_refresh_job" not in queries[2]
+    assert "NULL" in queries[2]
+
+
+def test_a_missing_latch_costs_one_diagnosing_call() -> None:
+    fake = FakeDocker(relations="f|f\n")
+    report_for(fake)
+    assert len(_psql_calls(fake)) == 2
+
+
+def test_unreadable_relation_output_after_a_failed_latch_query_cannot_be_determined() -> None:
+    report = report_for(_failing_latch(relations="t\n"))
+    assert signal(report, "postgres latch").status is Status.UNKNOWN
+    assert "unreadable relation probe output" in signal(report, "postgres latch").detail
+
+
+def _failing_latch(relations: str = "t|t\n") -> FakeDocker:
+    class Failing(FakeDocker):
+        def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if argv[argv.index("-T") + 1] == "postgres" and "to_regclass" not in argv[-1]:
+                self.calls.append(argv)
+                return subprocess.CompletedProcess(argv, 1, "", "ERROR:  canceling statement due to statement timeout\n")
+            return super().__call__(argv, **kwargs)
+
+    return Failing(relations=relations)
+
+
+def test_a_failing_latch_query_on_a_complete_schema_is_reported_as_it_failed() -> None:
+    report = report_for(_failing_latch())
+    assert signal(report, "postgres latch").status is Status.UNKNOWN
+    assert signal(report, "postgres latch").detail == "postgres: exit 1: ERROR:  canceling statement due to statement timeout"
 
 
 @pytest.mark.parametrize("service", ["postgres", "neo4j", "rabbitmq"])
@@ -296,7 +355,6 @@ def test_dead_lettered_messages_warn_but_do_not_gate() -> None:
         ("latch", '{"version": "20261001"}'),
         ("latch", '[{"version": "20261001", "signals": "artists", "refreshed_at": null, "created_at": "2026-10-01T00:00:00+00:00"}]'),
         ("latch", '[{"version": "20261001", "signals": [], "refreshed_at": null, "created_at": "yesterday"}]'),
-        ("relations", "t\n"),
         ("graph", "m\n"),
         ("graph", 'version, signals\n"20261001", NULL\n'),
         ("graph", "version, signals\n20261001, [artists]\n"),
@@ -332,9 +390,9 @@ def test_uncertainty_never_reports_complete() -> None:
 def test_probes_only_exec_into_running_containers() -> None:
     fake = FakeDocker()
     report_for(fake)
-    assert [call[:4] for call in fake.calls] == [["docker", "compose", "exec", "-T"]] * 4
-    assert [call[4] for call in fake.calls] == ["postgres", "postgres", "neo4j", "rabbitmq"]
-    assert fake.calls[3][5:] == list(gate.RABBITMQCTL)
+    assert [call[:4] for call in fake.calls] == [["docker", "compose", "exec", "-T"]] * 3
+    assert [call[4] for call in fake.calls] == ["postgres", "neo4j", "rabbitmq"]
+    assert fake.calls[2][5:] == list(gate.RABBITMQCTL)
     for call in fake.calls:
         assert not {"up", "run", "start", "restart", "down", "stop"} & set(call[:5])
 
