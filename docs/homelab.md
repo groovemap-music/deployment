@@ -914,7 +914,8 @@ operator approval for each stage; the `graphinator` stage needs its own go-ahead
 2. Recreate only the loader: `docker compose up -d --no-deps tableinator`.
 3. Confirm it is healthy and consuming: `docker inspect -f '{{.State.Health.Status}} {{.Config.Image}}' groovemap-tableinator`
    shows `healthy` and the `v0.4.4` digest, and the `tableinator` queues have a consumer attached
-   with ready and unacknowledged counts falling between two status runs.
+   (lux's queues are empty after the load, so there are no counts to watch fall: confirm the
+   consumer is attached, and that ready and unacknowledged counts stay at 0 between two status runs).
 4. Dead-letter queues stay empty. If one grows, stop and report; do not purge.
 
 **Stage 2: `graphinator` (graph enricher v0.6.0), only on a separate operator go-ahead.**

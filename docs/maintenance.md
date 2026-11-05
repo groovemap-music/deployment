@@ -389,7 +389,7 @@ Never run an older `schema-init`.
 Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
 digests reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
 needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
-recorded here before merge to main. Run URL: _pending_. See the
+recorded here before merge to main. Run URL: [42077610387](https://github.com/groovemap-music/deployment/actions/runs/42077610387) (passed on `fb902f5`). See the
 [Lux upgrade](homelab.md#lux-upgrade-sql-loader-v044-and-graph-enricher-v060-staged-after-schema-v063) for the window.
 
 ### Promotion of database-schema v0.6.3 and discogs-sql-loader v0.4.3 (2026-11-04)
