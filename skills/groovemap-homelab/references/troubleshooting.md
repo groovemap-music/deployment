@@ -76,10 +76,10 @@ days to rebuild.
   discogs-sql-loader v0.3.0 did not write its latch;
   discogs-graph-enricher v0.3.0 also has a CI-discovered race that can leave two graph markers
   missing after a concurrent cache-version reset. The reviewed fix is released and promoted as
-  graph-enricher v0.4.0; the reviewed pin is now v0.6.0 at
-  `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab`.
+  graph-enricher v0.4.0; the reviewed pin is now v0.6.1 at
+  `sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee`.
 - **A completion latch or graph marker is missing:** do not restart the extractor, write a marker,
-  or replay broker messages manually. After both reviewed Discogs consumers (SQL loader v0.4.4, graph enricher v0.6.0) are healthy,
+  or replay broker messages manually. After both reviewed Discogs consumers (SQL loader v0.4.5, graph enricher v0.6.1) are healthy,
   recovery requires the operator's approval, a read-only baseline, an
   encrypted recovery bundle and confirmed database/storage headroom. The supported option is a
   full new Discogs reprocess through the authenticated Catalog API admin endpoint
