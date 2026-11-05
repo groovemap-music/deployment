@@ -66,33 +66,33 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "4b4bd73446996751f703a65b8599b9cc2d5d3e76579bf2afd5cdd5524785b7a1",  # database-schema v0.6.3  gitleaks:allow
-    "CATALOG_API_IMAGE": "b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5",  # catalog-api v0.6.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "da6e53bb865f3172161e07fcca34d8fecef587facdf566ae6efff378e9ebc771",  # database-schema v0.7.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "143d5dd329adfe42a2ba9fe8785df45430603e07aac807af0cc8471263ec927a",  # catalog-api v0.7.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d",  # discogs-ingestion v0.4.0  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a",  # musicbrainz-ingestion v0.3.0  gitleaks:allow
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab",  # discogs-graph-enricher v0.6.0  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee",  # discogs-graph-enricher v0.6.1  gitleaks:allow
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057",  # musicbrainz-graph-enricher v0.4.0  gitleaks:allow
-    "DISCOGS_SQL_LOADER_IMAGE": "ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278",  # discogs-sql-loader v0.4.4  gitleaks:allow
+    "DISCOGS_SQL_LOADER_IMAGE": "dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f",  # discogs-sql-loader v0.4.5  gitleaks:allow
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809",  # musicbrainz-sql-loader v0.5.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691",  # operations-console v0.3.0  gitleaks:allow
-    "GRAPH_EXPLORER_IMAGE": "dc3c23e2adaeb8659fa97e92654775d65844a86076ee0a0b635246d5ca7b2c8a",  # graph-explorer v0.3.1  gitleaks:allow
-    "ANALYTICS_ENGINE_IMAGE": "bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa",  # analytics-engine v0.5.0  gitleaks:allow
+    "GRAPH_EXPLORER_IMAGE": "da5b49f70a2d8fdd0c6254e6cf9de2b7c20da79ce90d8922a8349aff068a9fb8",  # graph-explorer v0.3.2  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "000a053102c52f377a9f6ff2edd492c205fbb1973d55fcad168ecc7abb81d031",  # analytics-engine v0.6.0  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.6.3",
-    "CATALOG_API_IMAGE": "0.6.0",
+    "DATABASE_SCHEMA_IMAGE": "0.7.0",
+    "CATALOG_API_IMAGE": "0.7.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.0",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.3.0",
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.6.0",
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.6.1",
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "0.4.0",
-    "DISCOGS_SQL_LOADER_IMAGE": "0.4.4",
+    "DISCOGS_SQL_LOADER_IMAGE": "0.4.5",
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.5.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.3.0",
-    "GRAPH_EXPLORER_IMAGE": "0.3.1",
-    "ANALYTICS_ENGINE_IMAGE": "0.5.0",
+    "GRAPH_EXPLORER_IMAGE": "0.3.2",
+    "ANALYTICS_ENGINE_IMAGE": "0.6.0",
 }
 
 # A capability floor that no release meets yet. `just deploy` refuses the external store it guards.

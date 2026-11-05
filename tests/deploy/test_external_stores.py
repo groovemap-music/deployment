@@ -385,7 +385,7 @@ def test_a_met_floor_also_needs_env_to_run_the_reviewed_digest() -> None:
 
     assert problems(_floors("0.6.0"), reviewed) == []
     assert problems(_floors("0.5.9"), reviewed) == []
-    assert "below v0.7.0" in problems(_floors("0.7.0"), reviewed)[0]
+    assert "below v0.8.0" in problems(_floors("0.8.0"), reviewed)[0]
     older = {"DATABASE_SCHEMA_IMAGE": "ghcr.io/groovemap-music/database-schema@sha256:" + "0" * 64}
     assert "run `just env-init`" in problems(_floors("0.6.0"), older)[0]
     assert "run `just env-init`" in problems(_floors("0.6.0"), {})[0]

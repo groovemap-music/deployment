@@ -107,31 +107,31 @@ Reviewed per-source producer images (Discogs `v0.4.0`, MusicBrainz `v0.3.0`):
 | `DISCOGS_INGESTION_IMAGE` | `ghcr.io/groovemap-music/discogs-ingestion` | `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
 | `MUSICBRAINZ_INGESTION_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-ingestion` | `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
 
-Matching consumer and schema images (Discogs SQL loader `v0.4.4` and graph enricher `v0.6.0`;
-MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.6.3`; see
-[the v0.4.4 and v0.6.0 promotion](#promotion-of-discogs-sql-loader-v044-and-discogs-graph-enricher-v060-2026-11-05)):
+Matching consumer and schema images (Discogs SQL loader `v0.4.5` and graph enricher `v0.6.1`;
+MusicBrainz graph enricher `v0.4.0` and SQL loader `v0.5.0`; `database-schema` `v0.7.0`; see
+[the reset release set promotion](#promotion-of-the-reset-release-set-2026-11-05)):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:4b4bd73446996751f703a65b8599b9cc2d5d3e76579bf2afd5cdd5524785b7a1` |
-| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278` |
-| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab` |
+| `DATABASE_SCHEMA_IMAGE` | `ghcr.io/groovemap-music/database-schema` | `sha256:da6e53bb865f3172161e07fcca34d8fecef587facdf566ae6efff378e9ebc771` |
+| `DISCOGS_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/discogs-sql-loader` | `sha256:dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f` |
+| `DISCOGS_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/discogs-graph-enricher` | `sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee` |
 | `MUSICBRAINZ_SQL_LOADER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-sql-loader` | `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
 | `MUSICBRAINZ_GRAPH_ENRICHER_IMAGE` | `ghcr.io/groovemap-music/musicbrainz-graph-enricher` | `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
 
-Reviewed catalog API image (`v0.6.0`):
+Reviewed catalog API image (`v0.7.0`):
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
-| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
+| `CATALOG_API_IMAGE` | `ghcr.io/groovemap-music/catalog-api` | `sha256:143d5dd329adfe42a2ba9fe8785df45430603e07aac807af0cc8471263ec927a` |
 
-Reviewed console (`v0.3.0`), explorer (`v0.3.1`) and analytics (`v0.5.0`) images:
+Reviewed console (`v0.3.0`), explorer (`v0.3.2`) and analytics (`v0.6.0`) images:
 
 | Variable | Image | Manifest digest |
 | --- | --- | --- |
 | `OPERATIONS_CONSOLE_IMAGE` | `ghcr.io/groovemap-music/operations-console` | `sha256:1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691` |
-| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:dc3c23e2adaeb8659fa97e92654775d65844a86076ee0a0b635246d5ca7b2c8a` |
-| `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
+| `GRAPH_EXPLORER_IMAGE` | `ghcr.io/groovemap-music/graph-explorer` | `sha256:da5b49f70a2d8fdd0c6254e6cf9de2b7c20da79ce90d8922a8349aff068a9fb8` |
+| `ANALYTICS_ENGINE_IMAGE` | `ghcr.io/groovemap-music/analytics-engine` | `sha256:000a053102c52f377a9f6ff2edd492c205fbb1973d55fcad168ecc7abb81d031` |
 
 `scripts/check-images.py`'s `RELEASED_IMAGE_DIGESTS` is the authority for every entry above.
 
@@ -366,7 +366,72 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
+### Promotion of the reset release set (2026-11-05)
+
+This promotes six images for the Lux reset (a fresh database, then the load): `database-schema`
+`v0.7.0`, `catalog-api` `v0.7.0`, `discogs-sql-loader` `v0.4.5`, `discogs-graph-enricher` `v0.6.1`,
+`analytics-engine` `v0.6.0` and `graph-explorer` `v0.3.2`. `operations-console` stays at `v0.3.0`.
+Nothing here has been run on lux by this repository.
+
+Each digest is the index digest of the released tag on GHCR. `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for all six. The `linux/amd64` image labels were read back:
+`org.opencontainers.image.version`, `.revision` and `.source` match the release, each tag's commit
+on GitHub equals the label revision, and each image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.7.0` | `sha256:da6e53bb865f3172161e07fcca34d8fecef587facdf566ae6efff378e9ebc771` | `7937373f328e21efd745fe51357600d564a2ae75` | `v0.6.3` — `sha256:4b4bd73446996751f703a65b8599b9cc2d5d3e76579bf2afd5cdd5524785b7a1` |
+| `catalog-api:v0.7.0` | `sha256:143d5dd329adfe42a2ba9fe8785df45430603e07aac807af0cc8471263ec927a` | `9b5e60921db40320375586418c683cc5e9f80a85` | `v0.6.0` — `sha256:b41e01f57c7c3ac0f52fc26474145508b1755bb6275a08f0a2e41931a9c437d5` |
+| `discogs-sql-loader:v0.4.5` | `sha256:dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f` | `673ac13f29c3d005f60bcac2320ba7433c434e91` | `v0.4.4` — `sha256:ff45d7eaff9c5f506fcd30ce89bd1f1fffcc5b069651b559464b5dd3d6706278` |
+| `discogs-graph-enricher:v0.6.1` | `sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee` | `1c3fd896f6b43ef39e035c47aeacc02d93e65109` | `v0.6.0` — `sha256:705a607de44ccfd8dc039059a05e18ca1b4cc77dc9c6e0caf44d2594caa5b0ab` |
+| `analytics-engine:v0.6.0` | `sha256:000a053102c52f377a9f6ff2edd492c205fbb1973d55fcad168ecc7abb81d031` | `20bf802522ddbf086ecf7e3827c0ffd698856fd7` | `v0.5.0` — `sha256:bf1a3944a9f0b2d2a85f9470423ce0422e4433acb585ff3fd1b4e0763f116bfa` |
+| `graph-explorer:v0.3.2` | `sha256:da5b49f70a2d8fdd0c6254e6cf9de2b7c20da79ce90d8922a8349aff068a9fb8` | `ca58621a54b8294140051c5289d9ab4765423861` | `v0.3.1` — `sha256:dc3c23e2adaeb8659fa97e92654775d65844a86076ee0a0b635246d5ca7b2c8a` |
+
+**Superseded:** `database-schema` `v0.6.3`, `catalog-api` `v0.6.0`, `discogs-sql-loader` `v0.4.4`,
+`discogs-graph-enricher` `v0.6.0`, `analytics-engine` `v0.5.0` and `graph-explorer` `v0.3.1`. Their
+records below stay for history; the digests above are the only ones to use for a new deploy. The
+older ones remain as rollback targets, with the caveat below for the schema.
+
+**Capability floors.** Checked against every service in the set:
+
+- `catalog-api` `v0.7.0` reads the Identity Ledger by relation name, so it runs on the `v0.6.x`
+  materialized views and on the `v0.7.0` tables. Older `catalog-api` answers 503 on the ledger routes once
+  the `v0.7.0` schema is applied, so it goes first or together with the schema (together on the fresh
+  database).
+- `analytics-engine` `v0.6.0` writes `label_ids` and `artist_ids` and needs `catalog-api` `v0.7.0`
+  (contract `1.7.0`) and schema `v0.7.0`; before the schema is live every rarity run fails with
+  `UndefinedColumn`. It goes last.
+- `discogs-sql-loader` `v0.4.5` and `discogs-graph-enricher` `v0.6.1` strip padding from a credit name
+  before it keys a Person. Release them together: stripping in one store splits the Person keys.
+- `graph-explorer` `v0.3.2` pages every credit and needs `catalog-api` `v0.7.0`: an older API would
+  show only the first 100 credits with no error.
+- `operations-console` `v0.3.0` (`CONSOLE_TARGETS_FLOOR`, met) and `mcp-server` `v0.2.2` (not a
+  pinned image here) each carry a copy of their `catalog-api` route contract. The SHA-256 of each copy
+  equals the producer's file at `catalog-api` `v0.7.0` (`api/contracts/operations-console/v1/routes.json`
+  `5bb3cad3…`, `mcp-server/v1/routes.json` `cbbfa996…`; `graph-explorer/v1/routes.json` `7a637945…`
+  matches `graph-explorer` `v0.3.2` as well), so neither needs a new release.
+- `EXTERNAL_STORE_FLOORS` (`database-schema` `0.6.0`; `catalog-api` `0.6.0` and `analytics-engine`
+  `0.5.0`) are all met by this set.
+- **`PAIRED_IMAGE_FLOORS` stays `UNRELEASED`** for `gm-discogs-sql-loader-gna2` and its schema column
+  (`purge_vetoed`): neither `discogs-sql-loader` `v0.4.5` nor `database-schema` `v0.7.0` contains it
+  (`gm-deployment-16kv`'s floors are not filled in by this change).
+
+**Rollback.** Set the pin back to the digest in the table (or to the pin in the `.env.<timestamp>.bak`
+that `env-init` left, which holds what lux actually ran) and recreate only that service with
+`up -d --no-deps`. Never run an older `schema-init`: `v0.7.0` keeps the Identity Ledger as
+plain tables (they were materialized views through `v0.6.3`), and an older `catalog-api` answers 503 on them (above), so roll `catalog-api`
+back only together with the schema it matches.
+
+Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
+digests reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
+needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
+recorded here before merge to main. Run URL: [42125594718](https://github.com/groovemap-music/deployment/actions/runs/42125594718) (passed on `219edf3`). See the
+[Lux reset window](homelab.md#lux-reset-the-release-set-on-a-fresh-database) for the order.
+
 ### Promotion of discogs-sql-loader v0.4.4 and discogs-graph-enricher v0.6.0 (2026-11-05)
+
+> **Superseded** by the [reset release set promotion](#promotion-of-the-reset-release-set-2026-11-05): `discogs-sql-loader` `v0.4.4` and `discogs-graph-enricher` `v0.6.0` are now rollback targets only.
 
 This replaces the `discogs-sql-loader` `v0.4.3` and `discogs-graph-enricher` `v0.5.0` pins of the
 [v0.6.3 record](#promotion-of-database-schema-v063-and-discogs-sql-loader-v043-2026-11-04), which stays as the record of what was reviewed first. `database-schema`
