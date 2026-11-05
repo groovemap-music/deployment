@@ -426,7 +426,7 @@ back only together with the schema it matches.
 Evidence still owed (not produced by this change): the combined Linux `smoke-homelab` run on these
 digests reaching gate 0. It is a CI job (`.github/workflows/smoke-homelab.yml`, linux/amd64) that
 needs a push, which this change does not do; the dispatcher pushes the branch, and the run URL is
-recorded here before merge to main. Run URL: _pending_. See the
+recorded here before merge to main. Run URL: [42125594718](https://github.com/groovemap-music/deployment/actions/runs/42125594718) (passed on `219edf3`). See the
 [Lux reset window](homelab.md#lux-reset-the-release-set-on-a-fresh-database) for the order.
 
 ### Promotion of discogs-sql-loader v0.4.4 and discogs-graph-enricher v0.6.0 (2026-11-05)
