@@ -213,6 +213,23 @@ class TestRabbitMqPrometheusPlugin:
         assert "rabbitmq_prometheus" in plugins
         assert "rabbitmq_management" in plugins, "the management plugin must survive for the operator UI"
 
+    def test_disk_free_limit_is_above_the_default_without_alarming_small_disks(self) -> None:
+        """RabbitMQ's default 50 MB only trips with the shared host nearly full."""
+        erl_args = _base_compose()["services"]["rabbitmq"]["environment"]["RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS"]
+        assert "-rabbit disk_free_limit ${RABBITMQ_DISK_FREE_LIMIT_BYTES:-2147483648}" in erl_args
+
+    def test_extractor_publish_pacing_is_passed_through(self) -> None:
+        env = _base_compose()["services"]["extractor-discogs"]["environment"]
+        assert env["PUBLISH_MAX_RECORDS_PER_SEC"] == "${PUBLISH_MAX_RECORDS_PER_SEC:-1500}"
+
+    def test_backlog_alert_is_scoped_to_a_stalled_drain_not_to_growth(self) -> None:
+        rules = (REPO_ROOT / "config/grafana/provisioning/alerting/groovemap.yaml").read_text()
+        block = rules[rules.index("uid: groovemap-queue-backlog-growing") : rules.index("uid: groovemap-consumers-absent")]
+        assert "rabbitmq_detailed_queue_messages_acked_total" in block
+        assert "unless on (queue)" in block, "a deep queue that never acked has no ack series and must still fire"
+        assert "delta(" not in block, "a paced load grows for hours; growth alone must not page"
+        assert "params: [50000]" in block
+
     def test_enabled_plugins_file_is_mounted_read_only(self) -> None:
         volumes = _base_compose()["services"]["rabbitmq"]["volumes"]
         assert "./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro" in volumes

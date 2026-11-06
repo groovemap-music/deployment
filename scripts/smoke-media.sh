@@ -4,6 +4,7 @@
 # the graph, and the lookup endpoint. It starts containers and destroys their volumes on
 # exit, so it never runs inside `just check` or CI. See docs/testing-guide.md.
 set -euo pipefail
+export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
 project="${SMOKE_MEDIA_PROJECT:-groovemap-media-smoke}"
 broker_port="${SMOKE_MEDIA_RABBITMQ_PORT:-15673}"

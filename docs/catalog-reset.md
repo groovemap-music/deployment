@@ -246,7 +246,7 @@ psql -U datum`), that the running stack really is connected to that server, that
 by `groovemap` and no retained copy exists, no dump is running, the reviewed digests, the
 [release floor](#before-the-day), the tableinator cap, a rehearsal report for this commit and these
 images, the [empty tables](#what-is-kept), the
-four dump files with their checksums, and at least 400 GB free. It prints every target and the other
+four dump files with their checksums, and at least 480 GB free. It prints every target and the other
 databases by name. Stop on anything unexpected.
 
 ### 4. Stop the writers
@@ -553,9 +553,11 @@ MusicBrainz data, and a re-import for the graph. That is a restore, not a rollba
 | New `groovemap` | About 185 GB, plus rarity about 5 GB | Measured size of the old one; rarity is analytics-engine's estimate |
 | Retained graph volume | 57 GB | Measured on lux |
 | New graph | About 57 GB | Measured size of the old one |
-| Dumps, queues at peak | Already on disk; queues about 0.3 GB | Measured: `groovemap_rabbitmq_data` was 228 MB during the first load |
+| Dumps | Already on disk | |
+| RabbitMQ queues at peak | About 80 GB | **Estimate, not measured.** The extractor is paced at 1,500 records/s (`PUBLISH_MAX_RECORDS_PER_SEC`) against consumers that write 530 to 800/s, so the backlog grows by 700 to 970 records/s until the files are published. The first load, which published at about 520/s, kept `groovemap_rabbitmq_data` at 228 MB. Replace this row with the measurement after the next load |
 | WAL | 8 GB (`max_wal_size`), shared server | Measured setting |
-| Peak total | About 500 GB, against 1.2 TB free | Sum of the above. `preflight` requires 400 GB free beside what is already used |
+| Peak total | About 580 GB, against 1.2 TB free | Sum of the above. `preflight` requires 480 GB free beside what is already used |
+| RabbitMQ disk alarm | Publishers block below 50 GiB free **on lux** | `disk_free_limit`. The compose default is 2 GiB; **lux sets `RABBITMQ_DISK_FREE_LIMIT_BYTES=53687091200` in its private environment**, and the next promotion must carry it. RabbitMQ's own default is 50 MB, which only trips with the host nearly full on a disk shared with the neighbours' PostgreSQL. 50 GiB clears PostgreSQL's 8 GB WAL, and sits below the 200 GB line in [the monitoring table](#13-watch), so you stop first and the alarm is the backstop |
 
 The new database may come out smaller, since it is unbloated. That is not measured.
 

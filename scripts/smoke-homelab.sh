@@ -38,6 +38,7 @@
 # SMOKE_HOMELAB_GATE_TIMEOUT (seconds for the gate to reach 0, default 600).
 
 set -euo pipefail
+export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="${SMOKE_HOMELAB_RUN:-${GITHUB_RUN_ID:-$(date +%s)}-$$}"

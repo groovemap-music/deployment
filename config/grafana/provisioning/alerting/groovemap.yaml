@@ -236,11 +236,17 @@ groups:
               editorMode: code
               instant: true
               range: false
-              # Deep *and* still deepening. A bulk import legitimately parks a
-              # large backlog; one that is not draining is the failure.
+              # Deep *and* not draining. The extractor is paced at about 1,500
+              # records/s against consumers that write 530 to 800/s, so a normal
+              # load builds a large backlog that is still growing for hours: depth
+              # and growth alone fire on every load. A real stall is a deep queue
+              # whose consumers have stopped acking, so scope on the ack rate
+              # (the same counter the console's rate history reads). `unless` rather than
+              # `and ... < 50`, so a deep queue that never acked has no ack series and still
+              # counts as stalled.
               expr: >-
                 sum by (queue) (rabbitmq_queue_messages_ready{service_namespace="groovemap"})
-                and on (queue) (sum by (queue) (delta(rabbitmq_queue_messages_ready{service_namespace="groovemap"}[30m])) > 0)
+                unless on (queue) (sum by (queue) (rate(rabbitmq_detailed_queue_messages_acked_total{service_namespace="groovemap"}[15m])) >= 50)
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
@@ -254,11 +260,12 @@ groups:
         noDataState: OK
         execErrState: Error
         annotations:
-          summary: A queue is above 50k ready messages and still growing
+          summary: A queue is above 50k ready messages and its consumers are not draining it
           description: >-
-            Threshold: rabbitmq_queue_messages_ready above 50000 while its 30m
-            delta is positive, sustained 30m. Consumers are running slower than
-            the extractors publish.
+            Threshold: rabbitmq_queue_messages_ready above 50000 while the queue's
+            15m ack rate is below 50 messages/s, sustained 30m. A paced load
+            builds a deep backlog while consumers ack 530 to 800/s and does not
+            fire this; consumers that have stopped or stalled do.
         labels:
           severity: warning
 

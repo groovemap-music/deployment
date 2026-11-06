@@ -4,6 +4,7 @@
 # erasure nothing keyed to that account survives in PostgreSQL, Neo4j, or Valkey. It starts
 # containers and destroys their volumes on exit, so it never runs inside `just check` or CI.
 set -euo pipefail
+export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
 project="${SMOKE_ERASURE_PROJECT:-groovemap-erasure-smoke}"
 api_port="${SMOKE_ERASURE_API_PORT:-18004}"

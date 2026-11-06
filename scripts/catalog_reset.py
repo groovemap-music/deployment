@@ -241,6 +241,13 @@ class ResetError(RuntimeError):
     """A check failed or a command failed: stop here, nothing further runs."""
 
 
+# Free disk the re-ingest needs beside the retained copies. 400 GB covered the databases, dumps
+# and a RabbitMQ volume of about 0.3 GB. The extractor now publishes at about 1,500/s against
+# consumers that write 530 to 800/s, so the queues peak near 80 GB; docs/catalog-reset.md has
+# the table.
+MIN_FREE_GB = 480
+
+
 def blocked_window(now: dt.datetime) -> bool:
     minute = now.hour * 60 + now.minute
     return BLOCKED_FROM_MINUTE <= minute < BLOCKED_UNTIL_MINUTE
@@ -1257,7 +1264,7 @@ def main(argv: list[str] | None = None) -> int:
         "--accept-shared-change", action="store_true", help="carry on past a change on the shared server, after you have looked at it"
     )
     parser.add_argument("--rehearsal-report", help="preflight: the REPORT.json of a passing rehearsal of this commit and these images")
-    parser.add_argument("--min-free-gb", type=int, default=400, help="preflight: free disk the re-ingest needs beside the retained copies")
+    parser.add_argument("--min-free-gb", type=int, default=MIN_FREE_GB, help="preflight: free disk the re-ingest needs beside the retained copies")
     parser.add_argument("--schema-timeout", type=int, default=1800, help="deadline in seconds for store-check and schema-init")
     parser.add_argument("--interval", type=int, default=60, help="status: seconds between samples")
     parser.add_argument("--duration", type=int, default=3600, help="status: stop after this many seconds")

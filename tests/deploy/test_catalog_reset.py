@@ -1616,3 +1616,9 @@ def test_the_tool_needs_no_third_party_module() -> None:
 def test_the_help_runs_without_docker_state() -> None:
     result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=True, timeout=30)
     assert "preflight" in result.stdout
+
+
+def test_preflight_default_free_disk_covers_the_paced_queue_peak() -> None:
+    """400 GB assumed queues of 0.3 GB; the paced extractor peaks near 80 GB (docs/catalog-reset.md)."""
+    assert reset.MIN_FREE_GB == 480
+    assert "at least 480 GB free" in RUNBOOK.read_text()

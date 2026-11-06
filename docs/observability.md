@@ -855,7 +855,7 @@ single number per rule.
 | `ExtractorErrorRateHigh` | failed share of `groovemap_extraction_files_total` per `source`, 30m | `> 10%` for 15m | warning |
 | `ConsumerFailureRateHigh` | failed share of `groovemap_pipeline_messages_total` per `service_name`/`source`, 15m | `> 5%` for 10m | critical |
 | `CircuitBreakerOpen` | `max by (service_name, system) (groovemap_pipeline_circuit_breaker_state)` | `> 1` (open) for 2m | critical |
-| `QueueBacklogGrowing` | `rabbitmq_queue_messages_ready` per `queue`, only while its 30m `delta` is positive | `> 50000` for 30m | warning |
+| `QueueBacklogGrowing` | `rabbitmq_queue_messages_ready` per `queue`, only while its 15m ack rate (`rabbitmq_detailed_queue_messages_acked_total`) is below 50/s | `> 50000` for 30m | warning |
 | `ConsumersAbsent` | `sum by (source) (groovemap_pipeline_consumers_active)` | `< 1` for 10m | critical |
 | `InsightsStale` | `time() - max by (computation) (groovemap_insights_last_success_seconds)` | `> 86400s` (24h) for 15m | warning |
 | `ApiErrorRateHigh` | 5xx share of `http_server_request_duration_seconds_count` per `service_name`, 10m | `> 5%` for 10m | critical |
