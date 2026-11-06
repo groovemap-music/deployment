@@ -173,6 +173,8 @@ The following groups are interpolated by the executable stack:
 | `APP_BASE_URL`, `DB_PROFILING`, `INSIGHTS_INTERNAL_SECRET`, `NLQ_ENABLED`, `NLQ_API_KEY`, `NLQ_MODEL` | Optional base-stack application settings (`APP_BASE_URL` is required by the production overlay) |
 | `GRAFANA_URL`, `TRACES_URL` | Browser-facing Grafana and traces base URLs for the operations console's deep links (default `http://localhost:3000`) |
 | `RABBITMQ_DLQ_MAX_LENGTH`, `RABBITMQ_DLQ_MAX_LENGTH_BYTES`, `RABBITMQ_DLQ_OVERFLOW` | Catalog dead-letter queue size-cap policy (defaults `50000`, `536870912`, `drop-head`); see [the admin guide](admin-guide.md#dlq-size-cap-policy) |
+| `PUBLISH_MAX_RECORDS_PER_SEC` | Total publish ceiling for `extractor-discogs`, across all files (default `1500`; `0` turns pacing off). Consumers write 530 to 800 records/s, so more only deepens the RabbitMQ backlog |
+| `RABBITMQ_DISK_FREE_LIMIT_BYTES` | RabbitMQ `disk_free_limit` in bytes (default `53687091200`, 50 GiB). Publishers block below it. Smoke scripts lower it for small runner disks |
 | `SOURCE_DUMP_ID`, `SOURCE_DUMP_DATE`, `EMBEDDING_PIPELINE_POSTGRES_USERNAME`, `EMBEDDING_PIPELINE_POSTGRES_PASSWORD` | One-shot `embeddings` job only; see [Embeddings job](#embeddings-job) |
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |

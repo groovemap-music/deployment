@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
 GM_RELEASED_STACK_ENV_FILE="${GM_RELEASED_STACK_ENV_FILE:-.env}"
 GM_RELEASED_STACK_PROJECT="${GM_RELEASED_STACK_PROJECT:-groovemap-released-smoke}"

@@ -3,6 +3,7 @@
 # its packaged tiny dump and delivers the resulting release through RabbitMQ to both
 # released database consumers. The stack is always removed, including its volumes.
 set -euo pipefail
+export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
 project="${SMOKE_RELEASED_FIXTURE_PROJECT:-groovemap-released-fixture-smoke}"
 broker_port="${SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT:-15674}"
