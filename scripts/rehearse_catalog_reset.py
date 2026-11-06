@@ -680,7 +680,7 @@ class Rehearsal:
         self.check(refreshed == "1", "the watcher's own refresh built the ledger with the poll off")
         self.reset("after-load", state=self.state)
         sql = "SELECT status FROM insights.computation_log WHERE insight_type = 'release_rarity' ORDER BY started_at DESC LIMIT 1"
-        self.wait("release_rarity to finish", lambda: self.admin_sql("groovemap", sql) in ("completed", "failed"), 600)
+        self.wait("release_rarity to finish", lambda: self.admin_sql("groovemap", sql) in ("completed", "failed", "interrupted"), 600)
         status = self.admin_sql("groovemap", sql)
         rows = self.admin_sql("groovemap", "SELECT count(*) FROM insights.release_rarity")
         self.report["rarity"] = {"status": status, "rows": rows}
