@@ -241,10 +241,12 @@ groups:
               # load builds a large backlog that is still growing for hours: depth
               # and growth alone fire on every load. A real stall is a deep queue
               # whose consumers have stopped acking, so scope on the ack rate
-              # (the same counter the console's rate history reads).
+              # (the same counter the console's rate history reads). `unless` rather than
+              # `and ... < 50`, so a deep queue that never acked has no ack series and still
+              # counts as stalled.
               expr: >-
                 sum by (queue) (rabbitmq_queue_messages_ready{service_namespace="groovemap"})
-                and on (queue) (sum by (queue) (rate(rabbitmq_detailed_queue_messages_acked_total{service_namespace="groovemap"}[15m])) < 50)
+                unless on (queue) (sum by (queue) (rate(rabbitmq_detailed_queue_messages_acked_total{service_namespace="groovemap"}[15m])) >= 50)
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__

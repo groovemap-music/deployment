@@ -96,10 +96,11 @@ services:
       RABBITMQ_DEFAULT_USER: groovemap
       RABBITMQ_DEFAULT_VHOST: /
       # disk_free_limit: RabbitMQ blocks publishers when free disk falls below it. The
-      # default of 50 MB only trips with the host nearly full, on a disk shared with
-      # the neighbours' PostgreSQL. 50 GiB (RABBITMQ_DISK_FREE_LIMIT_BYTES) is well
-      # above PostgreSQL's 8 GB WAL, and below the runbook's 200 GB operator
-      # abort line, so the operator acts first and the alarm is only a backstop.
+      # default of 50 MB only trips with the host nearly full. This default is 2 GiB so a
+      # small self-hosted disk is not left in a permanent alarm; a host that shares its
+      # disk with other databases sets RABBITMQ_DISK_FREE_LIMIT_BYTES higher (lux:
+      # 53687091200, 50 GiB, above PostgreSQL's 8 GB WAL and below the runbook's 200 GB
+      # abort line).
       # Raise max_message_size to 128 MB (default 16 MB) for large MusicBrainz
       # records such as "Various Artists" that can exceed 50 MB.
       # return_per_object_metrics exposes per-queue series on :15692. Without it
@@ -114,7 +115,7 @@ services:
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
         -rabbit log_levels [{connection,error},{default,warning}]
         -rabbit max_message_size 134217728
-        -rabbit disk_free_limit ${RABBITMQ_DISK_FREE_LIMIT_BYTES:-53687091200}
+        -rabbit disk_free_limit ${RABBITMQ_DISK_FREE_LIMIT_BYTES:-2147483648}
         -rabbitmq_management_agent disable_metrics_collector true
         -rabbitmq_prometheus return_per_object_metrics true
     ports:
