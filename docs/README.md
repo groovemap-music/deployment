@@ -14,6 +14,7 @@ architecture overview.
 - [Configuration](configuration.md)
 - [Administration](admin-guide.md)
 - [Troubleshooting](troubleshooting.md)
+- [Keeping catalog caches out of the auth Valkey](valkey-cache-isolation.md)
 
 ## Operations and assurance
 

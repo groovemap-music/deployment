@@ -14,6 +14,8 @@ check_compose() {
 
 check_compose
 check_compose docker-compose.yml docker-compose.prod.yml
+# The cache-isolation overlay is opt-in and renders only on the production stack (it reuses its valkey_password secret).
+check_compose docker-compose.yml docker-compose.prod.yml docker-compose.cache-isolation.yml
 check_compose docker-compose.yml docker-compose.smoke.yml
 check_compose docker-compose.yml docker-compose.media-smoke.yml
 check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml

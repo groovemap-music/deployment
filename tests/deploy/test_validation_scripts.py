@@ -134,6 +134,7 @@ def test_compose_checker_only_expands_supported_configurations(tmp_path: Path) -
     assert log.read_text().splitlines() == [
         f"{validation} config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.prod.yml config --quiet",
+        f"{validation} -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.cache-isolation.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.media-smoke.yml config --quiet",
         f"{validation} -f docker-compose.yml -f docker-compose.released-fixture-smoke.yml config --quiet",
