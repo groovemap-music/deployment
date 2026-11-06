@@ -1,0 +1,56 @@
+---
+# Catalog cache isolation overlay: catalog caches get their own Valkey that evicts, so filling them
+# can never make an auth write fail. Opt-in and never applied by `just deploy`; applying it on a host
+# needs the operator's approval. See docs/valkey-cache-isolation.md for the comparison that chose
+# this and for what catalog-api must support before the overlay changes anything it does.
+#
+# Why a separate instance, not a separate database: maxmemory and maxmemory-policy are per
+# instance, so a second database in the same server shares both. The auth instance (`valkey`) must
+# stay noeviction because revoked-token and password-change keys live only there, and a catalog
+# cache needs the opposite, so the two cannot share a server.
+#
+# - valkey-cache: allkeys-lru, no persistence (a cache is rebuilt, not restored), its own memory
+#   cap (CATALOG_CACHE_MAXMEMORY, default 256mb). Same pinned image and the same password secret as
+#   `valkey`, so the production overlay must be applied first.
+# - api gets CATALOG_CACHE_VALKEY_HOST/PORT. A catalog-api that does not read them keeps using
+#   `valkey` for everything, exactly as before.
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  valkey-cache:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    container_name: groovemap-valkey-cache
+    hostname: valkey-cache
+    entrypoint: ["/scripts/valkey-entrypoint.sh"]
+    command: valkey-server --save "" --appendonly no --maxmemory ${CATALOG_CACHE_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+    volumes:
+      - ./scripts/valkey-entrypoint.sh:/scripts/valkey-entrypoint.sh:ro
+    secrets:
+      - valkey_password
+    networks:
+      groovemap:
+        aliases:
+          - catalog-cache
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$(cat /run/secrets/valkey_password)\" --no-auth-warning ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    environment:
+      CATALOG_CACHE_VALKEY_HOST: valkey-cache
+      CATALOG_CACHE_VALKEY_PORT: "6379"
+    depends_on:
+      valkey-cache:
+        condition: service_healthy
