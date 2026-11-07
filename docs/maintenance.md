@@ -39,9 +39,10 @@ with [the October 2026 operations console rollout](rollout-2026-10-operations-co
 ### Paired release floors
 
 `PAIRED_IMAGE_FLOORS` in `scripts/check-images.py` ties releases that only work together, and
-`just check` refuses a reviewed set that breaks a pair. The row is `discogs-sql-loader` `0.5.0`, the first
+`just check` refuses a reviewed set that breaks a pair. One row is `discogs-sql-loader` `0.5.0`, the first
 release that writes `purge_vetoed` (`gm-discogs-sql-loader-gna2`), with `database-schema` `0.8.0`, the first
-that has the column. Without that schema the loader declines the latch and reports degraded. Filling in
+that has the column. The other is `musicbrainz-sql-loader` `0.6.0` with `database-schema` `0.9.0`: that loader
+writes `purge_vetoed` and its hash `ON CONFLICT` target is the only key from `v0.9.0`. Without that schema the loader declines the latch and reports degraded. Filling in
 only one of the two is refused; `UNRELEASED` on both leaves a pair inert.
 
 ## Wave-2 image promotion (identity and activity)
@@ -365,6 +366,29 @@ extractor or write latch/marker rows. Recovery requires an operator-approved ful
 after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
+
+### Promotion of database-schema v0.9.0 (2026-11-07)
+
+`database-schema:v0.9.0` resolved from its released tag on GHCR (the index digest). `gh attestation verify
+oci://ghcr.io/groovemap-music/database-schema@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, `org.opencontainers.image.revision` equals the commit
+of tag `v0.9.0`, `org.opencontainers.image.version` equals the tag, and the image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.9.0` | `sha256:1076fef32c5b922b9228ab5b257e75143d5ee58d964b75a7c6f37dc9a539461b` | `37ae56b2be8eb398b674662f6a8938e6257af1c2` | `v0.8.0` — `sha256:43a7bb3299544a076786741b26d7491989c0977bf7d0f5c68522f506b77a6ef5` (image only; see below) |
+
+**Supersedes** `database-schema:v0.8.0` in the 2026-11-07 record below; every other digest there stands.
+
+**Breaking.** `v0.9.0` drops `musicbrainz.relationships_natural_key`, so the hash `relationships_key` is the only
+conflict target. Only `musicbrainz-sql-loader` `v0.6.0` or later can write there: an older writer's upsert
+fails with "there is no unique or exclusion constraint matching the ON CONFLICT specification". The drop is
+guarded and instant on an empty table, so apply it before MusicBrainz is enabled. There is no schema rollback:
+the rollback digest above is for the image pin only, and never runs `schema-init` again.
+
+**Paired floors.** `PAIRED_IMAGE_FLOORS` now has two rows: `discogs-sql-loader` `0.5.0` with `database-schema`
+`0.8.0` (unchanged), and `musicbrainz-sql-loader` `0.6.0` with `database-schema` `0.9.0`. The second closes the gap
+the 2026-11-07 record names: `check-images` now refuses the MusicBrainz loader on an older schema.
 
 ### Promotion of the 2026-11-07 release set
 

@@ -24,8 +24,22 @@ def pair(policy: dict[str, Any], loader: str, schema: str) -> tuple[tuple[str, s
     return ((LOADER, loader, SCHEMA, schema),)
 
 
-def test_the_veto_loader_is_tied_to_its_schema(policy: dict[str, Any]) -> None:
-    assert [(row[0], row[2]) for row in policy["PAIRED_IMAGE_FLOORS"]] == [(LOADER, SCHEMA)]
+MB_LOADER = "MUSICBRAINZ_SQL_LOADER_IMAGE"
+
+
+def test_both_loaders_are_tied_to_their_schema(policy: dict[str, Any]) -> None:
+    assert list(policy["PAIRED_IMAGE_FLOORS"]) == [
+        (LOADER, "0.5.0", SCHEMA, "0.8.0"),
+        (MB_LOADER, "0.6.0", SCHEMA, "0.9.0"),
+    ]
+
+
+def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, Any]) -> None:
+    """The real declaration: loader 0.6.0 on schema 0.8.0 (which has purge_vetoed but not the single key) is refused."""
+    versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.8.0"})
+    assert policy["paired_floor_problems"](versions) == [f"{MB_LOADER} 0.6.0 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0"]
+    versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
+    assert len(policy["paired_floor_problems"](versions)) == 2  # the Discogs loader is refused too
 
 
 def test_it_refuses_the_loader_against_an_older_schema(policy: dict[str, Any]) -> None:
@@ -35,8 +49,9 @@ def test_it_refuses_the_loader_against_an_older_schema(policy: dict[str, Any]) -
 
 def test_the_promoted_pair_refuses_the_loader_against_the_previous_schema(policy: dict[str, Any]) -> None:
     """The real declaration, not a fixture: loader 0.5.0 on schema 0.7.0 is refused."""
-    problems = policy["paired_floor_problems"]({LOADER: "0.5.0", SCHEMA: "0.7.0"})
-    assert problems == [f"{LOADER} 0.5.0 needs {SCHEMA} 0.8.0 or newer, and the reviewed set has 0.7.0"]
+    versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
+    problems = policy["paired_floor_problems"](versions)
+    assert problems[0] == f"{LOADER} 0.5.0 needs {SCHEMA} 0.8.0 or newer, and the reviewed set has 0.7.0"
 
 
 def test_it_refuses_a_newer_loader_too(policy: dict[str, Any]) -> None:
@@ -72,8 +87,8 @@ def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     row = '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")'
     assert row in source
-    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.9.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.9\.0 or newer"):
+    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.10.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.10\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 

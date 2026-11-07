@@ -1051,6 +1051,18 @@ a restarted loader resumes from its queues, which hold the backlog.
    (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after
    step 3 (stop it before `schema-init` if it is running).
 
+**Schema `v0.9.0` supersedes `v0.8.0` in this order** (see its
+[record](maintenance.md#promotion-of-database-schema-v090-2026-11-07)). Step 3's `schema-init` now runs
+`v0.9.0`, which drops `musicbrainz.relationships_natural_key`: apply it before MusicBrainz is enabled, and
+enable MusicBrainz only with `musicbrainz-sql-loader` `v0.6.0`, because an older writer's upsert fails once the
+constraint is gone. The drop is instant on an empty table. If the MusicBrainz stack is already running with an
+older loader, stop and ask. The command is step 3 unchanged, with the pin from `env-init`:
+
+```bash
+docker compose stop tableinator
+time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"
+```
+
 **Rollback.** Set a pin back to the rollback digest in the record and recreate only that service with
 `up -d --no-deps`. Never roll the schema back; `v0.8.0` is additive, so `catalog-api` `v0.7.0` and the
 `v0.7.0` loaders still run on it, except that `discogs-sql-loader` `v0.4.5` ignores `purge_vetoed`.
