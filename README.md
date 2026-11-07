@@ -13,8 +13,8 @@ states remain in retained Git history.
 ## Run GrooveMap in your homelab
 
 GrooveMap is a self-hosted music knowledge graph built from the Discogs and MusicBrainz
-datasets. On a Docker host with about 16 GB of memory and 100 GB of free disk (200 GB
-recommended), you need Docker (with Compose v2), git and python3 3.10 or newer, which Debian 12
+datasets. On a Docker host with about 16 GB of memory and 310 GB of free disk (450 GB
+recommended with MusicBrainz), you need Docker (with Compose v2), git and python3 3.10 or newer, which Debian 12
 and Ubuntu 22.04 already ship. Nothing else to install:
 
 ```bash

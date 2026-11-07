@@ -420,18 +420,19 @@ against the sum of its volumes' shares (`DATA_VOLUMES` in `scripts/deploy_helper
 
 | Volume | Minimum | Recommended |
 | --- | --- | --- |
-| `postgres_data` | 48 GB | 48 GB |
-| `neo4j_data` | 28 GB | 28 GB |
-| `discogs_data` | 12 GB | 12 GB |
+| `postgres_data` | 220 GB | 292 GB |
+| `neo4j_data` | 65 GB | 80 GB |
+| `discogs_data` | 12 GB | 15 GB |
 | `victoria_metrics_data` | 2 GB | 2 GB |
 | `rabbitmq_data` | 2 GB | 2 GB |
-| Docker's data root (images, layers, logs, small volumes) | 8 GB | 8 GB |
-| `musicbrainz_data` | 0 | 100 GB (an estimate, not measured; gm-deployment-q4en) |
+| Docker's data root (images, layers, logs, small volumes) | 9 GB | 9 GB |
+| `musicbrainz_data` | 0 | 50 GB (39.6 GB measured) |
 
 Named volumes on the default driver count against Docker's data root. Docker Desktop's VM
 disk, a remote `DOCKER_HOST` and network filesystems cannot be measured, so they warn with
-the sizes. The 76 GB Discogs figure is 28 GB Neo4j plus 48 GB PostgreSQL
-([architecture](architecture.md)); the 2 GB, 2 GB and 8 GB allowances are rough.
+the sizes. The shares come from the first full load measured on lux (252 GB PostgreSQL, of which 43 GB is
+the `musicbrainz` schema; 61 GB Neo4j; 39.6 GB `musicbrainz_data`; see
+[Hardware and sizing](homelab.md#hardware-and-sizing)): minimums cover Discogs alone, recommended sizes add MusicBrainz and 15-25% headroom. The 2 GB, 2 GB and 9 GB allowances are rough (RabbitMQ measured 0.25 GB).
 
 **PERIODIC_CHECK_DAYS**:
 

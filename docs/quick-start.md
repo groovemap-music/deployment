@@ -72,7 +72,7 @@ volumes relocated there; see [Hardware and sizing](homelab.md#hardware-and-sizin
 | --- | --- | --- | --- |
 | Memory for Docker, production | 16 GB | 32 GB | Neo4j sizing above, plus PostgreSQL's 2 GB shared buffers and 6 GB cache in `docker-compose.prod.yml` |
 | Memory for Docker, `--dev` | 8 GB | 16 GB | Neo4j's fixed 2 GiB heap and 1 GiB page cache in `docker-compose.yml` |
-| Free disk, new install, on each disk that holds data volumes (summed shares) | 100 GB | 200 GB | Discogs is ~76 GB on disk plus its ~11.3 GB dump ([architecture](architecture.md), "Dataset Scale"); MusicBrainz is not measured yet, so the recommendation assumes it is as large |
+| Free disk, new install, on each disk that holds data volumes (summed shares) | 310 GB | 450 GB | Measured on a full Discogs and MusicBrainz load: 252 GB PostgreSQL, 61 GB Neo4j, 39.6 GB MusicBrainz dump, ~11.3 GB Discogs dump ([homelab](homelab.md#hardware-and-sizing)); the minimum covers Discogs alone |
 
 On an existing deployment the disk check only warns below 20 GB free. Every
 configured host port must be free (ports the stack already holds are fine), and

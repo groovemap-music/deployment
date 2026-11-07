@@ -8,7 +8,7 @@ Docker host to a fully loaded instance. The quick path comes first, the technica
 ## Quick path
 
 You need a Linux (or macOS) machine with Docker Engine and Docker Compose v2, git, python3 3.10
-or newer (Debian 12 and Ubuntu 22.04 ship it), about 16 GB of memory for Docker and about 100 GB of free disk (200 GB recommended). See
+or newer (Debian 12 and Ubuntu 22.04 ship it), about 16 GB of memory for Docker and about 310 GB of free disk (450 GB recommended with MusicBrainz). See
 [Hardware and sizing](#hardware-and-sizing) for the numbers.
 
 ```bash
@@ -19,9 +19,9 @@ bash scripts/deploy.sh
 
 The script checks the host, writes `.env` and `secrets/`, sizes Neo4j for your memory,
 starts GrooveMap, waits for the Discogs import, then starts MusicBrainz. It prints your URLs and
-offers to create the first admin account. Expect the first load to take hours to about two
-days: releases alone take about 40 hours on the reference hardware
-([dataset scale table in the architecture guide](architecture.md)). Ctrl-C, a closed terminal or a reboot loses
+offers to create the first admin account. Expect the first load to take about a day and a half
+to two days: on the measured host Discogs took about 22 hours and MusicBrainz about 10 hours
+([timings](#hardware-and-sizing); the [dataset scale table in the architecture guide](architecture.md) has the Discogs detail). Ctrl-C, a closed terminal or a reboot loses
 nothing: the import keeps running in Docker, and running `bash scripts/deploy.sh` again resumes. Use
 `tmux` or `screen` anyway so you can watch it. If you use [mise](https://mise.jdx.dev/) and
 [just](https://just.systems/), both optional, `just deploy` runs the same script.
@@ -76,19 +76,58 @@ ahead anyway; it also skips the memory minimum, so a relocated data volume does 
 | --- | --- | --- |
 | Memory for Docker, production | 16 GB | 32 GB |
 | Memory for Docker, `--dev` | 8 GB | 16 GB |
-| Free disk, new install, summed over the disks the data volumes live on | 100 GB | 200 GB |
+| Free disk, new install, summed over the disks the data volumes live on | 310 GB (Discogs only) | 450 GB (Discogs and MusicBrainz) |
 
 On an existing deployment the disk check only warns below 20 GB free.
 
-| Data | Size on disk |
+The disk figures below are measured, not estimated. They come from the first full load on the
+operator's `lux` host (2026-11-06 and 07; host Intel Core Ultra 5 235HX, 14 cores, 125 GiB
+RAM, 1.7 TB NVMe root). That load ran through the [catalog-reset runbook](catalog-reset.md) in
+stages, not through a single `just deploy`, so the times below are the runbook's, and a plain
+`just deploy` on a fresh host runs the same extractors and loaders with the same work.
+
+| Data | Size on disk (after Discogs and MusicBrainz) |
 | --- | --- |
 | Discogs dump (`discogs_data`) | about 11.3 GB |
-| PostgreSQL with Discogs loaded | about 48 GB |
-| Neo4j with Discogs loaded | about 28 GB |
-| MusicBrainz | **an estimate, not measured yet** (tracked as gm-deployment-q4en); the 200 GB recommendation assumes it is as large as Discogs |
+| MusicBrainz dump (`musicbrainz_data`) | 39.6 GB |
+| PostgreSQL database `groovemap` (`postgres_data`) | 252 GB, of which the `musicbrainz` schema is 43 GB |
+| Neo4j store (`neo4j_data`) | 59 GB, plus 2.1 GB of transaction logs |
+| RabbitMQ (`rabbitmq_data`) | 248 MB |
 
-Discogs is about 76 GB on disk in total ([dataset scale table in the architecture guide](architecture.md)).
-Images and container layers add several GB under Docker's data root.
+That is about 373 GB with images and the small volumes. Free host disk went from 1,086 GB to
+975 GB at its lowest during the MusicBrainz load, so that load needs about 111 GB of room
+beyond what Discogs left. The minimum (310 GB) covers a Discogs-only install: PostgreSQL's 252 GB
+less the 43 GB `musicbrainz` schema is 209 GB, rounded up to 220 GB, and Neo4j keeps its full
+65 GB because the split between the two sources was not measured. The recommendation (450 GB)
+is the measured total plus about 20% headroom for the next dump, table bloat and WAL.
+
+| Phase (lux, same load) | Wall-clock |
+| --- | --- |
+| Discogs extraction and load, 34,886,446 records | about 20 h (2026-11-06 00:23:50 to 20:20 UTC) |
+| Discogs derived refresh, after the load | 2 h 09 min |
+| Post-import graph maintenance | about 25 min |
+| MusicBrainz dump download (dump 20261104-001002) | about 3 h, after the `v0.4.1` xz fix (4.8 MB/s before it) |
+| MusicBrainz processing | about 10 h 20 min (04:52 to 18:13 UTC on 2026-11-07, download included) |
+
+MusicBrainz loaded 5,903,813 releases, 4,621,039 release groups, 3,032,660 artists and 355,197
+labels.
+
+Peak resident memory per service on that host (MusicBrainz: 164 samples, one every 5 minutes;
+Discogs: `tableinator`):
+
+| Service | Peak |
+| --- | --- |
+| `neo4j` | 57.7 GiB (the host sets a 60 GiB limit: 8 GB heap and 48 GB page cache) |
+| `extractor-musicbrainz` | 2,720 MiB |
+| `tableinator` | 702.7 MiB (with the leak fix, 0 restarts) |
+| `brainztableinator` | 160 MiB |
+| `brainzgraphinator` | 136 MiB |
+
+The memory minimums (16 GB, 32 GB recommended) were **not** re-measured: lux runs Neo4j with
+a hand-sized budget far above what `just deploy` writes for a small host, and no smaller host
+was loaded. The services other than Neo4j and PostgreSQL peak at about 3.6 GiB together,
+so the Neo4j and PostgreSQL budgets are what a smaller host has to size. How a host near the
+minimum behaves (the 59 GB Neo4j store will not fit its page cache) was not measured.
 
 Neo4j is sized from the memory Docker reports: half of it goes to heap plus page cache, up to
 24 GB. The table and rules are in
@@ -1122,7 +1161,7 @@ These describe current behavior. A follow-up is planned; no dates are promised.
   operator-approved `tableinator` plus `graphinator` promotion. Schedule full-stack recreation for
   after the import; do not destroy or replace its data volumes. The UID-owned `/logs` tmpfs change
   remains separate until its dedicated bead lands.
-- **MusicBrainz disk use is an estimate.**
+- **Disk figures are from one host.** The sizes are measured on lux after one Discogs and one MusicBrainz load (see [Hardware and sizing](#hardware-and-sizing)); other dump versions and hardware will differ, and the data keeps growing.
 
 ## Backups and operations
 

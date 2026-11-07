@@ -7,14 +7,13 @@
 | `postgres_data` | PostgreSQL | about 48 GB with Discogs loaded |
 | `neo4j_data` | Neo4j's graph | about 28 GB with Discogs loaded |
 | `discogs_data` | the monthly Discogs dump the extractor keeps | about 11.3 GB |
-| `musicbrainz_data` | the MusicBrainz dump | not measured yet |
+| `musicbrainz_data` | the MusicBrainz dump | 39.6 GB measured |
 | `victoria_metrics_data`, `victoria_traces_data`, `grafana_data`, `rabbitmq_data` | metrics, traces, broker | small to moderate |
 | `*_logs`, `neo4j_import`, `neo4j_plugins`, `valkey_data` | logs and small state | small |
 
 Images (several GB) and container layers always live under Docker's data root. `just deploy`
-refuses a new install when a disk lacks the sum of its volumes' shares below (100 GB in total,
-200 GB recommended). The recommended size assumes MusicBrainz is about as large as Discogs,
-which is an estimate.
+refuses a new install when a disk lacks the sum of its volumes' shares below (310 GB in total,
+450 GB recommended). The figures are measured on a full Discogs and MusicBrainz load; the minimum covers Discogs alone.
 
 Use local disks for the databases. Network filesystems (NFS, SMB) and FUSE layers (mergerfs,
 Unraid's `/mnt/user`) are poor homes for PostgreSQL and Neo4j. On Unraid, use a pool or cache
@@ -69,15 +68,15 @@ shares:
 
 | Volume | Minimum | Recommended | Source |
 | --- | --- | --- | --- |
-| `postgres_data` | 48 GB | 48 GB | Discogs PostgreSQL size (docs/architecture.md) |
-| `neo4j_data` | 28 GB | 28 GB | Discogs Neo4j size (docs/architecture.md) |
-| `discogs_data` | 12 GB | 12 GB | the ~11.3 GB dump, rounded up |
+| `postgres_data` | 220 GB | 292 GB | measured 252 GB with MusicBrainz (209 GB without), plus headroom |
+| `neo4j_data` | 65 GB | 80 GB | measured 59 GB store plus 2.1 GB transaction logs |
+| `discogs_data` | 12 GB | 15 GB | the ~11.3 GB dump, rounded up |
 | `victoria_metrics_data`, `rabbitmq_data` | 2 GB each | 2 GB each | rough allowance |
-| Docker's data root, always | 8 GB | 8 GB | images, layers, logs, small volumes (rough allowance) |
-| `musicbrainz_data` | 0 | 100 GB | **an estimate**, as large as Discogs (gm-deployment-q4en) |
+| Docker's data root, always | 9 GB | 9 GB | images, layers, logs, small volumes (rough allowance) |
+| `musicbrainz_data` | 0 | 50 GB | 39.6 GB measured, plus headroom |
 
 Named volumes on the default driver count against Docker's data root. With nothing moved the
-shares add up to the old 100 GB minimum and 200 GB recommendation. A relocated install is
+shares add up to the 310 GB minimum and 450 GB recommendation. A relocated install is
 judged where its data lives, so `--force` is not the way past it, and it would also bypass the
 memory minimum. A `[stop]` line names the filesystem and the volumes on it: free space there
 or move more volumes. Use `--force` only for a measured shortfall the user accepts, and tell
