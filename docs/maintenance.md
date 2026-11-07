@@ -39,10 +39,10 @@ with [the October 2026 operations console rollout](rollout-2026-10-operations-co
 ### Paired release floors
 
 `PAIRED_IMAGE_FLOORS` in `scripts/check-images.py` ties releases that only work together, and
-`just check` refuses a reviewed set that breaks a pair. When promoting `gm-discogs-sql-loader-gna2`,
-replace the two `UNRELEASED` values with the first `discogs-sql-loader` release that writes
-`purge_vetoed` and the first `database-schema` release that has the column. Without that schema the
-loader declines the latch and reports degraded. Filling in only one of the two is refused.
+`just check` refuses a reviewed set that breaks a pair. The row is `discogs-sql-loader` `0.5.0`, the first
+release that writes `purge_vetoed` (`gm-discogs-sql-loader-gna2`), with `database-schema` `0.8.0`, the first
+that has the column. Without that schema the loader declines the latch and reports degraded. Filling in
+only one of the two is refused; `UNRELEASED` on both leaves a pair inert.
 
 ## Wave-2 image promotion (identity and activity)
 
@@ -365,6 +365,51 @@ extractor or write latch/marker rows. Recovery requires an operator-approved ful
 after a read-only baseline, encrypted recovery bundle, headroom checks, an idle producer and
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
+
+### Promotion of the 2026-11-07 release set
+
+Eleven images. Each digest is the index digest of the released tag on GHCR. `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for all eleven. On `linux/amd64`, `org.opencontainers.image.revision` equals the
+commit the release tag points to in its repository, `org.opencontainers.image.version` equals the tag,
+and every image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.8.0` | `sha256:43a7bb3299544a076786741b26d7491989c0977bf7d0f5c68522f506b77a6ef5` | `b24a01d8537ba7e26e0e812032a1e9f413d2caea` | `v0.7.0` — `sha256:da6e53bb865f3172161e07fcca34d8fecef587facdf566ae6efff378e9ebc771` |
+| `catalog-api:v0.8.0` | `sha256:4b41ea68cafe2817d25f3d17946747d2f1729c6e1039fc4e6943f8e33f809653` | `18514b594a0460b5d1cef3813bc2c68af1b58fe2` | `v0.7.0` — `sha256:143d5dd329adfe42a2ba9fe8785df45430603e07aac807af0cc8471263ec927a` |
+| `discogs-sql-loader:v0.5.0` | `sha256:5a77fbdeb44759e3547b52bad7b9193a3d7f36dbb41668b553fedb2a1bff5f17` | `f5d2cbfa5f699c76fe9262086f23ad24843f06f4` | `v0.4.5` — `sha256:dc74e541b444a943f0e155fc07dd779047ab74f892e9074478eee954e0fe434f` |
+| `discogs-graph-enricher:v0.6.2` | `sha256:d13b496070b4deba6756d5f572f9b7c10bff9982257ef2739f99a6038e91b487` | `5390fbcec50e4eb1b9f2a6a2c817a1e9d288727c` | `v0.6.1` — `sha256:0e24f5dc94a6f5d58da35cfe351b877f137e6d928f0b485c4eb64ca22513c1ee` |
+| `analytics-engine:v0.6.1` | `sha256:a88d82a0486840d9e89ac75cd91e263b642d6b1cb6a33357d7fe2f73e156caf1` | `c96e4e05bdf0d184a51ca5aa7ab45281805db975` | `v0.6.0` — `sha256:000a053102c52f377a9f6ff2edd492c205fbb1973d55fcad168ecc7abb81d031` |
+| `graph-explorer:v0.3.3` | `sha256:885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce` | `007cb3d0cc22d128d0c8b86f8d7d4a49b20aa775` | `v0.3.2` — `sha256:da5b49f70a2d8fdd0c6254e6cf9de2b7c20da79ce90d8922a8349aff068a9fb8` |
+| `operations-console:v0.3.1` | `sha256:07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816` | `c3cb805d9817bec714ff000a97bb9a907f125909` | `v0.3.0` — `sha256:1d9e480b0404434a48e394d7e062d3f54eff25ac48a6a8d45ba015833b11d691` |
+| `discogs-ingestion:v0.4.1` | `sha256:aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9` | `941ae4ef6acf53a94a6c362742cf31711864c95b` | `v0.4.0` — `sha256:881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d` |
+| `musicbrainz-ingestion:v0.4.0` | `sha256:7809c365595421c742703095e6260f54d4b06309bd0b5f8cd9dcae66634ec9a0` | `0e03d994bc9bfce0ad58871099ee7f28dc9cc372` | `v0.3.0` — `sha256:7599975c51429dc5bbfa30a9e55a28bed6fd1afef8f3a9a5dfd7c0286d4da89a` |
+| `musicbrainz-sql-loader:v0.6.0` | `sha256:022fa4d665ac46203cb31b5bf94dd6dc825a3cf69e70a497a1c3a9d0efa2d8d9` | `3a656c23a0b3d2f010cb64596a2608ca7026946c` | `v0.5.0` — `sha256:2de906859c354f5a69ffa3eca20febe51fa4eb043857c3b6b83287b67c63b809` |
+| `musicbrainz-graph-enricher:v0.5.0` | `sha256:f382c6d1497fb598948876acb310ec355f98d99fbffe5820582e30df6d0c5329` | `410fa4e5d0617f656fa9ea353713720b8be6f7e4` | `v0.4.0` — `sha256:e9fb87302678e4d8b3f681f9db4a509f2ed0eba0fb2378a8da18f846fd979057` |
+
+**Superseded:** every previous digest in this file for these eleven images. They remain as rollback
+targets, except that the schema never rolls back (see the Lux section in [homelab](homelab.md#lux-upgrade-the-2026-11-07-release-set)).
+
+**Paired floor.** `PAIRED_IMAGE_FLOORS` is now `discogs-sql-loader` `0.5.0` with `database-schema` `0.8.0`
+(`gm-discogs-sql-loader-gna2`), so `check-images` refuses the loader against any older schema. The
+paired row covers only the Discogs loader: `musicbrainz-sql-loader` `v0.6.0` also writes `purge_vetoed` and
+needs the same schema, which the deploy order below honors, but `check-images` does not enforce it.
+The other floors are unchanged and met (`EXTERNAL_STORE_FLOORS`, `CONSOLE_TARGETS_FLOOR`).
+
+**Compatibility.**
+
+- `analytics-engine` `v0.6.1` vendors internal-insights contract `1.7.0`; `catalog-api` `v0.8.0` serves
+  `1.10.0`. The changes are additive (1.8.0 and 1.9.0 publish 300 s budgets for genre-trends and
+  label-longevity, 1.10.0 adds `include_placeholders`) and every path is unchanged, so `1.7.0` keeps working. The
+  engine's 900 s default read timeout is above those budgets. One behavior change reaches it: label-longevity now
+  leaves placeholder labels such as Not On Label out by default, and the engine does not pass `include_placeholders`.
+- `purge_vetoed` is a column on `loader_extraction_latch`, first in `database-schema` `v0.8.0`, written by
+  `discogs-sql-loader` `v0.5.0` and `musicbrainz-sql-loader` `v0.6.0` (the schema's compatibility file lists both
+  as writers). Both loaders need the schema first; against `v0.7.0` the Discogs loader declines the latch and
+  reports degraded.
+- `graph-explorer` `v0.3.3` renders a null `completeness_pct` as n/a. `database-schema` `v0.8.0` makes that column
+  nullable, so `graph-explorer` goes live before the schema.
 
 ### Promotion of the reset release set (2026-11-05)
 

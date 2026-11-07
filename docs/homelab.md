@@ -1013,6 +1013,48 @@ stays `UNRELEASED`: neither loader `v0.4.5` nor schema `v0.7.0` has `purge_vetoe
 `.env.<timestamp>.bak` pin) and recreate only that service with `up -d --no-deps`. Roll `catalog-api`
 back only together with the schema it matches.
 
+## Lux upgrade: the 2026-11-07 release set
+
+Pins and revisions are in the [promotion record](maintenance.md#promotion-of-the-2026-11-07-release-set).
+Nothing here has been run on lux by this repository, and each stage needs explicit operator approval.
+Same rules as the earlier windows: do not use `just deploy`, a plain `docker compose up` or the homelab
+playbook, which end in a whole-stack `up`; use `up -d --no-deps <service>` only. Keep
+`TABLEINATOR_MEMORY_LIMIT=30g` in lux's `.env` (unchanged by this set) and never set it with `docker update`.
+
+**Does it need a window?** A short one, for the loaders only. `catalog-api`, `graph-explorer`,
+`analytics-engine`, `operations-console` and the extractor images are plain recreates. The schema change is
+additive (a new `loader_extraction_latch.purge_vetoed` column and a nullable `completeness_pct`), but its
+duration on lux's database has not been measured, so time it. Both loaders restart onto new pins and
+`schema-init` must finish before either starts, so run it with `tableinator` stopped. Do it between extractions:
+a restarted loader resumes from its queues, which hold the backlog.
+
+**Order.**
+
+1. Move the checkout and `.env` by hand: `git checkout --detach <merge commit>`, then `python3
+   scripts/env-init.py` (rewrites only `*_IMAGE` lines, old pins kept in `.env.<timestamp>.bak`), and compare
+   the render before and after. The changed services must be the pins in the record; stop on anything else.
+2. `graph-explorer` `v0.3.3`: `docker compose up -d --no-deps explore`. It renders a null `completeness_pct`
+   as n/a and must be live before the schema makes it nullable.
+3. Stop the loader: `docker compose stop tableinator`. Then `schema-init` `v0.8.0` once, timed, and require exit 0:
+   `time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
+   Never run an older `schema-init` afterwards; there is no schema rollback.
+4. `catalog-api` `v0.8.0`: `docker compose up -d --no-deps api`; require `healthy`.
+5. `tableinator` (SQL loader `v0.5.0`): `docker compose up -d --no-deps tableinator`, then confirm
+   `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-tableinator` prints
+   `32212254720 32212254720`, health `healthy`, and a consumer attached on its queues.
+6. `graphinator` (graph enricher `v0.6.2`), no schema change and no Neo4j stats refresh in this release:
+   `docker compose up -d --no-deps graphinator`. Give it its own go-ahead as before.
+7. `analytics-engine` `v0.6.1` (two services): `docker compose up -d --no-deps insights embeddings`, then `operations-console`
+   `v0.3.1`: `docker compose up -d --no-deps dashboard`.
+8. Extractors: `extractor-discogs` (`discogs-ingestion` `v0.4.1`) and, if the MusicBrainz stack runs on lux,
+   `extractor-musicbrainz` (`v0.4.0`), `brainztableinator` (SQL loader `v0.6.0`) and `brainzgraphinator`
+   (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after
+   step 3 (stop it before `schema-init` if it is running).
+
+**Rollback.** Set a pin back to the rollback digest in the record and recreate only that service with
+`up -d --no-deps`. Never roll the schema back; `v0.8.0` is additive, so `catalog-api` `v0.7.0` and the
+`v0.7.0` loaders still run on it, except that `discogs-sql-loader` `v0.4.5` ignores `purge_vetoed`.
+
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.

@@ -33,6 +33,12 @@ def test_it_refuses_the_loader_against_an_older_schema(policy: dict[str, Any]) -
     assert problems == [f"{LOADER} 0.5.0 needs {SCHEMA} 0.7.0 or newer, and the reviewed set has 0.6.3"]
 
 
+def test_the_promoted_pair_refuses_the_loader_against_the_previous_schema(policy: dict[str, Any]) -> None:
+    """The real declaration, not a fixture: loader 0.5.0 on schema 0.7.0 is refused."""
+    problems = policy["paired_floor_problems"]({LOADER: "0.5.0", SCHEMA: "0.7.0"})
+    assert problems == [f"{LOADER} 0.5.0 needs {SCHEMA} 0.8.0 or newer, and the reviewed set has 0.7.0"]
+
+
 def test_it_refuses_a_newer_loader_too(policy: dict[str, Any]) -> None:
     assert policy["paired_floor_problems"]({LOADER: "0.10.0", SCHEMA: "0.6.3"}, pair(policy, "0.5.0", "0.7.0"))
 
@@ -64,10 +70,10 @@ def _with(namespace: dict[str, Any], script: str) -> None:
 
 def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
-    row = '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED)'
+    row = '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")'
     assert row in source
-    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.4.5", "DATABASE_SCHEMA_IMAGE", "0.8.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.8\.0 or newer"):
+    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.9.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.9\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
@@ -75,12 +81,12 @@ def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
     "row",
     [
         '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", UNRELEASED)',
-        '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", "0.7.0")',
+        '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", "0.8.0")',
     ],
 )
 def test_check_images_refuses_half_a_pair(tmp_path: Path, row: str) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
-    broken = source.replace('("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED)', row)
+    broken = source.replace('("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")', row)
     assert broken != source
     with pytest.raises(AssertionError, match="both UNRELEASED or both set"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
@@ -89,8 +95,8 @@ def test_check_images_refuses_half_a_pair(tmp_path: Path, row: str) -> None:
 def test_check_images_refuses_a_malformed_floor(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     broken = source.replace(
-        '("DISCOGS_SQL_LOADER_IMAGE", UNRELEASED, "DATABASE_SCHEMA_IMAGE", UNRELEASED)',
-        '("DISCOGS_SQL_LOADER_IMAGE", "next", "DATABASE_SCHEMA_IMAGE", "0.7.0")',
+        '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")',
+        '("DISCOGS_SQL_LOADER_IMAGE", "next", "DATABASE_SCHEMA_IMAGE", "0.8.0")',
     )
     with pytest.raises(AssertionError, match=r"X\.Y\.Z or UNRELEASED"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
