@@ -872,6 +872,8 @@ EXPECTED_ALERT_SEVERITIES = {
     "QueueBacklogGrowing": "warning",
     "PurgeVetoedConsecutive": "warning",
     "ConsumersAbsent": "critical",
+    "PipelineBatchStalled": "critical",
+    "PipelineBatchDeliveryLost": "warning",
     "InsightsStale": "warning",
     "ApiErrorRateHigh": "critical",
     "ApiLatencyHigh": "warning",

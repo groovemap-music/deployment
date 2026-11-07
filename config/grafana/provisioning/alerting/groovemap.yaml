@@ -306,6 +306,86 @@ groups:
           severity: critical
 
 
+      - uid: groovemap-pipeline-batch-stalled
+        title: PipelineBatchStalled
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # The loader sets this 1 only when a data type's oldest unwritten record has
+              # waited past POSTGRES_BATCH_STALL_S (300s by default) and nothing of that type
+              # has been acked or rejected for as long. A deep queue whose flushes keep
+              # settling stays 0. The gauge is re-set every 15s by the loader's reporter.
+              expr: max by (loader, entity) (groovemap_pipeline_batch_stalled{service_namespace="groovemap"})
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        # Worst case from the last ack: 300s stall bound + up to 15s to the next report + 60s here,
+        # so about 6 minutes.
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A discogs loader batch has stopped settling
+          description: >-
+            Threshold: groovemap_pipeline_batch_stalled above 0 for 1m. The oldest
+            unwritten record has waited past the stall bound and nothing of that
+            entity has been acked or rejected in as long. A long flush that keeps
+            settling does not fire this. The alert arrives about 6 minutes after the
+            last ack. Check groovemap_pipeline_batch_oldest_unsettled_age_seconds
+            for the wait, then the loader's /health stalled_batches field.
+        labels:
+          severity: critical
+
+      - uid: groovemap-batch-delivery-lost
+        title: PipelineBatchDeliveryLost
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # delivery_lost means the broker closed the channel under an unacked delivery, so
+              # the record went back unwritten. Held-timeout requeues are a normal hold ending
+              # and are not counted here.
+              expr: sum by (loader, entity) (increase(groovemap_pipeline_batch_requeued_total{service_namespace="groovemap", reason="delivery_lost"}[15m]))
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A discogs loader lost an unacked delivery to a channel close
+          description: >-
+            Threshold: any delivery_lost requeue in the last 15m. The record went
+            back to RabbitMQ unwritten, and the loader cannot acknowledge it. One
+            occurrence fires for 15m. Repeats keep it firing.
+        labels:
+          severity: warning
+
       - uid: groovemap-purge-vetoed-consecutive
         title: PurgeVetoedConsecutive
         condition: C
@@ -345,6 +425,7 @@ groups:
             docs/troubleshooting.md.
         labels:
           severity: warning
+
 
       - uid: groovemap-insights-stale
         title: InsightsStale
