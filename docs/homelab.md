@@ -530,6 +530,15 @@ their SQL against your server instead. An override may still never rewire `POSTG
 and nothing is applied on a shared server without your explicit approval. Details:
 [shared-services.md](../skills/groovemap-homelab/references/shared-services.md).
 
+**Shared memory on an external server.** GrooveMap's compose file does not run this server, so its
+`/dev/shm` is yours to size. Parallel queries put their hash tables there (a parallel hash can use
+about 640 MB, and two full-width gathers about 1.3 GB, at the production parallel settings:
+`max_parallel_workers_per_gather=4`, `max_parallel_workers=8`, `work_mem=64MB`). The container
+running the server needs `shm_size` (or `docker run --shm-size`) of at least 2g, and more if the
+server runs more concurrent parallel work. Docker's default of 64 MB makes a parallel query fail with
+"could not resize shared memory segment ... No space left on device". The bundled server's default
+is `POSTGRES_SHM_SIZE`, see [configuration.md](configuration.md#postgresql-configuration).
+
 ## Shared monitoring
 
 A homelab that already runs Grafana, VictoriaMetrics, VictoriaTraces, node-exporter and cAdvisor

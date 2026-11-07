@@ -541,6 +541,16 @@ Bolt traffic crosses an untrusted network (separate host/VM, overlay network, cl
 **Used By**: Tableinator, Dashboard, API, Insights, Brainztableinator, Schema-Init, and the
 `embeddings` job (which logs in with its own `EMBEDDING_PIPELINE_POSTGRES_*` credentials)
 
+**Shared memory for the bundled server.** The `postgres` service sets `shm_size` from `POSTGRES_SHM_SIZE`
+(Docker size syntax, e.g. `2g`, `4g`). Default `2g`. Parallel hash joins keep their hash tables in
+`/dev/shm`: each participant gets `hash_mem_multiplier` (2) × `work_mem` (64MB) = 128 MB, and a gather
+runs its leader plus up to `max_parallel_workers_per_gather` (4) workers, so one parallel hash can
+use about 640 MB. `max_parallel_workers` (8) bounds the workers across all gathers. 2g covers two
+full-width gathers. Raise it when the server runs more concurrent parallel queries, or when you
+raise `work_mem` or the parallel settings. Docker's default of 64 MB is too small for these settings.
+The cap is not reserved memory. Changing it recreates the `postgres` container, so apply it in a
+maintenance window.
+
 > **Note**: `POSTGRES_HOST` may include a port, e.g. `pgbouncer:6432` (useful when
 > connecting through a connection pooler). An embedded port always takes precedence
 > over `POSTGRES_PORT`; if no port is present, `POSTGRES_PORT` (default `5432`) is used.
