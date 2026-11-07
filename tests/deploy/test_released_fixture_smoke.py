@@ -17,7 +17,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 OVERLAY = ROOT / "docker-compose.released-fixture-smoke.yml"
 SCRIPT = ROOT / "scripts" / "smoke-released-fixture.sh"
-RELEASE_DIGEST = "881d8f96842e17fa9dc3f2d43fab1a18abcee664e5bc2ec0374b45f09cceaa8d"
+RELEASE_DIGEST = "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9"
 FIXTURE_MANIFEST = "/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/manifest.json"
 EXPECTED_EVENTS = "/usr/share/discogs-ingestion/contracts/extractor-smoke/v1/expected-events.ndjson"
 
