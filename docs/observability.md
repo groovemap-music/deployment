@@ -489,6 +489,7 @@ closed.
 | `groovemap.pipeline.consumers.active` | `groovemap_pipeline_consumers_active` | up-down counter | `source` |
 | `groovemap.pipeline.reconnects` | `groovemap_pipeline_reconnects_total` | counter | `system` (`rabbitmq`\|`neo4j`\|`postgresql`\|`valkey`) |
 | `groovemap.pipeline.circuit_breaker.state` | `groovemap_pipeline_circuit_breaker_state` | gauge (0 closed, 1 half-open, 2 open) | `system` |
+| `groovemap.pipeline.purge.consecutive_vetoes` | `groovemap_pipeline_purge_consecutive_vetoes` | gauge (extractions in a row) | discogs: `loader`, `entity`; musicbrainz: `source` |
 
 ### Extraction metrics
 
@@ -857,6 +858,7 @@ single number per rule.
 | `CircuitBreakerOpen` | `max by (service_name, system) (groovemap_pipeline_circuit_breaker_state)` | `> 1` (open) for 2m | critical |
 | `QueueBacklogGrowing` | `rabbitmq_queue_messages_ready` per `queue`, only while its 15m ack rate (`rabbitmq_detailed_queue_messages_acked_total`) is below 50/s | `> 50000` for 30m | warning |
 | `ConsumersAbsent` | `sum by (source) (groovemap_pipeline_consumers_active)` | `< 1` for 10m | critical |
+| `PurgeVetoedConsecutive` | `max by (loader, source, entity) (groovemap_pipeline_purge_consecutive_vetoes)` | `> 1` (two extractions in a row) for 5m | warning |
 | `InsightsStale` | `time() - max by (computation) (groovemap_insights_last_success_seconds)` | `> 86400s` (24h) for 15m | warning |
 | `ApiErrorRateHigh` | 5xx share of `http_server_request_duration_seconds_count` per `service_name`, 10m | `> 5%` for 10m | critical |
 | `ApiLatencyHigh` | p95 of `http_server_request_duration_seconds_bucket` per `service_name`, 10m | `> 2s` for 10m | warning |
