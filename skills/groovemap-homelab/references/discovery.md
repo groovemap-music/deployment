@@ -33,8 +33,8 @@ command -v zpool >/dev/null && zpool list && zfs list -o name,used,avail,mountpo
 findmnt -t nfs,nfs4,cifs,fuse.mergerfs,fuse.shfs 2>/dev/null           # network or FUSE mounts
 ```
 
-A new install needs about 100 GB for Discogs and about 200 GB with MusicBrainz (an estimate;
-MusicBrainz is not measured yet). If the Docker data root is small and another local disk has
+A new install needs about 310 GB for Discogs and about 450 GB with MusicBrainz (measured on
+a full load: 373 GB used, plus headroom). If the Docker data root is small and another local disk has
 room, plan to move the large volumes ([storage.md](storage.md)). Avoid network and FUSE
 filesystems for the databases.
 

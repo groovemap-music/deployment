@@ -258,7 +258,7 @@ def run_disk_check(config: dict[str, Any] | None, disks: Disks, *, local: bool =
 
 @pytest.mark.parametrize(
     ("free_gb", "existing", "level"),
-    [(80, False, "stop"), (150, False, "warn"), (250, False, "ok"), (15, True, "warn"), (80, True, "ok")],
+    [(200, False, "stop"), (380, False, "warn"), (500, False, "ok"), (15, True, "warn"), (80, True, "ok")],
 )
 def test_default_volumes_share_the_docker_root_and_keep_the_old_minimums(free_gb: int, existing: bool, level: str) -> None:
     (finding,) = run_disk_check(mounts(), Disks(**{"/docker": free_gb}), existing=existing)
@@ -267,10 +267,11 @@ def test_default_volumes_share_the_docker_root_and_keep_the_old_minimums(free_gb
 
 def test_the_shares_add_up_to_the_documented_minimum_and_recommendation() -> None:
     shares = [*helpers.DATA_VOLUMES, helpers.DOCKER_ROOT_SHARE]
-    assert sum(item.minimum_gb for item in shares) == 100
-    assert sum(item.recommended_gb for item in shares) == 200
-    # The Discogs numbers come from docs/architecture.md: 48 GB PostgreSQL, 28 GB Neo4j, ~11.3 GB dump.
-    assert (volume("postgres_data").minimum_gb, volume("neo4j_data").minimum_gb, volume("discogs_data").minimum_gb) == (48, 28, 12)
+    assert sum(item.minimum_gb for item in shares) == 310
+    assert sum(item.recommended_gb for item in shares) == 450
+    # Measured on lux, 2026-11-06/07: PostgreSQL 252 GB (209 GB without the musicbrainz schema), Neo4j 61 GB, dump ~11.3 GB.
+    assert (volume("postgres_data").minimum_gb, volume("neo4j_data").minimum_gb, volume("discogs_data").minimum_gb) == (220, 65, 12)
+    assert volume("musicbrainz_data").recommended_gb >= 40
 
 
 def test_a_relocated_override_bind_is_measured_where_it_lives() -> None:
@@ -280,34 +281,33 @@ def test_a_relocated_override_bind_is_measured_where_it_lives() -> None:
     docker, tank = sorted(findings, key=lambda finding: "/tank" in finding.message)
     assert tank.level == "ok"
     assert "postgres_data" in tank.message
-    # postgres_data left the data root, so what is left there needs 100 - 48 = 52 GB: 30 GB is not enough.
+    # postgres_data left the data root, so what is left there needs 310 - 220 = 90 GB: 30 GB is not enough.
     assert docker.level == "stop"
     assert "postgres_data" not in docker.message
-    assert "52 GB" in docker.message
+    assert "90 GB" in docker.message
 
 
 def test_named_volume_driver_options_move_the_volume_too() -> None:
     config = mounts()
     for name in ("postgres_data", "neo4j_data", "discogs_data", "musicbrainz_data"):
         config["volumes"][name] = bind_volume(f"/tank/{name}")
-    # The data root keeps only 8 GB of images and 4 GB of small volumes; /tank holds the 88 GB of data.
-    findings = run_disk_check(config, Disks(**{"/docker": 15, "/tank": 120}))
+    # The data root keeps only 9 GB of images and 4 GB of small volumes; /tank holds the 297 GB of data.
+    findings = run_disk_check(config, Disks(**{"/docker": 15, "/tank": 400}))
     levels = {("/tank" in finding.message): finding.level for finding in findings}
     assert levels == {True: "warn", False: "ok"}
     tank = next(finding for finding in findings if "/tank" in finding.message)
-    assert "recommended" in tank.message
-    assert "estimate" in tank.message
+    assert "437 GB is recommended" in tank.message
 
 
 def test_two_filesystems_are_each_judged_against_their_own_share() -> None:
     config = mounts()
     config["volumes"]["postgres_data"] = bind_volume("/tank/pg")
     config["volumes"]["neo4j_data"] = bind_volume("/ssd/neo4j")
-    findings = run_disk_check(config, Disks(**{"/docker": 100, "/tank": 60, "/ssd": 20}))
+    findings = run_disk_check(config, Disks(**{"/docker": 70, "/tank": 300, "/ssd": 50}))
     by_disk = {("/tank" if "/tank" in finding.message else "/ssd" if "/ssd" in finding.message else "/docker"): finding for finding in findings}
-    assert by_disk["/tank"].level == "ok"  # PostgreSQL alone needs 48 GB
-    assert by_disk["/ssd"].level == "stop"  # 28 GB needed
-    assert by_disk["/docker"].level == "warn"  # the 24 GB minimum fits; MusicBrainz's estimate does not
+    assert by_disk["/tank"].level == "ok"  # PostgreSQL alone needs 220 GB
+    assert by_disk["/ssd"].level == "stop"  # 65 GB needed
+    assert by_disk["/docker"].level == "warn"  # the 25 GB minimum fits; the 78 GB recommendation, which counts MusicBrainz, does not
     assert "neo4j_data" in by_disk["/ssd"].message
 
 
@@ -315,11 +315,11 @@ def test_volumes_on_one_filesystem_pool_their_shares() -> None:
     config = mounts()
     config["volumes"]["postgres_data"] = bind_volume("/tank/pg")
     config["volumes"]["neo4j_data"] = bind_volume("/tank/neo4j")
-    findings = run_disk_check(config, Disks(**{"/docker": 500, "/tank": 70}))
+    findings = run_disk_check(config, Disks(**{"/docker": 500, "/tank": 280}))
     tank = next(finding for finding in findings if "/tank" in finding.message)
-    # 48 + 28 = 76 GB needed together; 70 GB would pass either volume alone.
+    # 220 + 65 = 285 GB needed together; 280 GB would pass either volume alone.
     assert tank.level == "stop"
-    assert "76 GB" in tank.message
+    assert "285 GB" in tank.message
 
 
 @pytest.mark.parametrize(
@@ -340,8 +340,8 @@ def test_an_unmeasurable_host_warns_with_the_sizes(local: bool, desktop: bool) -
     (finding,) = run_disk_check(mounts(), Disks(), local=local, desktop=desktop)
     assert finding.level == "warn"
     assert "Could not measure free disk space" in finding.message
-    assert "100 GB" in finding.message
-    assert "200 GB" in finding.message
+    assert "310 GB" in finding.message
+    assert "450 GB" in finding.message
 
 
 def test_docker_desktop_still_measures_a_host_bind_mount() -> None:

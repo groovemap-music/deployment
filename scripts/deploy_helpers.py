@@ -18,12 +18,11 @@ Minimums, and where they come from:
   config (`resolve_locations`), the volumes are grouped by the filesystem they land on, and each
   filesystem needs the sum of its volumes' shares (`DATA_VOLUMES`): refuse below the minimums,
   warn below the recommended sizes. With nothing relocated everything lands on Docker's data
-  root and the shares add up to the old single figures, 100 GB and 200 GB. The Discogs data is
-  ~76 GB on disk (28 GB Neo4j + 48 GB PostgreSQL; docs/architecture.md "Dataset Scale") plus the
-  ~11.3 GB compressed dump the extractor keeps; images, layers, logs and the small volumes
-  take the rest of the minimum on the data root. MusicBrainz has not been measured
-  (gm-deployment-q4en), so the recommended size adds a conservative estimate of another 100 GB,
-  as large as Discogs, as musicbrainz_data's share.
+  root and the shares add up to 310 GB minimum and 450 GB recommended. These are measured, not
+  estimated (lux, 2026-11-06/07): PostgreSQL 252 GB, Neo4j 61 GB, musicbrainz_data 39.6 GB,
+  ~11.3 GB Discogs dump; images, layers, logs and the small volumes take the rest on the data
+  root. The minimum covers Discogs alone (musicbrainz_data's share is 0); the recommended size
+  adds MusicBrainz and about 20% headroom over the measured 373 GB.
 - Disk, existing deployment: the data is already on disk, so only warn below 20 GB free on any of those filesystems.
 
 Memory is judged twice. Total is what Docker reports (`docker info` MemTotal), which on Docker
@@ -202,19 +201,23 @@ class DataVolume:
     recommended_gb: int
 
 
-# Where each large volume is mounted, and its share. The minimums add up to the 100 GB Discogs
-# needs on a fresh install (docs/architecture.md "Dataset Scale": 28 GB Neo4j + 48 GB PostgreSQL;
-# the ~11.3 GB dump, rounded up). The recommended sizes add MusicBrainz's estimated 100 GB.
+# Where each large volume is mounted, and its share, from the measured first load on lux
+# (2026-11-06/07, docs/homelab.md "Hardware and sizing"). Measured after Discogs and MusicBrainz:
+# PostgreSQL 252 GB (43 GB of it the musicbrainz schema), Neo4j 59 GB store plus 2.1 GB
+# transactions, musicbrainz_data 39.6 GB, discogs_data ~11.3 GB, RabbitMQ 0.25 GB. The minimums
+# cover a Discogs-only install (PostgreSQL 252 - 43 = 209 GB, rounded up to 220; Neo4j's split
+# between the two sources was not measured, so it keeps the full 65 GB). The recommended sizes
+# are the measured totals plus about 15-25% headroom for dump growth, bloat and WAL.
 DATA_VOLUMES = (
-    DataVolume("postgres_data", "postgres", "/var/lib/postgresql/data", 48, 48),
-    DataVolume("neo4j_data", "neo4j", "/data", 28, 28),
-    DataVolume("discogs_data", "extractor-discogs", "/discogs-data", 12, 12),
-    DataVolume("musicbrainz_data", "extractor-musicbrainz", "/musicbrainz-data", 0, 100),
+    DataVolume("postgres_data", "postgres", "/var/lib/postgresql/data", 220, 292),
+    DataVolume("neo4j_data", "neo4j", "/data", 65, 80),
+    DataVolume("discogs_data", "extractor-discogs", "/discogs-data", 12, 15),
+    DataVolume("musicbrainz_data", "extractor-musicbrainz", "/musicbrainz-data", 0, 50),
     DataVolume("victoria_metrics_data", "victoria-metrics", "/victoria-metrics-data", 2, 2),
     DataVolume("rabbitmq_data", "rabbitmq", "/var/lib/rabbitmq", 2, 2),
 )
 # Always on Docker's data root: images (several GB), container layers, logs and the small volumes.
-DOCKER_ROOT_SHARE = DataVolume("images and the small volumes", "", "", 8, 8)
+DOCKER_ROOT_SHARE = DataVolume("images and the small volumes", "", "", 9, 9)
 
 
 # --- .env reading and writing ----------------------------------------------------------
@@ -494,10 +497,9 @@ def check_free(free_bytes: int, label: str, volumes: Sequence[DataVolume], exist
             forcible=True,
         )
     if free < recommended:
-        estimate = " (an estimate; it has not been measured yet)" if any(volume.name == "musicbrainz_data" for volume in volumes) else ""
         return Finding(
             "warn",
-            f"{free} GB free under {label} ({names}): enough for the minimum of {need} GB, but {recommended} GB is recommended{estimate}.",
+            f"{free} GB free under {label} ({names}): enough for the minimum of {need} GB, but {recommended} GB is recommended.",
         )
     return Finding("ok", f"Disk: {free} GB free under {label} ({names})")
 
