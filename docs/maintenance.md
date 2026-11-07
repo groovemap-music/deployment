@@ -424,6 +424,37 @@ then `analytics-engine` back to `v0.6.1`. Rolling `analytics-engine` back while 
 brings the daily job back to the null failure. No schema change here: the schema is the `database-schema` v0.9.0
 record below, and it is not rolled back.
 
+### Promotion of database-schema v0.10.0, analytics-engine v0.7.0 and catalog-api v0.10.0 (2026-11-07)
+
+Three images, and the order matters: **deploy `database-schema` v0.10.0 first** (it adds
+`label_longevity.is_placeholder`), **then `analytics-engine` v0.7.0, then `catalog-api` v0.10.0.**
+Nothing is deployed by this record.
+
+This promotion supersedes the unmerged catalog-api v0.9.1 promotion gm-deployment-p03a. That bead
+should be closed. Its digest was never pinned, so there is nothing to roll back to from it.
+
+Each digest is the index digest of the released tag on GHCR. `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for all three. On `linux/amd64`, `org.opencontainers.image.revision`
+equals the commit the release tag points to, `org.opencontainers.image.version` equals the tag, and every
+image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.10.0` | `sha256:0624cda98c4460eff0c25ea905d220bad509099100dbc55cc91f2688e9a76749` | `4252e933e71199be62184752af410542e5894ab8` | `v0.9.0` — `sha256:1076fef32c5b922b9228ab5b257e75143d5ee58d964b75a7c6f37dc9a539461b` |
+| `analytics-engine:v0.7.0` | `sha256:eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f` | `2ea83b9ea25a49a1e1ebe932dde21e471a994216` | `v0.6.2` — `sha256:a619f5cd4aa67492c35766836db79468a098ba9d2d6f0a074f443131a26d6849` |
+| `catalog-api:v0.10.0` | `sha256:427f4b71540bc28c598309a92322d11f814aa82b33058d6c328285a4b1d973c6` | `583769f1307e82292a3801974c85a4318152eec6` | `v0.9.0` — `sha256:c5304e52c184f4b3dc25aa0175e5bcc05db650270608f0152d73bd8eecccdeba` |
+
+**Superseded:** the `database-schema` `v0.9.0`, `analytics-engine` `v0.6.2` and `catalog-api` `v0.9.0`
+pins in the records above. They are the rollback targets in the table.
+
+**Rollback order is the reverse of deploy order:** `catalog-api` back to `v0.9.0` first, then
+`analytics-engine` back to `v0.6.2`. The schema is not rolled back (`v0.10.0` stays applied). This record does
+not verify that `catalog-api` `v0.9.0` or `analytics-engine` `v0.6.2` run against the `v0.10.0` schema, so check
+that before a rollback.
+
+`check-images.py` passes with these pins, and `RELEASED_IMAGE_VERSIONS` records the new versions.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
