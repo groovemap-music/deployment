@@ -367,6 +367,29 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
+### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
+
+One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
+re-encoded each entity from the dump tarball with a single-threaded xz preset 6, about 3.5 MB/s, roughly
+20 hours for `release` before the first record was parsed. v0.4.1 uses a multi-threaded xz encoder at
+preset 1 (about 105 MB/s on the repository's measurement; the output is about 30% larger). The output
+is still a standard `.jsonl.xz`, and files written by v0.4.0 are still accepted and skipped. Nothing here
+has been run on lux by this repository.
+
+`gh attestation verify oci://ghcr.io/groovemap-music/musicbrainz-ingestion@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, `org.opencontainers.image.revision`
+equals the commit `v0.4.1` points to, `org.opencontainers.image.version` is `v0.4.1`, and the image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `musicbrainz-ingestion:v0.4.1` | `sha256:b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c` | `6b8734a923a1f63f1febd527d85b1784f67d5a39` | `v0.4.0` — `sha256:7809c365595421c742703095e6260f54d4b06309bd0b5f8cd9dcae66634ec9a0` |
+
+**Superseded:** the `v0.4.0` pin in the 2026-11-07 release set below; it remains the rollback target.
+
+**Tuning.** `MUSICBRAINZ_XZ_THREADS` sets the encoder thread count (default `min(cores, 6)`; zero or an
+invalid value falls back to the default). Compose does not set it, so add it to the `extractor-musicbrainz`
+environment only to change it. No other setting, volume or pair floor changes.
+
 ### Promotion of database-schema v0.9.0 (2026-11-07)
 
 `database-schema:v0.9.0` resolved from its released tag on GHCR (the index digest). `gh attestation verify
