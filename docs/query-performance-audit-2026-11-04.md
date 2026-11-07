@@ -2,8 +2,8 @@
 
 Bead `gm-deployment-0x54`. This is the **pre-load** report: a static review plus read-only live evidence (Neo4j profiles, Postgres settings and one search plan). It is not the baseline. The
 baseline is captured once the operator has enabled collection and the Discogs load has finished
-([procedure](query-performance-baseline.md)); the perf-audit beads in the other repositories should read that file, whose name will be
-`query-performance-baseline-<date>.md` in this directory.
+([procedure](query-performance-baseline.md)); the perf-audit beads in the other repositories should read that file, whose name is
+[`query-performance-baseline-2026-11-07.md`](query-performance-baseline-2026-11-07.md) in this directory.
 
 ## State when this was written
 
