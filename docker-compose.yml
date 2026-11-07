@@ -226,6 +226,15 @@ services:
       - "max_wal_size=4GB"
       - "-c"
       - "checkpoint_completion_target=0.9"
+    # Parallel hash joins keep their hash tables in dynamic shared memory, which
+    # this mount caps (Docker's default is 64 MB, far too small). A hash costs
+    # hash_mem_multiplier (2) x work_mem (64MB) = 128 MB per participant; a gather
+    # runs the leader and max_parallel_workers_per_gather (4) workers, so about
+    # 640 MB per parallel hash, and two full-width gathers (max_parallel_workers
+    # 8) need about 1.3 GB. 2g covers that with headroom on the minimum 8 GB
+    # Docker host. It is a cap, not reserved memory. The shared lux server uses
+    # 4g for its wider load (POSTGRES_SHM_SIZE).
+    shm_size: ${POSTGRES_SHM_SIZE:-2g}
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_DB: groovemap

@@ -1073,10 +1073,11 @@ disk-spilling slow mode at both settings tried below full speed:
 
 Raise `maintenance_work_mem` to at least ~4.5 GB for a full-catalog build, and prefer 8 GB with
 parallel workers enabled where the host can spare it. A parallel HNSW build needs `/dev/shm` (or
-Docker's `--shm-size`) at least as large as whatever `maintenance_work_mem` it runs with — this
-stack's `postgres` service does not raise `shm_size` today, because it has no pgvector build to
-size a real index against yet; whoever lands the PostgreSQL 19 + pgvector image above must raise
-it alongside the memory setting. These figures describe the shape of the sizing problem at this
+Docker's `--shm-size`) at least as large as whatever `maintenance_work_mem` it runs with. The
+stack's `postgres` service sets `shm_size` from `POSTGRES_SHM_SIZE` (default `2g`, see
+[configuration.md](configuration.md#postgresql-configuration)), which is below the 8 GB build above.
+A parallel HNSW build at that memory setting needs `POSTGRES_SHM_SIZE` raised to match. Set it
+alongside `maintenance_work_mem` when the PostgreSQL 19 + pgvector image above lands. These figures describe the shape of the sizing problem at this
 row count on a two-CPU-class host, not a value to plan the production host around — re-measure
 there.
 
