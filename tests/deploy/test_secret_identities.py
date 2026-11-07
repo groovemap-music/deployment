@@ -34,7 +34,7 @@ OWNER = "1000:1000"  # ${UID:-1000}:${GID:-1000}, what an unset UID/GID resolves
 #            secret as root, then drops privileges. Needs root and CAP_DAC_OVERRIDE.
 INVENTORY: dict[str, dict[str, str]] = {
     "grafana": {
-        "image": "grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f",
+        "image": "grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205",
         "image_user": "472",
         "reads_as": "owner",
     },
@@ -44,48 +44,48 @@ INVENTORY: dict[str, dict[str, str]] = {
         "reads_as": "owner",
     },
     "valkey-exporter": {
-        "image": "oliver006/redis_exporter:v1.95.0@sha256:afb21407aba3df1b4010899f155fc6b1ba2026c97b725d72aca4019d772e7b6b",
+        "image": "oliver006/redis_exporter:v1.96.0@sha256:3d57b9eb142a62ffc600063606a41cd471cd53d81bed10be5b56b3a8918f2c26",
         "image_user": "59000:59000",
         "reads_as": "owner",
     },
     "postgres": {
-        "image": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+        "image": "postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5",
         "image_user": "",
         "reads_as": "root",  # docker-entrypoint.sh file_env, before gosu postgres
     },
     "rabbitmq": {
-        "image": "rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109",
+        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
         "image_user": "",
         "reads_as": "root",  # scripts/rabbitmq-entrypoint.sh, before docker-entrypoint.sh drops
     },
     "rabbitmq-dlq-policy-init": {
-        "image": "rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109",
+        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
         "image_user": "",
         "reads_as": "root",  # runs as the image default (root); scripts/rabbitmq-dlq-policy-init.sh
     },
     "data-volume-init": {
-        "image": "rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109",
+        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
         "image_user": "",
         "reads_as": "root",  # user 0:0 with CHOWN + DAC_READ_SEARCH only; scripts/data-volume-init.sh reads no secret
     },
     "neo4j": {
-        "image": "neo4j:2026.10.0-community@sha256:388c0e5c6d4543e3d0e6cee3d1e751c05ad9314aa73342cc63cd0ea0946e38bb",
+        "image": "neo4j:2026.10.1-community@sha256:44ad2a2504fd7d27df1d1e976f2d481e4266a0814d3657f2d5df62124ce657f1",
         "image_user": "",
         "reads_as": "root",  # scripts/neo4j-entrypoint.sh, before /startup/docker-entrypoint.sh drops
     },
     "valkey": {
-        "image": "valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+        "image": "valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b",
         "image_user": "",
         "reads_as": "root",  # scripts/valkey-entrypoint.sh, before docker-entrypoint.sh drops
     },
     # The same pinned images, run as one-shot store checks under the owner (external overlays).
     "store-check-postgres": {
-        "image": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+        "image": "postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5",
         "image_user": "",
         "reads_as": "owner",
     },
     "store-check-valkey": {
-        "image": "valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+        "image": "valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b",
         "image_user": "",
         "reads_as": "owner",
     },

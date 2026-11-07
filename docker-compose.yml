@@ -82,7 +82,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109
+    image: rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -154,7 +154,7 @@ services:
   # Neither this service nor the policy it declares touches any queue declaration — the
   # four catalog consumers' DLQs stay classic; see docs/admin-guide.md#dlq-size-cap-policy.
   rabbitmq-dlq-policy-init:
-    image: rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109
+    image: rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407
     container_name: groovemap-rabbitmq-dlq-policy-init
     hostname: rabbitmq-dlq-policy-init
     entrypoint: ["/scripts/rabbitmq-dlq-policy-init.sh"]
@@ -191,7 +191,7 @@ services:
   # network, and it never deletes, chmods or rewrites contents. A no-op when ownership already
   # matches. See docs/docker-security.md.
   data-volume-init:
-    image: rabbitmq:4-management@sha256:c200fd496482cda18c412be4e6f244830e1e75949b8cf5f0e887cea9ea456109
+    image: rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407
     container_name: groovemap-data-volume-init
     hostname: data-volume-init
     user: "0:0"
@@ -217,7 +217,7 @@ services:
 
   # PostgreSQL database
   postgres:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     container_name: groovemap-postgres
     hostname: postgres
     command:
@@ -253,7 +253,7 @@ services:
       - no-new-privileges:true
 
   neo4j:
-    image: neo4j:2026.10.0-community@sha256:388c0e5c6d4543e3d0e6cee3d1e751c05ad9314aa73342cc63cd0ea0946e38bb
+    image: neo4j:2026.10.1-community@sha256:44ad2a2504fd7d27df1d1e976f2d481e4266a0814d3657f2d5df62124ce657f1
     container_name: groovemap-neo4j
     hostname: neo4j
     ulimits:
@@ -302,7 +302,7 @@ services:
       - no-new-privileges:true
 
   valkey:
-    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     container_name: groovemap-valkey
     hostname: valkey
     command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
@@ -359,7 +359,7 @@ services:
   # oliver006/redis_exporter speaks to Valkey; REDIS_ADDR is the exporter's own
   # variable name. The collector relabels its redis_* series to valkey_*.
   valkey-exporter:
-    image: oliver006/redis_exporter:v1.95.0@sha256:afb21407aba3df1b4010899f155fc6b1ba2026c97b725d72aca4019d772e7b6b
+    image: oliver006/redis_exporter:v1.96.0@sha256:3d57b9eb142a62ffc600063606a41cd471cd53d81bed10be5b56b3a8918f2c26
     container_name: groovemap-valkey-exporter
     hostname: valkey-exporter
     environment:
@@ -490,7 +490,7 @@ services:
   # keeps working. It scrapes nothing itself; otel-collector owns all
   # collection and remote-writes here.
   victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
+    image: victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
     container_name: groovemap-victoria-metrics
     hostname: victoria-metrics
     command:
@@ -563,7 +563,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.163.2@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849
+    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=file:/etc/otelcol-contrib/config.yaml"]
@@ -615,7 +615,7 @@ services:
   # never edited in the UI. Dev enables anonymous Viewer access; the production
   # overlay disables it and sources the admin password from a Docker secret.
   grafana:
-    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     container_name: groovemap-grafana
     hostname: grafana
     environment:

@@ -22,7 +22,7 @@
 
 services:
   homelab-postgres:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     hostname: homelab-postgres
     entrypoint:
       - sh
@@ -89,7 +89,7 @@ services:
     restart: "no"
 
   homelab-victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
+    image: victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
     networks:
       monitoring:
         aliases:
@@ -110,7 +110,7 @@ services:
     restart: "no"
 
   homelab-grafana:
-    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     environment:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/homelab_admin_password
       GF_ANALYTICS_REPORTING_ENABLED: "false"
