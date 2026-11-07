@@ -1038,14 +1038,16 @@ a restarted loader resumes from its queues, which hold the backlog.
 3. Stop the loader: `docker compose stop tableinator`. Then `schema-init` `v0.8.0` once, timed, and require exit 0:
    `time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
    Never run an older `schema-init` afterwards; there is no schema rollback.
-4. `catalog-api` `v0.8.0`: `docker compose up -d --no-deps api`; require `healthy`.
+4. `analytics-engine` `v0.6.2` (two services): `docker compose up -d --no-deps insights embeddings`; require
+   `healthy`. It must be live before `catalog-api` `v0.9.0` (step 7), which returns a null `completeness_pct`
+   that `v0.6.1` cannot read. Then `operations-console` `v0.3.1`: `docker compose up -d --no-deps dashboard`.
 5. `tableinator` (SQL loader `v0.5.0`): `docker compose up -d --no-deps tableinator`, then confirm
    `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-tableinator` prints
    `32212254720 32212254720`, health `healthy`, and a consumer attached on its queues.
 6. `graphinator` (graph enricher `v0.6.2`), no schema change and no Neo4j stats refresh in this release:
    `docker compose up -d --no-deps graphinator`. Give it its own go-ahead as before.
-7. `analytics-engine` `v0.6.1` (two services): `docker compose up -d --no-deps insights embeddings`, then `operations-console`
-   `v0.3.1`: `docker compose up -d --no-deps dashboard`.
+7. `catalog-api` `v0.9.0`, only after step 4 (`analytics-engine` `v0.6.2`): `docker compose up -d --no-deps api`;
+   require `healthy`. The daily job then gets null `completeness_pct` for artists and labels, which `v0.6.2` accepts.
 8. Extractors: `extractor-discogs` (`discogs-ingestion` `v0.4.1`) and, if the MusicBrainz stack runs on lux,
    `extractor-musicbrainz` (`v0.4.1`, which re-encodes the dump with a multi-threaded xz, `MUSICBRAINZ_XZ_THREADS`, default 6; see the [v0.4.1 record](maintenance.md#promotion-of-musicbrainz-ingestion-v041-2026-11-07)), `brainztableinator` (SQL loader `v0.6.0`) and `brainzgraphinator`
    (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after

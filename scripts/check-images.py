@@ -67,7 +67,7 @@ IMAGE_OWNERS = {
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
     "DATABASE_SCHEMA_IMAGE": "1076fef32c5b922b9228ab5b257e75143d5ee58d964b75a7c6f37dc9a539461b",  # database-schema v0.9.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "4b41ea68cafe2817d25f3d17946747d2f1729c6e1039fc4e6943f8e33f809653",  # catalog-api v0.8.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "c5304e52c184f4b3dc25aa0175e5bcc05db650270608f0152d73bd8eecccdeba",  # catalog-api v0.9.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "d13b496070b4deba6756d5f572f9b7c10bff9982257ef2739f99a6038e91b487",  # discogs-graph-enricher v0.6.2  gitleaks:allow
@@ -76,14 +76,14 @@ RELEASED_IMAGE_DIGESTS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "022fa4d665ac46203cb31b5bf94dd6dc825a3cf69e70a497a1c3a9d0efa2d8d9",  # musicbrainz-sql-loader v0.6.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816",  # operations-console v0.3.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce",  # graph-explorer v0.3.3  gitleaks:allow
-    "ANALYTICS_ENGINE_IMAGE": "a88d82a0486840d9e89ac75cd91e263b642d6b1cb6a33357d7fe2f73e156caf1",  # analytics-engine v0.6.1  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "a619f5cd4aa67492c35766836db79468a098ba9d2d6f0a074f443131a26d6849",  # analytics-engine v0.6.2  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
     "DATABASE_SCHEMA_IMAGE": "0.9.0",
-    "CATALOG_API_IMAGE": "0.8.0",
+    "CATALOG_API_IMAGE": "0.9.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.6.2",
@@ -92,7 +92,7 @@ RELEASED_IMAGE_VERSIONS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.6.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.3.1",
     "GRAPH_EXPLORER_IMAGE": "0.3.3",
-    "ANALYTICS_ENGINE_IMAGE": "0.6.1",
+    "ANALYTICS_ENGINE_IMAGE": "0.6.2",
 }
 
 # A capability floor that no release meets yet. `just deploy` refuses the external store it guards.
