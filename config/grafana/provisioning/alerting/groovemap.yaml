@@ -386,6 +386,47 @@ groups:
         labels:
           severity: warning
 
+      - uid: groovemap-purge-vetoed-consecutive
+        title: PurgeVetoedConsecutive
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # discogs-sql-loader labels this gauge loader and entity; musicbrainz-sql-loader
+              # labels it source. Grouping by all three covers both shapes, and a label a
+              # given loader does not set reads as the empty string.
+              expr: max by (loader, source, entity) (groovemap_pipeline_purge_consecutive_vetoes{service_namespace="groovemap"})
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [1]}
+        # The gauge is re-set on every extraction signal, so a clean purge returns it
+        # to 0. One veto is normal and stays at 1; the rule fires at 2.
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: A stale-row purge has been vetoed on consecutive extractions
+          description: >-
+            Threshold: groovemap_pipeline_purge_consecutive_vetoes above 1 for
+            one entity, sustained 5m. Stale rows for that entity are not
+            clearing. See Stale-row purge vetoed on consecutive extractions in
+            docs/troubleshooting.md.
+        labels:
+          severity: warning
+
+
       - uid: groovemap-insights-stale
         title: InsightsStale
         condition: C

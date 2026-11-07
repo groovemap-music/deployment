@@ -863,6 +863,7 @@ single number per rule.
 | `ConsumersAbsent` | `sum by (source) (groovemap_pipeline_consumers_active)` | `< 1` for 10m | critical |
 | `PipelineBatchStalled` | `max by (loader, entity) (groovemap_pipeline_batch_stalled)` | `> 0` for 1m; about 6 minutes after the last ack | critical |
 | `PipelineBatchDeliveryLost` | `sum by (loader, entity) (increase(groovemap_pipeline_batch_requeued_total{reason="delivery_lost"}[15m]))` | `> 0` | warning |
+| `PurgeVetoedConsecutive` | `max by (loader, source, entity) (groovemap_pipeline_purge_consecutive_vetoes)` | `> 1` (two extractions in a row) for 5m | warning |
 | `InsightsStale` | `time() - max by (computation) (groovemap_insights_last_success_seconds)` | `> 86400s` (24h) for 15m | warning |
 | `ApiErrorRateHigh` | 5xx share of `http_server_request_duration_seconds_count` per `service_name`, 10m | `> 5%` for 10m | critical |
 | `ApiLatencyHigh` | p95 of `http_server_request_duration_seconds_bucket` per `service_name`, 10m | `> 2s` for 10m | warning |

@@ -870,6 +870,7 @@ EXPECTED_ALERT_SEVERITIES = {
     "ConsumerFailureRateHigh": "critical",
     "CircuitBreakerOpen": "critical",
     "QueueBacklogGrowing": "warning",
+    "PurgeVetoedConsecutive": "warning",
     "ConsumersAbsent": "critical",
     "PipelineBatchStalled": "critical",
     "PipelineBatchDeliveryLost": "warning",
