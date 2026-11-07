@@ -66,7 +66,7 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "43a7bb3299544a076786741b26d7491989c0977bf7d0f5c68522f506b77a6ef5",  # database-schema v0.8.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "1076fef32c5b922b9228ab5b257e75143d5ee58d964b75a7c6f37dc9a539461b",  # database-schema v0.9.0  gitleaks:allow
     "CATALOG_API_IMAGE": "4b41ea68cafe2817d25f3d17946747d2f1729c6e1039fc4e6943f8e33f809653",  # catalog-api v0.8.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "7809c365595421c742703095e6260f54d4b06309bd0b5f8cd9dcae66634ec9a0",  # musicbrainz-ingestion v0.4.0  gitleaks:allow
@@ -82,7 +82,7 @@ RELEASED_IMAGE_DIGESTS = {
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.8.0",
+    "DATABASE_SCHEMA_IMAGE": "0.9.0",
     "CATALOG_API_IMAGE": "0.8.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.0",
@@ -128,6 +128,9 @@ PAIRED_IMAGE_FLOORS = (
     # gm-discogs-sql-loader-gna2 writes purge_vetoed on loader_extraction_latch and its startup probe
     # requires the column, so against an older schema it declines the latch and reports degraded.
     ("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0"),
+    # gm-musicbrainz-sql-loader: v0.6.0 writes purge_vetoed, and its hash ON CONFLICT target is the only
+    # key once database-schema v0.9.0 drops relationships_natural_key. An older schema lacks the column.
+    ("MUSICBRAINZ_SQL_LOADER_IMAGE", "0.6.0", "DATABASE_SCHEMA_IMAGE", "0.9.0"),
 )
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
