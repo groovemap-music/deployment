@@ -129,10 +129,13 @@ run_api() {
 
 # Cypher cases: name, then the statement. Mirror catalog-api's queries (api/queries/neo4j_queries.py) so the plans match
 # what the API runs. PROFILE executes the statement, so each is a real read; none writes.
+# Each case is one line (the loop reads line by line). tests/deploy/test_perf_baseline_queries.py pins the statement
+# catalog-api runs under tests/deploy/fixtures/catalog_api/ and fails when this case drifts from it. When catalog-api
+# changes a query, re-pin it there and update the case here in the same change.
 cypher_cases() {
   cat <<'EOF'
 explore.artist.bowie
-PROFILE MATCH (a:Artist {name: 'David Bowie'}) RETURN a.id AS id, COUNT { MATCH (r:Release)-[:BY]->(a) RETURN DISTINCT r } AS release_count, COUNT { MATCH (r:Release)-[:BY]->(a), (r)-[:ON]->(l:Label) RETURN DISTINCT l } AS label_count;
+PROFILE MATCH (a:Artist {name: 'David Bowie'}) CALL { WITH a OPTIONAL MATCH (a)-[:ALIAS_OF]->(alias:Artist) WITH a, collect(DISTINCT alias.id) AS alias_ids OPTIONAL MATCH (a)-[:MEMBER_OF]->(grp:Artist) WITH a, alias_ids, collect(DISTINCT grp.id) AS group_ids OPTIONAL MATCH (m:Artist)-[:MEMBER_OF]->(a) WITH alias_ids, group_ids, collect(DISTINCT m.id) AS member_ids UNWIND (alias_ids + group_ids + member_ids) AS related_id WITH DISTINCT related_id WHERE related_id IS NOT NULL RETURN count(related_id) AS alias_count } RETURN a.id AS id, a.name AS name, a.release_count AS release_count, a.label_count AS label_count, alias_count;
 trends.artist.bowie
 PROFILE MATCH (r:Release)-[:BY]->(a:Artist {name: 'David Bowie'}) WHERE r.year > 0 WITH r.year AS year, count(DISTINCT r) AS count RETURN year, count ORDER BY year;
 trends.label.not-on-label.id1818
