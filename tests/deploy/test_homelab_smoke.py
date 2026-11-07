@@ -561,7 +561,14 @@ def test_the_workflow_runs_on_linux_with_pinned_tools_and_no_secrets() -> None:
     job = workflow["jobs"]["smoke"]
     assert job["runs-on"] == "ubuntu-24.04"
     assert job["timeout-minutes"] <= 60
-    assert workflow["concurrency"]["group"] == "smoke-homelab-${{ github.ref }}-${{ inputs.smoke_host_uid || '1000' }}"
+    assert workflow["concurrency"]["group"] == (
+        "smoke-homelab-${{ (github.event.action == 'labeled' && github.event.label.name != 'smoke-homelab')"
+        " && format('other-label-{0}', github.run_id) || github.ref }}-${{ inputs.smoke_host_uid || '1000' }}"
+    )
+    # Another label (Dependabot labels every pull request it opens) neither runs the smoke nor
+    # cancels the branch's run: it is skipped and sits in a concurrency group of its own.
+    assert workflow["jobs"]["scope"]["if"] == "github.event.action != 'labeled' || github.event.label.name == 'smoke-homelab'"
+    assert workflow["jobs"]["smoke"]["needs"] == "scope"
     for reference in re.findall(r"uses:\s+(\S+)", text):
         assert re.search(r"@[0-9a-f]{40}$", reference), reference
     assert "secrets." not in text
