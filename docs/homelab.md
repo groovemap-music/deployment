@@ -1071,6 +1071,11 @@ docker compose stop tableinator
 time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"
 ```
 
+**Schema `v0.10.0`, `analytics-engine` `v0.7.0` and `catalog-api` `v0.10.0`.** Deploy in this order:
+schema `v0.10.0` first (`label_longevity.is_placeholder`), then `analytics-engine` `v0.7.0`, then `catalog-api`
+`v0.10.0`. The pins, digests and rollback targets are in the
+[record](maintenance.md#promotion-of-database-schema-v0100-analytics-engine-v070-and-catalog-api-v0100-2026-11-07).
+
 **Rollback.** Set a pin back to the rollback digest in the record and recreate only that service with
 `up -d --no-deps`. Never roll the schema back; `v0.8.0` is additive, so `catalog-api` `v0.7.0` and the
 `v0.7.0` loaders still run on it, except that `discogs-sql-loader` `v0.4.5` ignores `purge_vetoed`.
