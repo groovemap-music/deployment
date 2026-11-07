@@ -253,6 +253,23 @@ enricher or SQL loader repository; for extraction failures, route to
 `discogs-ingestion` or `musicbrainz-ingestion`, whichever source is affected.
 Include the exact image digest and relevant redacted logs.
 
+## Stale-row purge vetoed on consecutive extractions
+
+**Alert:** `PurgeVetoedConsecutive` (warning) — `groovemap_pipeline_purge_consecutive_vetoes` above 1 for 5m.
+
+The gauge counts extractions in a row whose stale-row purge was vetoed for one entity. One veto
+followed by a clean purge is normal and stays at 1. At 2 or more, the stale rows for that entity
+are not clearing. The veto is right to hold, because it protects live rows, so do not force the purge.
+
+1. Find the entity and loader from the labels: discogs-sql-loader sets `loader` and `entity`;
+   musicbrainz-sql-loader sets `source`.
+2. Read the entity's `.dlq` in the loader and find why the records fail. Dead letters that stay
+   across two dumps, or a record rejected in every dump, are the usual cause.
+3. Fix the cause and replay the records, or clear the DLQ if they are not wanted.
+4. The next extraction then purges normally and the gauge returns to 0. If it does not, the
+   loader's error line (`Stale-row purge vetoed on consecutive extractions`) names the entity and
+   the next step; route the diagnosis to the loader repository.
+
 ## Before an approved corrective action
 
 Record:
