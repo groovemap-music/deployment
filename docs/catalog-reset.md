@@ -126,19 +126,23 @@ renamed copy, and no connection can reach it.
 Each of these must hold, or do not start:
 
 - **The operator's go-ahead for this window**, recorded on the bead.
-- **The next releases are promoted here, with a merged commit:** `database-schema` `v0.7.0`, the new
-  `discogs-sql-loader` and `discogs-graph-enricher`, `catalog-api` and `analytics-engine`. Three
-  things depend on that set:
+- **The release set to deploy is promoted here, with a merged commit.** The 2026-11-06 run used
+  `database-schema` `v0.7.0`, `discogs-sql-loader` `v0.4.5`, `discogs-graph-enricher` `v0.6.1`,
+  `catalog-api` `v0.7.0` and `analytics-engine` `v0.6.0`; a later reset uses the set the latest
+  [promotion record](maintenance.md) names. Three things depend on that set:
   - The leak fix: `discogs-sql-loader` `v0.4.4` or later.
   - **Person names:** the loader and enricher must both strip names through
     `common.person_names.strip_person_name` (`gm-discogs-sql-loader-kj93` and
     `gm-discogs-graph-enricher-wem5`). Both write names verbatim today, so without those two a
     reset re-creates every padded Person and the merge it was meant to avoid is still owed.
     `graph.bootstrap_fill` is not part of this: nothing in the ingest calls it.
-  - **Rarity:** `catalog-api` `v0.6.0` and `analytics-engine` `v0.5.0` still use the single-response
-    call that failed on lux on 2026-11-04 with `ReadTimeout` after 30 minutes, which is why
-    `insights.release_rarity` is empty there. Confirm that the promoted `analytics-engine` has
-    `rarity-scores/page` and that the promoted `catalog-api` serves it.
+  - **Rarity:** `catalog-api` `v0.6.0` and `analytics-engine` `v0.5.0` used a single-response call
+    that failed on lux on 2026-11-04 with `ReadTimeout` after 30 minutes, which left
+    `insights.release_rarity` empty. The paged path (`rarity-scores/page`) in `catalog-api` `v0.7.0` and
+    `analytics-engine` `v0.6.0` completed on the 2026-11-06 run. Confirm that the promoted set still has it.
+  - **Insights reads:** on 2026-11-06 `genre_trends` failed on the first run (a 504 after about 31 s). The
+    fix, and the long budgets for `style-landmarks`, `style-cotags` and `label-longevity`, are in
+    `catalog-api` `v0.8.0` (internal-insights contract `1.10.0`); a set older than that fails them again.
 - **Lux's tableinator cap is in configuration** (`gm-deployment-3qs7`), so the leak proof runs under
   the same 30 GiB limit that a recreate keeps. It shares the host with the neighbours' PostgreSQL.
 - **The rehearsal has passed on exactly this commit and these images** ([Rehearsal](#rehearsal)):
@@ -368,6 +372,8 @@ Do not delete the marker or `.discogs_metadata.json` to get the same effect.
 
 ### 13. Watch
 
+The watch runs until the full gate (step 14) exits 0, not until post-import maintenance logs complete.
+
 ```bash
 just catalog-reset status --interval 300 --duration 3600
 ```
@@ -407,7 +413,10 @@ just discogs-import-status --prod -f docker-compose.override.yml --wait --interv
 Exit 0 is complete, exit 3 in progress, exit 2 cannot determine and not a pass. Keep MusicBrainz off
 until exit 0. The watcher then re-attaches and projects `gm_id` by itself within its 5-minute poll.
 Look for the new `identity.reattach.auto` row and for `Post-import maintenance complete` in the
-`graphinator` logs. That pass is detached from the gate and writes to the graph, so wait for it.
+`graphinator` logs. That pass is detached from the gate and writes to the graph, so wait for it. It is
+not the last signal: the gate's refresh step runs alongside it and finishes later. On the 2026-11-06
+fresh load both started around 20:25 UTC; maintenance finished at 20:50 (about 25 minutes) and the refresh
+at 22:34 (2 h 09 min). The full gate exiting 0 is the end of the watch, not the maintenance log line.
 
 The watcher fires on the SQL latch alone, and its projection only reaches nodes already in the graph.
 On lux the graph finished first, but the leak fix may change that order. If `gm_id` is missing on
@@ -423,16 +432,18 @@ just catalog-reset after-load --state-dir "$W" --apply
 It refuses until PostgreSQL's load, the graph's completion and the watcher's row are all there. It
 recreates `api` so the ledger poll is back on, confirms that, and starts `insights`.
 
-It runs every computation in turn, 30 seconds after starting, rarity near the end. Expect 1 to 1.5
-hours for rarity alone. Confirm with `💾 Release rarity scores stored` in its log and:
+It runs every computation in turn, 30 seconds after starting, rarity near the end. Rarity alone took
+2 h 04 min on the 2026-11-06 run, so plan on about two hours, not one. Confirm with `💾 Release rarity scores stored` in its log and:
 
 ```sql
 SELECT status, started_at, completed_at, error_message FROM insights.computation_log
 WHERE insight_type = 'release_rarity' ORDER BY started_at DESC LIMIT 1;
 ```
 
-Any other computation that failed on lux before (`label_longevity`, `style_cotags`,
-`style_landmarks`) should now pass. If not, record it; those failures are not caused by the reset.
+Every other computation must also read `completed` in `insights.computation_log`. On 2026-11-06
+`genre_trends` failed the first run (the budget fix is in `catalog-api` `v0.8.0`), and `label_longevity`,
+`style_cotags` and `style_landmarks` had failed on lux before; all four need that release. A failure
+outside that list: record it; it is not caused by the reset.
 
 ## Proof criteria
 
@@ -453,12 +464,13 @@ All of these, recorded on the bead with before and after numbers, before `finish
 | --- | --- | --- |
 | Load complete | `just discogs-import-status --prod -f docker-compose.override.yml` | Exit 0 |
 | Accounts survive | Sign in to the console with the original password. `SELECT id, is_active, is_admin FROM public.users` | Same two ids, admin signs in, the system actor is inactive |
-| Everything else rebuilt | Row counts against `catalog_rows` in `$W/capture.json`: lux has artists 10.2M, labels 2.4M, masters 2.6M, releases 19.3M, Neo4j Release 19.6M | Same dump, so the same counts within the estimates' error, and a new `catalog_items` id set |
+| Everything else rebuilt | Row counts against the extractor's `record_counts` for this dump, not against `catalog_rows` in `$W/capture.json` | Equal to `record_counts`, and a new `catalog_items` id set. "Same dump, same count" is not a test: the load before the reset was short by 74,501 artists and 311,764 releases, so matching the old counts would have passed a short load |
 | Identity ran | One new `identity.reattach.auto` for this version, then `MATCH (r:Release) WHERE r.gm_id IS NULL RETURN count(r)` | The row is there with `failed` 0 in `details`, and the count is 0 (lux: 0 of 19,575,942, and 16,727 `Artist` nodes without one) |
-| Leak fix under a real backlog | The watch table's samples for `tableinator` | No OOM kill, restart count 0, memory level, peak recorded |
+| Leak fix under a real backlog | The watch table's samples for `tableinator` | No OOM kill, restart count 0, memory level, peak recorded (2026-11-06: peak 702.7 MiB under the 30 GiB cap) |
 | No dead letters | `status` | `dlq=0` |
 | Person merge not needed | The two queries above | 0 in both. Lux today, measured 2026-11-05: 181 in Neo4j and 294 in `graph.person` |
 | Rarity | `computation_log` and `count(*)` on `insights.release_rarity` | `completed`, row count near the release count |
+| Every insight computation | `SELECT DISTINCT ON (insight_type) insight_type, status FROM insights.computation_log ORDER BY insight_type, started_at DESC` | All `completed`, `genre_trends` included |
 | Neighbours untouched | The `ok` line from each stage, and each neighbour's own health | No `SHARED SERVER CHANGED`. A `note` about a neighbour's new database is not a failure |
 
 ## Finish
@@ -541,9 +553,10 @@ MusicBrainz data, and a re-import for the graph. That is a restore, not a rollba
 | `bootstrap` | Under 5 minutes | Measured in rehearsal, 40 s under emulation: `schema-init` on an empty database does no key swaps |
 | Start | About 5 minutes | Extrapolated; the rehearsal took 96 s under emulation, and Lux's Neo4j page cache is larger |
 | SQL load | About 35 hours | **Measured on lux**, once: first load 2026-11-03 21:32 to 2026-11-05 08:25 UTC on loaders that predate the leak fix, with a window in it. Treat it as indicative |
-| Graph load | About 15 hours, plus 11 hours of post-import maintenance | **Measured on lux**, same run: complete 2026-11-04 12:42 UTC, maintenance done 23:46 UTC |
+| Graph load | About 15 hours, plus post-import maintenance | **Measured on lux**: on the 2026-11-04 load, complete 12:42 UTC and maintenance done 23:46 UTC (11 hours); on the 2026-11-06 fresh load the maintenance took about 25 minutes |
+| Gate refresh | 2 h 09 min | **Measured on lux**, 2026-11-06 fresh load. It runs alongside the post-import maintenance (both started about 20:25 UTC; maintenance finished 20:50, the refresh 22:34), so maintenance is not the last signal |
 | Identity | Minutes | **Measured on lux**: marker 2 minutes after the latch, but on a load order that split nothing |
-| Rarity | 1 to 1.5 hours | Extrapolated by analytics-engine from sampled pages. Never completed on lux |
+| Rarity | About 2 hours | **Measured on lux**, 2026-11-06: 2 h 04 min. The earlier 1 to 1.5 hour figure was extrapolated from sampled pages |
 | Rollback | 10 to 20 minutes | Extrapolated: seconds for PostgreSQL plus one graph copy. The rehearsal's 48 s was a tiny graph |
 | All of it | About 2 days | Extrapolated |
 
@@ -567,8 +580,8 @@ The new database may come out smaller, since it is unbloated. That is not measur
 just rehearse-catalog-reset --evidence <directory>
 ```
 
-Run 2026-11-05 on an arm64 Mac under emulation, on the pins of the time, at commit `19c4aee` with a
-clean checkout. **65 of 65 checks passed, in 20 minutes.** It uses the operator's own stages.
+Run 2026-11-05 on an arm64 Mac under emulation, on the pins of that day (before the promoted set), at
+commit `19c4aee` with a clean checkout. **65 of 65 checks passed, in 20 minutes.** It uses the operator's own stages.
 Its `REPORT.json` records the commit, whether the checkout was clean, and each image.
 The stack is the Lux file set against a shared PostgreSQL 18 with TLS, holding two neighbour databases
 and a neighbour session that stays open throughout. A local server answers as `data.discogs.com`, so
@@ -596,10 +609,10 @@ pass writes nodes after the gate reports complete.
 
 **What it does not prove.** Read these before relying on it:
 
-- It ran on today's pins, not the promoted set, so `database-schema` `v0.7.0` (including the kept rows
-  loading into it), the [release order](#release-order-on-a-fresh-database), name stripping and the
-  paged rarity path are unexercised. That is why [re-running it on the promoted set](#before-the-day)
-  is a precondition.
+- It ran on the pins of 2026-11-05, not the promoted set. The real run on lux on 2026-11-06 then exercised
+  `database-schema` `v0.7.0`, the [release order](#release-order-on-a-fresh-database) and the paged rarity path
+  at full size. [Re-running the rehearsal on the promoted set](#before-the-day) stays a precondition for a
+  later reset, because the set changes.
 - Scale. 304 records say nothing about the leak, memory, duration or the real order of the SQL and
   graph loads. Its pre-flight skips the floor and cap checks, so those have run only against a
   scripted host, and on no real stack. The first real run of them is the day's own pre-flight.
