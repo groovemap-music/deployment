@@ -253,6 +253,27 @@ enricher or SQL loader repository; for extraction failures, route to
 `discogs-ingestion` or `musicbrainz-ingestion`, whichever source is affected.
 Include the exact image digest and relevant redacted logs.
 
+## A discogs loader batch has stopped settling
+
+**Alert:** `PipelineBatchStalled` (critical) — `groovemap_pipeline_batch_stalled` above 0 for 1m. It
+fires about 6 minutes after the last ack: the loader's 300s stall bound, up to 15s to the next report,
+then 1m.
+
+A stall means the oldest unwritten record for one entity has waited past the bound, and nothing of
+that entity has been acked or rejected in as long. A normal long flush keeps settling and stays silent.
+
+1. Read `groovemap_pipeline_batch_oldest_unsettled_age_seconds` for the same `loader` and `entity`
+   to see how long the wait is.
+2. Check the loader's `/health` for `stalled_batches`, and `docker ps` for the loader's health.
+3. Check the PostgreSQL and RabbitMQ panels. A write that never returns is the usual cause.
+4. Route the diagnosis to `discogs-sql-loader`. Do not restart the loader without an approved
+   corrective action.
+
+**Alert:** `PipelineBatchDeliveryLost` (warning) — `delivery_lost` requeues in the last 15m. The
+broker closed a channel under an unacked delivery, so that record went back unwritten. One occurrence
+fires for 15m. Repeats keep it firing. Check the loader's logs for the channel close, then route to
+`discogs-sql-loader`.
+
 ## Before an approved corrective action
 
 Record:

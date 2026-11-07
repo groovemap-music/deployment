@@ -871,6 +871,8 @@ EXPECTED_ALERT_SEVERITIES = {
     "CircuitBreakerOpen": "critical",
     "QueueBacklogGrowing": "warning",
     "ConsumersAbsent": "critical",
+    "PipelineBatchStalled": "critical",
+    "PipelineBatchDeliveryLost": "warning",
     "InsightsStale": "warning",
     "ApiErrorRateHigh": "critical",
     "ApiLatencyHigh": "warning",
