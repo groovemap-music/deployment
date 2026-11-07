@@ -35,9 +35,9 @@ def test_both_loaders_are_tied_to_their_schema(policy: dict[str, Any]) -> None:
 
 
 def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, Any]) -> None:
-    """The real declaration: loader 0.6.0 on schema 0.8.0 (which has purge_vetoed but not the single key) is refused."""
+    """The real declaration: loader 0.6.1 on schema 0.8.0 (which has purge_vetoed but not the single key) is refused."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.8.0"})
-    assert policy["paired_floor_problems"](versions) == [f"{MB_LOADER} 0.6.0 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0"]
+    assert policy["paired_floor_problems"](versions) == [f"{MB_LOADER} 0.6.1 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0"]
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
     assert len(policy["paired_floor_problems"](versions)) == 2  # the Discogs loader is refused too
 

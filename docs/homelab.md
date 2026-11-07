@@ -1049,14 +1049,14 @@ a restarted loader resumes from its queues, which hold the backlog.
 7. `catalog-api` `v0.9.0`, only after step 4 (`analytics-engine` `v0.6.2`): `docker compose up -d --no-deps api`;
    require `healthy`. The daily job then gets null `completeness_pct` for artists and labels, which `v0.6.2` accepts.
 8. Extractors: `extractor-discogs` (`discogs-ingestion` `v0.4.1`) and, if the MusicBrainz stack runs on lux,
-   `extractor-musicbrainz` (`v0.4.1`, which re-encodes the dump with a multi-threaded xz, `MUSICBRAINZ_XZ_THREADS`, default 6; see the [v0.4.1 record](maintenance.md#promotion-of-musicbrainz-ingestion-v041-2026-11-07)), `brainztableinator` (SQL loader `v0.6.0`) and `brainzgraphinator`
+   `extractor-musicbrainz` (`v0.4.1`, which re-encodes the dump with a multi-threaded xz, `MUSICBRAINZ_XZ_THREADS`, default 6; see the [v0.4.1 record](maintenance.md#promotion-of-musicbrainz-ingestion-v041-2026-11-07)), `brainztableinator` (SQL loader `v0.6.1`, which serializes concurrent releases that resolve to one Discogs release; see the [v0.6.1 record](maintenance.md#promotion-of-musicbrainz-sql-loader-v061-2026-11-07)) and `brainzgraphinator`
    (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after
    step 3 (stop it before `schema-init` if it is running).
 
 **Schema `v0.9.0` supersedes `v0.8.0` in this order** (see its
 [record](maintenance.md#promotion-of-database-schema-v090-2026-11-07)). Step 3's `schema-init` now runs
 `v0.9.0`, which drops `musicbrainz.relationships_natural_key`: apply it before MusicBrainz is enabled, and
-enable MusicBrainz only with `musicbrainz-sql-loader` `v0.6.0`, because an older writer's upsert fails once the
+enable MusicBrainz only with `musicbrainz-sql-loader` `v0.6.0` or later (reviewed: `v0.6.1`), because an older writer's upsert fails once the
 constraint is gone. The drop is instant on an empty table. If the MusicBrainz stack is already running with an
 older loader, stop and ask. The command is step 3 unchanged, with the pin from `env-init`:
 
