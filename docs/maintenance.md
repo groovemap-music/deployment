@@ -367,6 +367,33 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
+### Promotion of musicbrainz-sql-loader v0.6.1 (2026-11-07)
+
+One image: `musicbrainz-sql-loader:v0.6.1`, the fix for `gm-musicbrainz-sql-loader-ud7m`. Two MusicBrainz
+releases can name one Discogs release, and their two messages wrote the same `graph.issued_on` range from two
+transactions. The second insert hit `issued_on_pkey` and the message was dead-lettered to
+`groovemap-musicbrainz-brainztableinator-releases.dlq`. v0.6.1 takes a transaction-scoped advisory lock on the
+range, so the later message waits and then replaces the earlier one's edges; a real duplicate inside one
+record still fails. Nothing here has been run on lux by this repository.
+
+`gh attestation verify oci://ghcr.io/groovemap-music/musicbrainz-sql-loader@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, `org.opencontainers.image.revision`
+equals the commit `v0.6.1` points to, `org.opencontainers.image.version` is `v0.6.1`, and the image user is `1000:1000`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `musicbrainz-sql-loader:v0.6.1` | `sha256:c5654945af2f05835139764888893f179242adf3e04868a3c8917b95f037f56c` | `ac1036da6eedfd8f786de864c6ca38789458d113` | `v0.6.0` — `sha256:022fa4d665ac46203cb31b5bf94dd6dc825a3cf69e70a497a1c3a9d0efa2d8d9` |
+
+**Superseded:** the `v0.6.0` pin in the 2026-11-07 release set below; it remains the rollback target.
+
+**Paired floor unchanged.** `musicbrainz-sql-loader` `0.6.0` with `database-schema` `0.9.0` still applies and
+`v0.6.1` meets it. No setting, volume or schema change.
+
+**Parked messages.** After the loader is running v0.6.1, the messages in the `releases.dlq` can be moved back
+to the releases queue by an operator. Processing is idempotent (the loader's edges for one release are deleted
+and re-inserted, and the Discogs loader's rows are never in range), and two replays that collide now serialize
+instead of failing. This record does not move them.
+
 ### Promotion of analytics-engine v0.6.2 and catalog-api v0.9.0 (2026-11-07)
 
 Two images, and the order matters: **deploy `analytics-engine` v0.6.2 first, then `catalog-api` v0.9.0.**
