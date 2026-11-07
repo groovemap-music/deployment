@@ -1162,6 +1162,7 @@ DATA_QUALITY_RULES=/config/extraction-rules.yaml
 
 # MusicBrainz only
 MUSICBRAINZ_DUMP_URL=https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/  # default
+MUSICBRAINZ_XZ_THREADS=6          # xz encoder threads for the dump re-encode (default: min(cores, 6))
 ```
 
 Internal health port: 8000 on each extractor. It is not published to the host;

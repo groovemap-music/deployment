@@ -1047,7 +1047,7 @@ a restarted loader resumes from its queues, which hold the backlog.
 7. `analytics-engine` `v0.6.1` (two services): `docker compose up -d --no-deps insights embeddings`, then `operations-console`
    `v0.3.1`: `docker compose up -d --no-deps dashboard`.
 8. Extractors: `extractor-discogs` (`discogs-ingestion` `v0.4.1`) and, if the MusicBrainz stack runs on lux,
-   `extractor-musicbrainz` (`v0.4.0`), `brainztableinator` (SQL loader `v0.6.0`) and `brainzgraphinator`
+   `extractor-musicbrainz` (`v0.4.1`, which re-encodes the dump with a multi-threaded xz, `MUSICBRAINZ_XZ_THREADS`, default 6; see the [v0.4.1 record](maintenance.md#promotion-of-musicbrainz-ingestion-v041-2026-11-07)), `brainztableinator` (SQL loader `v0.6.0`) and `brainzgraphinator`
    (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after
    step 3 (stop it before `schema-init` if it is running).
 
