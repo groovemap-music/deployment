@@ -414,9 +414,9 @@ Exit 0 is complete, exit 3 in progress, exit 2 cannot determine and not a pass. 
 until exit 0. The watcher then re-attaches and projects `gm_id` by itself within its 5-minute poll.
 Look for the new `identity.reattach.auto` row and for `Post-import maintenance complete` in the
 `graphinator` logs. That pass is detached from the gate and writes to the graph, so wait for it. It is
-not the last signal: the gate's refresh step comes after it (2 h 09 min on the 2026-11-06 fresh load,
-against about 25 minutes for the maintenance), so the full gate exiting 0 is the end of the watch, not
-the maintenance log line.
+not the last signal: the gate's refresh step runs alongside it and finishes later. On the 2026-11-06
+fresh load both started around 20:25 UTC; maintenance finished at 20:50 (about 25 minutes) and the refresh
+at 22:34 (2 h 09 min). The full gate exiting 0 is the end of the watch, not the maintenance log line.
 
 The watcher fires on the SQL latch alone, and its projection only reaches nodes already in the graph.
 On lux the graph finished first, but the leak fix may change that order. If `gm_id` is missing on
@@ -554,7 +554,7 @@ MusicBrainz data, and a re-import for the graph. That is a restore, not a rollba
 | Start | About 5 minutes | Extrapolated; the rehearsal took 96 s under emulation, and Lux's Neo4j page cache is larger |
 | SQL load | About 35 hours | **Measured on lux**, once: first load 2026-11-03 21:32 to 2026-11-05 08:25 UTC on loaders that predate the leak fix, with a window in it. Treat it as indicative |
 | Graph load | About 15 hours, plus post-import maintenance | **Measured on lux**: on the 2026-11-04 load, complete 12:42 UTC and maintenance done 23:46 UTC (11 hours); on the 2026-11-06 fresh load the maintenance took about 25 minutes |
-| Gate refresh | 2 h 09 min | **Measured on lux**, 2026-11-06 fresh load. It comes after the maintenance, which is not the last signal |
+| Gate refresh | 2 h 09 min | **Measured on lux**, 2026-11-06 fresh load. It runs alongside the post-import maintenance (both started about 20:25 UTC; maintenance finished 20:50, the refresh 22:34), so maintenance is not the last signal |
 | Identity | Minutes | **Measured on lux**: marker 2 minutes after the latch, but on a load order that split nothing |
 | Rarity | About 2 hours | **Measured on lux**, 2026-11-06: 2 h 04 min. The earlier 1 to 1.5 hour figure was extrapolated from sampled pages |
 | Rollback | 10 to 20 minutes | Extrapolated: seconds for PostgreSQL plus one graph copy. The rehearsal's 48 s was a tiny graph |
