@@ -1048,6 +1048,12 @@ a restarted loader resumes from its queues, which hold the backlog.
    `docker compose up -d --no-deps graphinator`. Give it its own go-ahead as before.
 7. `catalog-api` `v0.9.0`, only after step 4 (`analytics-engine` `v0.6.2`): `docker compose up -d --no-deps api`;
    require `healthy`. The daily job then gets null `completeness_pct` for artists and labels, which `v0.6.2` accepts.
+   The API's memory cap is set in lux's `.env` as `API_MEMORY_LIMIT=1g` (sized from the measured peak in
+   gm-deployment-1d5o: idle about 351 MiB, sampled peak about 381 MiB under four concurrent rarity reads). It sets
+   both `mem_limit` and `memswap_limit` in `docker-compose.prod.yml`. Add it by hand before recreating `api`, then
+   confirm `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-api` prints
+   `1073741824 1073741824`. Do not use `docker update`, which the next recreate drops. Applying it on lux needs
+   operator approval.
 8. Extractors: `extractor-discogs` (`discogs-ingestion` `v0.4.1`) and, if the MusicBrainz stack runs on lux,
    `extractor-musicbrainz` (`v0.4.1`, which re-encodes the dump with a multi-threaded xz, `MUSICBRAINZ_XZ_THREADS`, default 6; see the [v0.4.1 record](maintenance.md#promotion-of-musicbrainz-ingestion-v041-2026-11-07)), `brainztableinator` (SQL loader `v0.6.1`, which serializes concurrent releases that resolve to one Discogs release; see the [v0.6.1 record](maintenance.md#promotion-of-musicbrainz-sql-loader-v061-2026-11-07)) and `brainzgraphinator`
    (graph enricher `v0.5.0`). Recreate between runs, never mid-extraction, and `brainztableinator` only after
