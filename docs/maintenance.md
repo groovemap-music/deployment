@@ -367,6 +367,36 @@ after a read-only baseline, encrypted recovery bundle, headroom checks, an idle 
 healthy v0.4.0 consumers. Plan and approve that recovery separately; it is not part of this
 pin-only promotion.
 
+### Promotion of analytics-engine v0.6.2 and catalog-api v0.9.0 (2026-11-07)
+
+Two images, and the order matters: **deploy `analytics-engine` v0.6.2 first, then `catalog-api` v0.9.0.**
+`catalog-api` v0.9.0 returns `completeness_pct: null` for artists and labels, where v0.8.0 returned `0.0`
+(images are no longer scored). `analytics-engine` v0.6.1 declares that field a non-optional float, so it fails
+the daily job on the first null. v0.6.2 accepts null and stores it in the nullable `insights.data_completeness`
+column (database-schema v0.8.0 or later, which this record's schema `v0.9.0` already is). `graph-explorer`
+`v0.3.3` must also be live first, so the null renders as n/a (see the 2026-11-07 record below).
+
+Both digests are the index digests of the released tags on GHCR. `gh attestation verify
+oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for both. On `linux/amd64`, `org.opencontainers.image.revision` equals the
+commit the release tag points to (`analytics-engine` `v0.6.2` = `b872bb2d49389f5a14090fa1045d9ea75aac9208`,
+`catalog-api` `v0.9.0` = `fe4e68c0ff4786718e5bd4bd5d5117720c7780ed`), `org.opencontainers.image.version` equals the
+tag, and both image users are `1000:1000`. Both commits contain the null fix: `aabcbd2` in `v0.6.2` and `6affd99`
+in `v0.9.0`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `analytics-engine:v0.6.2` | `sha256:a619f5cd4aa67492c35766836db79468a098ba9d2d6f0a074f443131a26d6849` | `b872bb2d49389f5a14090fa1045d9ea75aac9208` | `v0.6.1` — `sha256:a88d82a0486840d9e89ac75cd91e263b642d6b1cb6a33357d7fe2f73e156caf1` |
+| `catalog-api:v0.9.0` | `sha256:c5304e52c184f4b3dc25aa0175e5bcc05db650270608f0152d73bd8eecccdeba` | `fe4e68c0ff4786718e5bd4bd5d5117720c7780ed` | `v0.8.0` — `sha256:4b41ea68cafe2817d25f3d17946747d2f1729c6e1039fc4e6943f8e33f809653` |
+
+**Superseded:** the `analytics-engine` `v0.6.1` and `catalog-api` `v0.8.0` pins in the 2026-11-07 release set below.
+They remain the rollback targets.
+
+**Rollback order is the reverse:** `catalog-api` back to `v0.8.0` first (it works with either analytics-engine),
+then `analytics-engine` back to `v0.6.1`. Rolling `analytics-engine` back while `catalog-api` v0.9.0 is live
+brings the daily job back to the null failure. No schema change here: the schema is the `database-schema` v0.9.0
+record below, and it is not rolled back.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
