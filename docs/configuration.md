@@ -179,6 +179,7 @@ The following groups are interpolated by the executable stack:
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
 | `TABLEINATOR_MEMORY_LIMIT` | Optional production overlay hard cap on the SQL loader, for example `30g`. Sets both `mem_limit` and `memswap_limit`, so the container cannot spill into swap. Unset leaves it unlimited. Set it here, not with `docker update`, which a recreate drops |
+| `BRAINZTABLEINATOR_MEMORY_LIMIT`, `BRAINZGRAPHINATOR_MEMORY_LIMIT` | Production overlay hard caps on the MusicBrainz SQL and graph loaders. Default `1g` each: the first load on lux (2026-11-07, 164 samples) peaked at 160 MiB and 136 MiB, so that is about 6x and 7x headroom. Each sets both `mem_limit` and `memswap_limit`, so the container cannot spill into swap. `0` removes the cap. Set them here, not with `docker update`, which a recreate drops |
 | `EXTERNAL_POSTGRES_HOST`, `EXTERNAL_POSTGRES_PORT`, `EXTERNAL_POSTGRES_DATABASE`, `EXTERNAL_VALKEY_HOST`, `EXTERNAL_VALKEY_PORT`, `EXTERNAL_VALKEY_DB`, `EXTERNAL_VALKEY_KEY_PREFIX` | External-store overlays only, selected by `GROOVEMAP_POSTGRES` and `GROOVEMAP_VALKEY`; see [External PostgreSQL and Valkey](#external-postgresql-and-valkey) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
@@ -1579,6 +1580,10 @@ NEO4J_TRANSACTION_MEMORY_MAX=8G
 
 # Optional hard cap on the SQL loader, memory and swap alike (unset: no limit)
 # TABLEINATOR_MEMORY_LIMIT=30g
+
+# Hard caps on the MusicBrainz loaders, memory and swap alike (default 1g each; 0: no limit)
+# BRAINZTABLEINATOR_MEMORY_LIMIT=1g
+# BRAINZGRAPHINATOR_MEMORY_LIMIT=1g
 ```
 
 Hosts, data paths, log levels, and consumer timings are literal Compose values,

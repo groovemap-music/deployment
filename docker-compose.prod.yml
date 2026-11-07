@@ -457,6 +457,11 @@ services:
 
   brainzgraphinator:
     restart: always
+    # Hard cap, sized from the lux MusicBrainz first load (2026-11-07, 164 samples): peak RSS 136 MiB.
+    # 1g is about 7x that. One value sets both limits, so the container cannot spill into swap. It lives
+    # here because `docker update` is lost on recreate. `0` removes the cap.
+    mem_limit: ${BRAINZGRAPHINATOR_MEMORY_LIMIT:-1g}
+    memswap_limit: ${BRAINZGRAPHINATOR_MEMORY_LIMIT:-1g}
     environment:
       <<: *otel-prod-env
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
@@ -469,6 +474,11 @@ services:
 
   brainztableinator:
     restart: always
+    # Hard cap, sized from the lux MusicBrainz first load (2026-11-07, 164 samples): peak RSS 160 MiB.
+    # 1g is about 6x that. One value sets both limits, so the container cannot spill into swap. It lives
+    # here because `docker update` is lost on recreate. `0` removes the cap.
+    mem_limit: ${BRAINZTABLEINATOR_MEMORY_LIMIT:-1g}
+    memswap_limit: ${BRAINZTABLEINATOR_MEMORY_LIMIT:-1g}
     environment:
       <<: *otel-prod-env
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
