@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_production_sets_log_environment_for_every_internal_image() -> None:
     base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     production = _load_compose(ROOT / "docker-compose.prod.yml")
-    application_services = {name for name, service in base["services"].items() if service["image"].startswith("${")}
+    # postgres runs the reviewed groovemap-music/postgres image, which is PostgreSQL itself, not a
+    # GrooveMap application with a log environment.
+    application_services = {name for name, service in base["services"].items() if service["image"].startswith("${") and name != "postgres"}
     assert {"schema-init", "embeddings"} <= application_services
     for name in application_services:
         environment = production["services"][name]["environment"]

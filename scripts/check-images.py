@@ -37,6 +37,10 @@ INTERNAL_IMAGES = {
     "explore": "GRAPH_EXPLORER_IMAGE",
     "insights": "ANALYTICS_ENGINE_IMAGE",
     "embeddings": "ANALYTICS_ENGINE_IMAGE",
+    # groovemap-music/postgres: the official postgres:18-alpine plus pgvector, published from its own
+    # repository (gm-deployment-p9ql) and reviewed here like every other GrooveMap release. It stays
+    # Alpine (musl), so data directories created under postgres:18-alpine keep their collation.
+    "postgres": "POSTGRES_IMAGE",
 }
 
 # Image variables allowed to be shared by more than one service in INTERNAL_IMAGES —
@@ -59,6 +63,7 @@ IMAGE_OWNERS = {
     "OPERATIONS_CONSOLE_IMAGE": "operations-console",
     "GRAPH_EXPLORER_IMAGE": "graph-explorer",
     "ANALYTICS_ENGINE_IMAGE": "analytics-engine",
+    "POSTGRES_IMAGE": "postgres",
 }
 
 # Image variable -> the manifest digest of the release this deployment has reviewed. The
@@ -77,6 +82,7 @@ RELEASED_IMAGE_DIGESTS = {
     "OPERATIONS_CONSOLE_IMAGE": "07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816",  # operations-console v0.3.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce",  # graph-explorer v0.3.3  gitleaks:allow
     "ANALYTICS_ENGINE_IMAGE": "eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f",  # analytics-engine v0.7.0  gitleaks:allow
+    "POSTGRES_IMAGE": "43fee8e4ebe980dfec290ec46aecfbc78368a2c95d1ba5d7b591e60025ac04e1",  # postgres v18.6.0  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
@@ -93,7 +99,12 @@ RELEASED_IMAGE_VERSIONS = {
     "OPERATIONS_CONSOLE_IMAGE": "0.3.1",
     "GRAPH_EXPLORER_IMAGE": "0.3.3",
     "ANALYTICS_ENGINE_IMAGE": "0.7.0",
+    # MAJOR.MINOR is the PostgreSQL release; the last number is groovemap-music/postgres's own revision.
+    "POSTGRES_IMAGE": "18.6.0",
 }
+
+# The digest a release is recorded with before it is published. check_declarations refuses it.
+UNPUBLISHED_DIGEST = "0" * 64
 
 # A capability floor that no release meets yet. `just deploy` refuses the external store it guards.
 UNRELEASED = "unreleased"
@@ -164,7 +175,6 @@ THIRD_PARTY_REPOSITORIES = {
     "neo4j": "neo4j",
     "node-exporter": "prom/node-exporter",
     "otel-collector": "otel/opentelemetry-collector-contrib",
-    "postgres": "postgres",
     "postgres-exporter": "prometheuscommunity/postgres-exporter",
     "rabbitmq": "rabbitmq",
     # rabbitmqadmin (the HTTP-API CLI that declares the catalog-DLQ cap policy,
@@ -219,6 +229,8 @@ def check_declarations() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in RELEASED_IMAGE_DIGESTS.values()), (
         "a reviewed release digest must be a full manifest digest"
     )
+    unpinned = sorted(variable for variable, digest in RELEASED_IMAGE_DIGESTS.items() if digest == UNPUBLISHED_DIGEST)
+    assert not unpinned, f"replace the placeholder digest with the reviewed published digest for: {', '.join(unpinned)}"
     assert set(RELEASED_IMAGE_VERSIONS) == set(RELEASED_IMAGE_DIGESTS), "every reviewed release digest needs its version"
     assert all(re.fullmatch(r"\d+\.\d+\.\d+", version) for version in RELEASED_IMAGE_VERSIONS.values()), "a reviewed version is X.Y.Z"
     for store, floors in EXTERNAL_STORE_FLOORS.items():

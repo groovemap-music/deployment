@@ -717,6 +717,26 @@ them. No GrooveMap service sets `sslmode` itself (they all connect through libpq
 `schema-init` also gets `POSTGRES_PREPROVISIONED=true`, so it verifies the database, role and
 `pg_trgm` and never creates a database, role or extension.
 
+The server must also have what the dedicated stack has; the administrator sets it up, and the
+SQL is in [homelab.md](homelab.md#what-groovemap-needs-from-each-server):
+
+- **pgvector**: `ghcr.io/groovemap-music/postgres` (the official `postgres:18-alpine` plus
+  pgvector, the stack's own `postgres` image) or an equivalent. Keep the data directory's libc:
+  musl to glibc reorders text and needs a full `REINDEX`.
+- **`shared_preload_libraries=pg_stat_statements` with `pg_stat_statements.track_utility=off`**,
+  as `docker-compose.prod.yml` sets for the stack's own server, so `ALTER ROLE ... PASSWORD` is
+  never stored in plaintext.
+- **`vector` and `pg_stat_statements` created by a superuser in GrooveMap's database** (neither
+  is a trusted extension). GrooveMap's role needs no `pg_read_all_stats`: every service connects
+  as that one login, and a role sees its own statements' text. The grant would expose other
+  tenants' query text on a shared server.
+- **No stored role passwords**: after turning `track_utility` off, remove the
+  `CREATE`/`ALTER ROLE ... PASSWORD` entries collected while it was on (the SQL is in homelab.md).
+
+Without them, schema init skips the artist-embedding schema and `pg_stat_statements` with a
+notice. The store check below notes a missing `vector` without refusing it, and does not check
+`pg_stat_statements`.
+
 Two read-only one-shots verify each server before any service connects, on every
 `docker compose up` and first on their own in `just deploy`. They run the stack's own pinned
 images, read the credentials from the secret files, and print `ok:` lines or one `FAILED:`

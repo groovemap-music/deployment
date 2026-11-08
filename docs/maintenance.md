@@ -630,6 +630,66 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of postgres v18.6.0 (2026-11-09)
+
+One new image, `ghcr.io/groovemap-music/postgres:v18.6.0` (gm-deployment-p9ql): the official
+`postgres:18-alpine` (PostgreSQL 18.6, Alpine 3.24,
+`sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873`, the digest this stack pinned
+before) plus pgvector v0.8.7 (`f37c13f68b57d2c3472b2214fbcff699d6d34876`). It is published from
+[groovemap-music/postgres](https://github.com/groovemap-music/postgres). The image name has to match its
+repository's name, and this repository publishes nothing. The same image is meant for the shared server
+on lux. Nothing is deployed by this record.
+
+| Image | Reviewed digest | Source revision | Rollback |
+| --- | --- | --- | --- |
+| `postgres:v18.6.0` | `sha256:43fee8e4ebe980dfec290ec46aecfbc78368a2c95d1ba5d7b591e60025ac04e1` | `27b1c26bc608d1cefe9ae0907465cb45d306651a` | `postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/postgres@sha256:43fee8e4…04e1 --repo
+groovemap-music/postgres --signer-repo groovemap-music/automation --source-ref refs/tags/v18.6.0` exited 0 (1 SLSA
+provenance attestation, signed by automation's `reusable-release.yml@833cb464`). The digest is the index the tag
+resolves to; on `linux/amd64` (manifest `sha256:eabda681…b7f4`), `org.opencontainers.image.revision` equals
+`27b1c26bc608d1cefe9ae0907465cb45d306651a`, the commit the annotated tag `v18.6.0` peels to, and
+`org.opencontainers.image.version` is `v18.6.0`. Like the base, it sets no image user: `docker-entrypoint.sh`
+drops to `postgres` (UID 70). It is published for `linux/amd64` only, where the base was multi-platform.
+
+**Collation is unchanged.** The image keeps the base's musl. In the repository's `just collation-proof`,
+a cluster initialised under the old image (libc provider, `en_US.UTF-8`, as this stack and lux are) gets
+50,000 mixed-script strings and btree indexes on `t` and `lower(t)`. The same data directory, opened
+with the new image, gives identical sort, `lower()` and index-scan order hashes. `amcheck`'s
+`bt_index_parent_check(heapallindexed, rootdescend)` is clean on every index. Debian's glibc
+`postgres:18`, loaded with the same rows, orders them differently, which shows the probe can detect a
+collation change. So switching an existing `postgres:18-alpine` data directory to this image needs no
+`REINDEX`, and the rollback is the image change in reverse.
+
+**What it adds.** `vector` 0.8.7 is available, so schema-init creates `public.artist_embeddings` and the
+`embedding_pipeline` role (ADR 0013), and database-schema's pgvector integration scenarios run instead
+of skipping. `pg_stat_statements` ships with PostgreSQL. `docker-compose.prod.yml` also sets
+`pg_stat_statements.track_utility=off`, so `ALTER ROLE ... PASSWORD` is never stored in plaintext.
+
+**Operator steps (dedicated stack).**
+1. Run `just env-init`. It adds `POSTGRES_IMAGE` to `.env`, and Compose refuses to start without it.
+2. Recreate only PostgreSQL in a quiet window: `up -d --no-deps postgres`. The new image and
+   `track_utility=off` both take effect on restart.
+3. Run `schema-init` as usual. It creates `vector` and the vector schema, and `pg_stat_statements`,
+   because the stack connects as its superuser.
+4. `pg_stat_statements` keeps its statistics across a clean restart, so statements stored while
+   utility tracking was on survive it. Check with
+   `SELECT count(*) FROM pg_stat_statements WHERE query ~* '\m(password|encrypted)\M';`.
+   If the count is not zero, remove only those entries, which is a separate approval:
+   `SELECT pg_stat_statements_reset(userid, dbid, queryid) FROM pg_stat_statements WHERE query ~* '\m(password|encrypted)\M';`.
+   Then rotate the passwords they contained.
+
+**The shared server (lux)** is homelab-xp95. Nothing in this repository changes lux. lux already has
+`pg_stat_statements` 1.12 in `groovemap` with `track_utility` off (homelab-v3cq). The administrator pins
+the same digest and restarts onto it, then a superuser creates `vector` in `groovemap`
+([homelab.md](homelab.md#what-groovemap-needs-from-each-server)). GrooveMap's role gets no
+`pg_read_all_stats`: it sees its own statements, and the grant would expose other tenants' query text.
+
+`check-images.py` moves `postgres` from `THIRD_PARTY_REPOSITORIES` to the reviewed GrooveMap images
+(`POSTGRES_IMAGE`) and records `RELEASED_IMAGE_VERSIONS["POSTGRES_IMAGE"]` as `18.6.0`. MAJOR.MINOR is
+the PostgreSQL release; the last number is that repository's own revision. `store-check-postgres`, the
+homelab smoke's stand-in server and `just smoke-infra` run the same reviewed image.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
@@ -1149,18 +1209,20 @@ section is that trigger. No cron or `CronJob` convention exists in this reposito
 [Post-import identity maintenance](#post-import-identity-maintenance) above. Production
 scheduling is the homelab's concern, not this repository's.
 
-### Prerequisite: PostgreSQL 19 and pgvector
+### Prerequisite: pgvector
 
 The pipeline reads and writes through `public.artist_embeddings` and authenticates as a member
 of database-schema's `embedding_pipeline` role — both exist only once `database-schema`'s
 initializer runs against a PostgreSQL instance with the `vector` extension installed. This
-repository's dev/CI `postgres` service is `postgres:18-alpine`, with no pgvector build: a
-locally built, unpublished PostgreSQL 19 + pgvector 0.8.6 development/CI image is
-gm-deployment-kh5, itself gated on the PostgreSQL 19 GA pin (gm-deployment-2sb.2). Until one of
-those lands, the wiring below is in place but cannot complete a real run — `just embeddings-run`
-is expected to fail at authentication or "relation does not exist", not silently succeed. The
-shared production instance is the homelab's own PostgreSQL 19 + pgvector build, requested
-separately from that image.
+stack's `postgres` service runs `ghcr.io/groovemap-music/postgres` (`POSTGRES_IMAGE`): the official
+`postgres:18-alpine` plus pgvector, published from
+[groovemap-music/postgres](https://github.com/groovemap-music/postgres) (gm-deployment-p9ql).
+schema-init connects as this stack's superuser, so it creates `vector`, `artist_embeddings` and
+`embedding_pipeline` on its next run. A shared server needs the same image, or an equivalent with
+pgvector, and an administrator who creates `vector`
+([homelab.md](homelab.md#what-groovemap-needs-from-each-server)); until then the wiring below
+cannot complete a real run there — `just embeddings-run` fails at authentication or "relation
+does not exist", never silently succeeds.
 
 ### Provisioning the pipeline's login (once per stack)
 
@@ -1252,7 +1314,7 @@ Docker's `--shm-size`) at least as large as whatever `maintenance_work_mem` it r
 stack's `postgres` service sets `shm_size` from `POSTGRES_SHM_SIZE` (default `2g`, see
 [configuration.md](configuration.md#postgresql-configuration)), which is below the 8 GB build above.
 A parallel HNSW build at that memory setting needs `POSTGRES_SHM_SIZE` raised to match. Set it
-alongside `maintenance_work_mem` when the PostgreSQL 19 + pgvector image above lands. These figures describe the shape of the sizing problem at this
+alongside `maintenance_work_mem` before the first production HNSW build. These figures describe the shape of the sizing problem at this
 row count on a two-CPU-class host, not a value to plan the production host around — re-measure
 there.
 
@@ -1409,9 +1471,16 @@ erased subject). The key table and the purge function arrive with `database-sche
 
 ## Update an infrastructure image
 
-PostgreSQL, Neo4j, RabbitMQ, and Valkey images are declared directly in
-`docker-compose.yml` with a readable tag and immutable digest. An update should
-include:
+Neo4j, RabbitMQ, and Valkey images are declared directly in `docker-compose.yml`
+with a readable tag and immutable digest. PostgreSQL is the exception: `postgres` runs
+`ghcr.io/groovemap-music/postgres` (`POSTGRES_IMAGE`), the official `postgres:18-alpine`
+plus pgvector. Its base digest is bumped in
+[groovemap-music/postgres](https://github.com/groovemap-music/postgres), which publishes a
+new release; deployment then promotes that release like any service release
+([Promote a service release](#promote-a-service-release)). That repository's CI runs its
+`just collation-proof` on every change: a data directory built under the pinned base must read
+unchanged. Keep it on Alpine (musl), because a glibc image reorders every `en_US.UTF-8` text
+index. An update should include:
 
 - upstream release-note and compatibility review;
 - backup and restore validation appropriate to the data store;

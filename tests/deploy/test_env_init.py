@@ -71,7 +71,7 @@ def test_rendered_template_differs_from_the_example_only_in_image_digests() -> N
 
 def test_every_image_variable_in_the_example_has_a_reviewed_digest() -> None:
     variables = _template_image_variables()
-    assert len(variables) == 11
+    assert len(variables) == 12
     assert set(variables) <= set(image_policy.RELEASED_IMAGE_DIGESTS)
 
 

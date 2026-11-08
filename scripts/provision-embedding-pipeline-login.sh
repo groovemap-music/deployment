@@ -20,13 +20,12 @@
 #
 # `embedding_pipeline` itself is created by schema-init's guarded initializer,
 # only once the `vector` extension is installed. This stack's postgres service
-# (postgres:18-alpine) has no pgvector build yet — see
-# docs/maintenance.md#monthly-embedding-refresh for the PostgreSQL 19 + pgvector
-# dependency (gm-deployment-kh5, gated on the PostgreSQL 19 GA pin
-# gm-deployment-2sb.2) this blocks on. Until that lands, this script finds no
-# `embedding_pipeline` role, logs why, and exits 0 without creating a login no
-# group role yet exists to constrain — it must never fail `just check`/CI over a
-# dependency this repository does not own.
+# runs groovemap-music/postgres (postgres:18-alpine plus pgvector), so the role
+# exists once schema-init has run against it; a server without pgvector never
+# gets it (docs/maintenance.md#monthly-embedding-refresh). Until the role exists,
+# this script logs why and exits 0 without creating a login no group role yet
+# exists to constrain — it must never fail `just check`/CI over a dependency
+# this repository does not own.
 set -euo pipefail
 
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-groovemap-postgres}"
@@ -56,8 +55,8 @@ role_exists() {
 }
 
 if [[ "$(role_exists embedding_pipeline)" != "1" ]]; then
-  echo "provision-embedding-pipeline-login: no embedding_pipeline role yet — needs PostgreSQL 19" >&2
-  echo "  + pgvector and database-schema's guarded initializer (see" >&2
+  echo "provision-embedding-pipeline-login: no embedding_pipeline role yet — needs pgvector" >&2
+  echo "  and database-schema's guarded initializer to have run (see" >&2
   echo "  docs/maintenance.md#monthly-embedding-refresh). Nothing to do." >&2
   exit 0
 fi

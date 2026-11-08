@@ -27,6 +27,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = "1000:1000"  # ${UID:-1000}:${GID:-1000}, what an unset UID/GID resolves to
+GROOVEMAP_POSTGRES = "ghcr.io/groovemap-music/postgres@sha256:" + "1" * 64  # config/validation.env
 
 # service -> (image reference without the registry digest check, image config User, how it opens secrets)
 #   "owner": runs as the secrets' owner via an explicit compose `user:`
@@ -48,8 +49,11 @@ INVENTORY: dict[str, dict[str, str]] = {
         "image_user": "59000:59000",
         "reads_as": "owner",
     },
+    # groovemap-music/postgres is the official postgres:18-alpine plus pgvector; it adds no USER and
+    # keeps the base's entrypoint, so it opens secrets exactly as the base does. Compose renders it
+    # from config/validation.env here, so the recorded reference is that syntax-only value.
     "postgres": {
-        "image": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+        "image": GROOVEMAP_POSTGRES,
         "image_user": "",
         "reads_as": "root",  # docker-entrypoint.sh file_env, before gosu postgres
     },
@@ -80,7 +84,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     },
     # The same pinned images, run as one-shot store checks under the owner (external overlays).
     "store-check-postgres": {
-        "image": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+        "image": GROOVEMAP_POSTGRES,
         "image_user": "",
         "reads_as": "owner",
     },

@@ -22,8 +22,9 @@ check_compose docker-compose.yml docker-compose.released-fixture-smoke.yml
 check_compose docker-compose.yml docker-compose.erasure-smoke.yml
 
 # The homelab smoke's own PostgreSQL (scripts/smoke-homelab.sh) is a separate Compose project, never
-# merged with the stack; the smoke supplies its certificate directory, password file and networks.
-SMOKE_HOMELAB_TLS_DIR=./config/homelab-smoke SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=./config/homelab-smoke/compose.yml \
+# merged with the stack; the smoke supplies its image (the reviewed POSTGRES_IMAGE), certificate
+# directory, password file and networks. The image value here is config/validation.env's syntax-only one.
+POSTGRES_IMAGE=ghcr.io/groovemap-music/postgres@sha256:1111111111111111111111111111111111111111111111111111111111111111 SMOKE_HOMELAB_TLS_DIR=./config/homelab-smoke SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=./config/homelab-smoke/compose.yml \
   SMOKE_HOMELAB_NETWORK=validation-homelab SMOKE_HOMELAB_MONITORING_NETWORK=validation-monitoring docker compose --project-name validation -f config/homelab-smoke/compose.yml config --quiet
 
 # The external-store overlays render only on the production stack, each alone and together, with

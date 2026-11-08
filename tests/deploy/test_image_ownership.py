@@ -16,7 +16,6 @@ THIRD_PARTY_SERVICES = (
     "rabbitmq",
     "rabbitmq-dlq-policy-init",
     "data-volume-init",
-    "postgres",
     "neo4j",
     "valkey",
     "otel-collector",

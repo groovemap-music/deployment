@@ -15,13 +15,12 @@
 # _PASSWORD login — a member of database-schema's NOLOGIN embedding_pipeline
 # group role, never this stack's POSTGRES_USERNAME superuser.
 #
-# Requires PostgreSQL 19 with pgvector and database-schema's `embedding_pipeline`
-# role and `public.artist_embeddings` table (gm-database-schema-lhp2), neither of
-# which this stack's postgres:18-alpine service has yet — see
-# docs/maintenance.md#monthly-embedding-refresh for the pgvector dependency
-# (gm-deployment-kh5, gated on the PostgreSQL 19 GA pin gm-deployment-2sb.2) this
-# blocks on. Until that lands, this script's `docker compose run` is expected to
-# fail at connection or relation-not-found.
+# Requires pgvector and database-schema's `embedding_pipeline` role and
+# `public.artist_embeddings` table (gm-database-schema-lhp2). This stack's
+# postgres service runs groovemap-music/postgres (postgres:18-alpine plus
+# pgvector), so schema-init creates both; against a server without pgvector this
+# script's `docker compose run` fails at connection or relation-not-found — see
+# docs/maintenance.md#monthly-embedding-refresh.
 set -euo pipefail
 
 env_file="${RUN_EMBEDDINGS_ENV_FILE:-.env}"
