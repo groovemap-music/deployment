@@ -455,6 +455,34 @@ that before a rollback.
 
 `check-images.py` passes with these pins, and `RELEASED_IMAGE_VERSIONS` records the new versions.
 
+### Promotion of database-schema v0.11.0 (2026-11-07)
+
+`database-schema:v0.11.0` resolved from its released tag on GHCR (the index digest). Nothing is deployed by
+this record: the operator runs the lux schema window below, after `database-schema` `v0.11.0` is pinned.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.11.0` | `sha256:4733f4b710bc1fc05752cb7418340f5657fb28ff156fbd20cfb7c0196031dfef` | `8e1117f8fbf2d3ad419e30851494d6ee9978edf7` | `v0.10.0` — `sha256:0624cda98c4460eff0c25ea905d220bad509099100dbc55cc91f2688e9a76749` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/database-schema@sha256:4733f4b7…dfef --owner
+groovemap-music` exited 0 (1 SLSA provenance v1 attestation verified). On `linux/amd64`,
+`org.opencontainers.image.revision` equals `8e1117f8fbf2d3ad419e30851494d6ee9978edf7`, the commit tag `v0.11.0`
+points to, `org.opencontainers.image.version` is `v0.11.0`, and the image user is `1000:1000`.
+
+**Supersedes** `database-schema:v0.10.0` in the record above. The `v0.10.0` digest is the rollback target.
+
+**What it adds.** The `release_search` side table and its triggers, the per-day identity ledger rollup, and
+`pg_stat_statements` when the server preloads it.
+
+**Operator steps (lux).** Stop the SQL writers (`tableinator`, `brainztableinator`), then run `schema-init` as
+the schema owner in a quiet window. Then run `CALL public.release_search_backfill();` and check
+`SELECT * FROM public.release_search_drift();`, which must return `(0,0,0)`.
+Never run an older `schema-init`. Once `v0.11.0` has run, the schema is not rolled back: the rollback digest
+above is for the image pin only.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["DATABASE_SCHEMA_IMAGE"]` as `0.11.0`.
+The two too-new schema floor tests now use `0.12.0`, since `0.11.0` is the pinned release.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
