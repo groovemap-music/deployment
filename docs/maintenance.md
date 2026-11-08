@@ -483,6 +483,31 @@ above is for the image pin only.
 `check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["DATABASE_SCHEMA_IMAGE"]` as `0.11.0`.
 The two too-new schema floor tests now use `0.12.0`, since `0.11.0` is the pinned release.
 
+### Promotion of catalog-api v0.11.0 (2026-11-08)
+
+One image: `catalog-api:v0.11.0`, which ranks unfiltered release search from `public.release_search` (gm-catalog-api-ysh9),
+with the label-longevity contract parameters and the label-dna and ledger performance work. Nothing is deployed by
+this record. It needs `database-schema` `v0.11.0`, which is already the reviewed pin and applied on lux with
+`release_search` backfilled and drift `(0,0,0)`.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.11.0` | `sha256:25375d52a1484888b09b0f6daa31f1590672bc18d9d064ece503e9ef689e4830` | `e91f1f3dcfd657578d3e2660f78778e95bb189c9` | `v0.10.0` — `sha256:427f4b71540bc28c598309a92322d11f814aa82b33058d6c328285a4b1d973c6` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@sha256:25375d52…4830 --owner
+groovemap-music` exited 0 (1 SLSA provenance attestation verified). On `linux/amd64`,
+`org.opencontainers.image.revision` equals `e91f1f3dcfd657578d3e2660f78778e95bb189c9`, the commit the annotated
+tag `v0.11.0` peels to, `org.opencontainers.image.version` is `v0.11.0`, and the image user is `1000:1000`.
+
+**Supersedes** `catalog-api:v0.10.0` in the record above. The `v0.10.0` digest is the rollback target.
+
+**Operator step (lux).** After confirming `SELECT * FROM public.release_search_drift();` returns `(0,0,0)`, recreate
+only the API: `up -d --no-deps api`. No `schema-init` is needed; the schema is already at `v0.11.0`.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.0`.
+`PAIRED_IMAGE_FLOORS` refuses `catalog-api` `0.11.0` on any `database-schema` older than `0.11.0`, since an older
+schema lacks `release_search`.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0
