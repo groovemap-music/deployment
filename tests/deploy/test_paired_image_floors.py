@@ -87,8 +87,8 @@ def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     row = '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")'
     assert row in source
-    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.11.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.11\.0 or newer"):
+    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.12.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.12\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
