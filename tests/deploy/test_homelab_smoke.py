@@ -83,8 +83,14 @@ def test_the_provisioning_sql_is_docs_homelab_sql_with_lux_connection_limits() -
     assert "CREATE DATABASE groovemap OWNER groovemap;" in lines
     assert lines.index("\\c groovemap") < lines.index("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
     assert lines[-2:] == ["ALTER ROLE groovemap CONNECTION LIMIT 60;", "ALTER DATABASE groovemap CONNECTION LIMIT 60;"]
-    # pgvector is optional and superuser-only; the homelab image does not ship it.
-    assert "vector" not in sql
+    # The homelab server runs the stack's postgres image, which ships pgvector, so the whole SQL runs.
+    for statement in (
+        "CREATE EXTENSION IF NOT EXISTS vector;",
+        "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;",
+    ):
+        assert any(line.startswith(statement) for line in lines), statement
+    # One login sees its own statements; the cluster-wide grant would expose other tenants' text.
+    assert "pg_read_all_stats" not in sql
     assert "<password>" not in sql
     assert smoke.CONNECTION_LIMIT == 60
 
@@ -468,9 +474,13 @@ def test_the_homelab_stand_ins_run_the_stacks_own_pinned_images() -> None:
 def test_the_homelab_server_runs_the_stacks_pinned_postgres_with_tls() -> None:
     homelab = yaml.safe_load(HOMELAB_COMPOSE.read_text())["services"]["homelab-postgres"]
     stack = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]["postgres"]
-    assert homelab["image"] == stack["image"]
-    assert re.search(r"@sha256:[0-9a-f]{64}$", homelab["image"])
+    assert homelab["image"] == stack["image"] == "${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to a digest-pinned groovemap-music/postgres image}"
+    # The smoke sets POSTGRES_IMAGE to the reviewed digest, as env-init does for the stack.
+    assert 'ghcr.io/groovemap-music/postgres@sha256:$(python3 "$ROOT/scripts/check-images.py" --released-digests' in SCRIPT.read_text()
     assert "ssl=on" in homelab["command"]
+    # Like lux: pg_stat_statements preloaded, utility statements (role passwords) untracked.
+    assert "shared_preload_libraries=pg_stat_statements" in homelab["command"]
+    assert "pg_stat_statements.track_utility=off" in homelab["command"]
     assert homelab["environment"]["POSTGRES_USER"] != "groovemap"
     assert "ports" not in homelab
 

@@ -29,6 +29,23 @@ def test_image_policy_script() -> None:
     runpy.run_path(str(ROOT / "scripts/check-images.py"), run_name="__main__")
 
 
+def test_image_policy_refuses_a_placeholder_release_digest() -> None:
+    """A release recorded before publication cannot pass the gate, so it cannot be merged unpinned."""
+    policy = image_policy()
+    check = policy["check_declarations"]
+    globals_ = check.__globals__
+    original = dict(globals_["RELEASED_IMAGE_DIGESTS"])
+    try:
+        globals_["RELEASED_IMAGE_DIGESTS"].update(dict.fromkeys(original, "a" * 64))
+        check()
+        globals_["RELEASED_IMAGE_DIGESTS"]["CATALOG_API_IMAGE"] = policy["UNPUBLISHED_DIGEST"]
+        with pytest.raises(AssertionError, match=r"placeholder digest .* CATALOG_API_IMAGE"):
+            check()
+    finally:
+        globals_["RELEASED_IMAGE_DIGESTS"].clear()
+        globals_["RELEASED_IMAGE_DIGESTS"].update(original)
+
+
 def test_image_policy_rejects_a_mutable_compose_reference() -> None:
     policy = image_policy()
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
@@ -69,7 +86,7 @@ def test_third_party_policy_accepts_any_version_of_a_reviewed_repository(service
         ("grafana", f"evilcorp/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
         ("grafana", f"docker.io/grafana/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
         ("grafana", f"ghcr.io/grafana/grafana:13.2.3{D1}", "not the reviewed grafana/grafana"),
-        ("postgres", f"postgres-evil:18{D1}", "not the reviewed postgres"),
+        ("valkey", f"valkey-evil/valkey:9{D1}", "not the reviewed valkey/valkey"),
         ("cadvisor", f"cadvisor/cadvisor:v1.0.0{D1}", "not the reviewed gcr.io/cadvisor/cadvisor"),
         # Single-platform tags resolve to one architecture's manifest, not the index.
         ("otel-collector", f"otel/opentelemetry-collector-contrib:0.162.0-386{D1}", "names a single platform"),

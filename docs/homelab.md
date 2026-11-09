@@ -418,10 +418,29 @@ refuses. A later release that raises a floor is recorded in `EXTERNAL_STORE_FLOO
 PostgreSQL:
 
 - **PostgreSQL 18 or newer** (the schema uses `uuidv7()`).
+- **pgvector on the server**: run `ghcr.io/groovemap-music/postgres`, the image the dedicated stack
+  runs (the official `postgres:18-alpine` plus pgvector, built from
+  [groovemap-music/postgres](https://github.com/groovemap-music/postgres)), or an equivalent
+  PostgreSQL 18 with pgvector. Keep the libc your data directory was initialised with: the image
+  is Alpine (musl), so a server already on `postgres:18-alpine` switches by changing its image
+  only, and its collation and text indexes stay as they are. Moving between musl and glibc
+  (Debian `pgvector/pgvector`) reorders text and needs a full `REINDEX`.
+- **`pg_stat_statements` preloaded with utility tracking off**:
+  `shared_preload_libraries = 'pg_stat_statements'` (a restart) and
+  `pg_stat_statements.track_utility = off` (a reload is enough). With utility tracking on,
+  `ALTER ROLE ... PASSWORD` is stored with the password in plaintext.
 - **A database and a role of GrooveMap's own**, created by an administrator: the role owns the
   database (or holds `CREATE` on it and on its `public` schema) and needs no `SUPERUSER`,
   `CREATEDB` or `CREATEROLE`. Never another application's database, `postgres` or a template.
-- **`pg_trgm` installed in that database.** `vector` is optional (artist embeddings).
+- **`pg_trgm`, `vector` and `pg_stat_statements` created in that database by a superuser**.
+  `vector` and `pg_stat_statements` are not trusted extensions, so GrooveMap's role cannot create
+  them itself. Grant GrooveMap's role nothing more: every GrooveMap service connects as that one
+  login, and a role sees the full text of its own statements in `pg_stat_statements`.
+  `pg_read_all_stats` would also show it every other tenant's query text on a shared server.
+  Without `vector`, schema init skips the artist-embedding schema; without
+  `pg_stat_statements`, there is no query audit. Both skips are notices, so GrooveMap still runs.
+  `store-check-postgres` notes a missing `vector` without refusing it, and does not check
+  `pg_stat_statements`.
 - **At least 60 usable connections** for GrooveMap, on top of other applications, and no role or
   database connection limit below that.
 - **No transaction pooling.** A PgBouncer must pool by session: catalog-api holds a
@@ -430,6 +449,14 @@ PostgreSQL:
   `EXTERNAL_POSTGRES_SSLMODE` (default `verify-full`: the certificate and the host name are
   checked against the CA in `secrets/postgres_ca.crt`).
 
+Set the server first. `shared_preload_libraries` needs a restart; `track_utility` takes effect on
+a reload (`ALTER SYSTEM SET pg_stat_statements.track_utility = off; SELECT pg_reload_conf();`):
+
+```text
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track_utility = off
+```
+
 The provisioning SQL, run once as an administrator (replace the names and password):
 
 ```sql
@@ -437,7 +464,18 @@ CREATE ROLE groovemap LOGIN PASSWORD '<password>' NOSUPERUSER NOCREATEDB NOCREAT
 CREATE DATABASE groovemap OWNER groovemap;
 \c groovemap
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS vector;   -- optional, superuser only
+CREATE EXTENSION IF NOT EXISTS vector;              -- superuser only
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;  -- superuser only
+```
+
+Set `track_utility` off before creating the role. Turning it off does not purge what is already
+stored: a `CREATE ROLE` or `ALTER ROLE ... PASSWORD` run while it was on stays in
+`pg_stat_statements`, password included. After turning it off, check as a superuser and remove
+only those entries, then rotate the passwords they contain:
+
+```sql
+SELECT count(*) FROM pg_stat_statements WHERE query ~* '\m(password|encrypted)\M';
+SELECT pg_stat_statements_reset(userid, dbid, queryid) FROM pg_stat_statements WHERE query ~* '\m(password|encrypted)\M';
 ```
 
 Valkey:

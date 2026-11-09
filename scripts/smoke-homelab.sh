@@ -194,17 +194,20 @@ say "Starting the homelab: PostgreSQL 18 with TLS on $NETWORK, shared monitoring
   python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(32)), end="")' >"$TLS/admin_password"
   python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(32)), end="")' >"$TLS/groovemap_password"
 )
+# The homelab server runs the stack's reviewed postgres image, as lux does (gm-deployment-p9ql).
+HOMELAB_POSTGRES_IMAGE="ghcr.io/groovemap-music/postgres@sha256:$(python3 "$ROOT/scripts/check-images.py" --released-digests | sed -n 's/^POSTGRES_IMAGE //p')"
 homelab=(
-  env "SMOKE_HOMELAB_TLS_DIR=$TLS/server" "SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=$TLS/admin_password"
+  env "POSTGRES_IMAGE=$HOMELAB_POSTGRES_IMAGE" "SMOKE_HOMELAB_TLS_DIR=$TLS/server" "SMOKE_HOMELAB_ADMIN_PASSWORD_FILE=$TLS/admin_password"
   "SMOKE_HOMELAB_NETWORK=$NETWORK" "SMOKE_HOMELAB_MONITORING_NETWORK=$MONITORING_NETWORK"
   docker compose --project-name "$HOMELAB_PROJECT" -f "$STACK/config/homelab-smoke/compose.yml"
 )
 "${homelab[@]}" up -d --wait --quiet-pull
-# The admin provisions GrooveMap's role, database and pg_trgm; the password reaches psql on stdin.
+# The admin provisions GrooveMap's role, database, pg_trgm, vector and pg_stat_statements; the
+# password reaches psql on stdin.
 helper provision-sql --doc "$STACK/docs/homelab.md" "$TLS/groovemap_password" |
   "${homelab[@]}" exec -T homelab-postgres psql -X -q -v ON_ERROR_STOP=1 -U homelab_admin -d postgres >"$EVIDENCE/provision.log" 2>&1 ||
   fail "provisioning with docs/homelab.md's SQL (see $EVIDENCE/provision.log)"
-pass "homelab PostgreSQL provisioned with docs/homelab.md's SQL: non-superuser role, own database, pg_trgm, 60-connection limits"
+pass "homelab PostgreSQL provisioned with docs/homelab.md's SQL: non-superuser role, own database, pg_trgm, vector, pg_stat_statements, 60-connection limits"
 
 # --- the operator's configuration ------------------------------------------------------
 

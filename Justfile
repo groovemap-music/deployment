@@ -98,7 +98,7 @@ env-init *args:
 
 # One-time (per stack), idempotent: grants the embedding pipeline's login
 # membership in database-schema's embedding_pipeline role. Run once that role
-# exists (PostgreSQL 19 + pgvector — see docs/maintenance.md#monthly-embedding-refresh),
+# exists (pgvector — see docs/maintenance.md#monthly-embedding-refresh),
 # before the first embeddings-run.
 embeddings-provision-login:
     bash scripts/provision-embedding-pipeline-login.sh

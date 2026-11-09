@@ -23,12 +23,20 @@ released image into the stack.
 | `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
 | `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
 | `embeddings` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
+| `postgres` | [`postgres`](https://github.com/groovemap-music/postgres) | `POSTGRES_IMAGE` |
 
 `embeddings` is the one exception to "each variable promotes exactly one
 service": it runs the same released `analytics-engine` image as `insights`,
 with its entrypoint overridden to the one-shot `analytics-engine-embeddings`
 job (see [Monthly embedding refresh](maintenance.md#monthly-embedding-refresh)),
 never a second published artifact.
+
+`postgres` runs `ghcr.io/groovemap-music/postgres`: the official `postgres:18-alpine`, pinned by
+digest, plus pgvector, published from its own repository. It is promoted and reviewed like every
+other GrooveMap release, so `RELEASED_IMAGE_VERSIONS` records `MAJOR.MINOR.REVISION`, where
+`MAJOR.MINOR` is the PostgreSQL release. It stays on Alpine (musl), so a data directory created
+under `postgres:18-alpine` keeps its `en_US.UTF-8` collation and text indexes. A base digest bump
+is a new release of that repository, which Dependabot proposes there, not a bump here.
 
 Each primary image therefore has the form
 `ghcr.io/groovemap-music/<source-repository>`. An auxiliary image appends its
@@ -100,7 +108,6 @@ and pinned by digest as `repository:tag@sha256:digest`:
 | `rabbitmq` | `rabbitmq` |
 | `rabbitmq-dlq-policy-init` | `rabbitmq` |
 | `data-volume-init` | `rabbitmq` |
-| `postgres` | `postgres` |
 | `neo4j` | `neo4j` |
 | `valkey` | `valkey/valkey` |
 | `postgres-exporter` | `prometheuscommunity/postgres-exporter` |

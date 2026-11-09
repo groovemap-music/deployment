@@ -62,9 +62,6 @@ stores = _load_stores()
 # The heading docs/homelab.md puts right before the provisioning SQL block.
 PROVISIONING_INTRO = "The provisioning SQL, run once as an administrator"
 SQL_BLOCK = re.compile(r"```sql\n(?P<body>.*?)```", re.DOTALL)
-# pgvector is optional and superuser-only, and the homelab image does not ship it; the store
-# check reports its absence as a note, which is the documented "embeddings stay off" path.
-OPTIONAL_STATEMENT = re.compile(r"^\s*CREATE EXTENSION IF NOT EXISTS vector\b.*$", re.MULTILINE)
 PASSWORD_PLACEHOLDER = "'<password>'"  # noqa: S105 - the doc's placeholder, not a credential
 # lux's shared PostgreSQL gives GrooveMap's role and database a 60-connection limit: the store
 # check's minimum, so the smoke runs at the edge the check guards.
@@ -120,7 +117,9 @@ def provisioning_sql(doc: str, password: str) -> str:
     if not password or "\n" in password:
         raise SmokeError("the role password must be one non-empty line")
     literal = "'" + password.replace("'", "''") + "'"
-    body = OPTIONAL_STATEMENT.sub("", body.replace(PASSWORD_PLACEHOLDER, literal))
+    # The homelab server runs the stack's own postgres image, which ships pgvector, so the SQL runs
+    # whole: vector and pg_stat_statements are created as on lux.
+    body = body.replace(PASSWORD_PLACEHOLDER, literal)
     lines = [line for line in body.splitlines() if line.strip()]
     lines += [f"ALTER ROLE groovemap CONNECTION LIMIT {CONNECTION_LIMIT};", f"ALTER DATABASE groovemap CONNECTION LIMIT {CONNECTION_LIMIT};"]
     return "\n".join(lines) + "\n"

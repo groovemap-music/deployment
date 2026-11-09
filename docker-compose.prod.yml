@@ -154,6 +154,11 @@ services:
       - "pg_stat_statements.max=10000"
       - "-c"
       - "pg_stat_statements.track=all"
+      # Utility statements stay out of pg_stat_statements: with tracking on, ALTER ROLE ... PASSWORD
+      # and CREATE ROLE ... PASSWORD are stored, password literal included, in plaintext that anyone
+      # who can read pg_stat_statements sees (scripts/pg-stat-statements.sql refuses to run while it is on).
+      - "-c"
+      - "pg_stat_statements.track_utility=off"
       - "-c"
       - "log_min_duration_statement=1000"
       - "-c"

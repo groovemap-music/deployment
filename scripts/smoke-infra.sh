@@ -2,6 +2,11 @@
 set -euo pipefail
 export RABBITMQ_DISK_FREE_LIMIT_BYTES="${RABBITMQ_DISK_FREE_LIMIT_BYTES:-50000000}"  # disposable runner disks are far below the live 50 GiB limit
 
+# config/validation.env's image values are syntax-only. postgres is the one GrooveMap image this smoke
+# starts, so it runs the reviewed digest instead (the shell overrides the env file).
+POSTGRES_IMAGE="ghcr.io/groovemap-music/postgres@sha256:$(python3 scripts/check-images.py --released-digests | sed -n 's/^POSTGRES_IMAGE //p')"
+export POSTGRES_IMAGE
+
 compose=(
   docker
   compose

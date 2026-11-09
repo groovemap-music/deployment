@@ -183,8 +183,8 @@ class TestProvisionEmbeddingPipelineLoginScript:
         assert not logs["password_env"].exists() or not logs["password_env"].read_text()
 
     def test_skips_when_embedding_pipeline_role_does_not_exist_yet(self, tmp_path: Path) -> None:
-        """The pgvector dependency (gm-deployment-kh5) hasn't landed: this must
-        be a clean no-op, never a `just check`/CI failure."""
+        """schema-init has not created the role (no pgvector, or not run yet):
+        this must be a clean no-op, never a `just check`/CI failure."""
         result, logs = _run(tmp_path, embedding_pipeline_exists=False)
 
         assert result.returncode == 0, result.stderr

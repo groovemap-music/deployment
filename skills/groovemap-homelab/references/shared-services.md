@@ -74,8 +74,23 @@ that already has a `postgres_data` volume (a dedicated deployment whose data has
 
 ## What PostgreSQL reuse requires
 
-- **PostgreSQL 18 or newer**, with `pg_trgm` installed in GrooveMap's database; `vector` is
-  optional (artist embeddings).
+- **PostgreSQL 18 or newer with pgvector**: `ghcr.io/groovemap-music/postgres` (the image the
+  dedicated stack runs: the official `postgres:18-alpine` plus pgvector) or an equivalent. Keep
+  the libc the data directory was created with. A server on `postgres:18-alpine` switches by
+  changing its image only, while a move between musl and glibc (Debian `pgvector/pgvector`)
+  reorders text and needs a full `REINDEX`. Changing the server's image is the administrator's
+  decision, never yours.
+- **`shared_preload_libraries = 'pg_stat_statements'` with `pg_stat_statements.track_utility =
+  off`.** With utility tracking on, `ALTER ROLE ... PASSWORD` is stored in plaintext. Turning
+  it off doesn't purge entries already stored, so the administrator then checks for those role
+  password statements and removes them (SQL in `docs/homelab.md`).
+- **`pg_trgm`, `vector` and `pg_stat_statements` created by a superuser in GrooveMap's
+  database.** Don't ask for `pg_read_all_stats` for GrooveMap's role: every service connects as
+  that one login, which already sees its own statements, and the grant would expose other
+  tenants' query text on a shared server. Without `vector` there are no artist embeddings,
+  and without `pg_stat_statements` there is no query audit. Schema init skips each one with a
+  notice; `store-check-postgres` only notes a missing `vector` and does not check
+  `pg_stat_statements`, so ask the administrator about both.
 - **A separate GrooveMap database and a dedicated role**, never another application's database
   or role. The role owns the database (or holds `CREATE` on it and on `public`) and needs no
   `SUPERUSER`, `CREATEDB` or `CREATEROLE`. The administrator creates the database, role and

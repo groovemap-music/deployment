@@ -4,8 +4,10 @@
 # It is a separate Compose project, never merged with docker-compose.yml; the smoke reaches it
 # from the stack only through the external network an override attaches.
 #
-# - The image is the stack's own pinned postgres (tests keep the two equal), so the smoke pulls
-#   nothing extra for it.
+# - The image is the stack's own reviewed postgres (POSTGRES_IMAGE, which the smoke reads from
+#   RELEASED_IMAGE_DIGESTS; tests keep the two equal): groovemap-music/postgres, the official
+#   postgres:18-alpine plus pgvector, the image lux runs. Like lux, it preloads pg_stat_statements
+#   with utility tracking off, and the admin creates vector and pg_stat_statements.
 # - The certificate and key are generated per run by the smoke (a throwaway CA, the server
 #   certificate for homelab-postgres) and bind-mounted read-only. PostgreSQL refuses a key that
 #   others can read and must own it, so the entrypoint, still root, copies both into the data
@@ -22,7 +24,7 @@
 
 services:
   homelab-postgres:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: "${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to a digest-pinned groovemap-music/postgres image}"
     hostname: homelab-postgres
     entrypoint:
       - sh
@@ -42,6 +44,10 @@ services:
       - ssl_key_file=/var/lib/postgresql/tls/server.key
       - -c
       - max_connections=100
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track_utility=off
     environment:
       POSTGRES_USER: homelab_admin
       POSTGRES_PASSWORD_FILE: /run/secrets/homelab_admin_password
