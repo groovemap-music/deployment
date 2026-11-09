@@ -67,7 +67,7 @@ IMAGE_OWNERS = {
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
     "DATABASE_SCHEMA_IMAGE": "2c39b94efd6ad2436e60114435275fd9887ecf49e5a777b6a573763aa9b9f522",  # database-schema v0.12.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "426182b6e2023cb4f73e397c31956f53cb963b8c03df37d65f4990f23c15ee84",  # catalog-api v0.11.1  gitleaks:allow
+    "CATALOG_API_IMAGE": "b0b74d531701e456ef30f8af3e0695cf458aa085a3b2269637679420c4cb6f37",  # catalog-api v0.11.2  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "d13b496070b4deba6756d5f572f9b7c10bff9982257ef2739f99a6038e91b487",  # discogs-graph-enricher v0.6.2  gitleaks:allow
@@ -83,7 +83,7 @@ RELEASED_IMAGE_DIGESTS = {
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
     "DATABASE_SCHEMA_IMAGE": "0.12.0",
-    "CATALOG_API_IMAGE": "0.11.1",
+    "CATALOG_API_IMAGE": "0.11.2",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.6.2",
@@ -134,6 +134,9 @@ PAIRED_IMAGE_FLOORS = (
     # catalog-api v0.11.0 ranks unfiltered release search from public.release_search, which
     # database-schema v0.11.0 creates. An older schema lacks the table, so search would fail.
     ("CATALOG_API_IMAGE", "0.11.0", "DATABASE_SCHEMA_IMAGE", "0.11.0"),
+    # catalog-api v0.11.2 reads release_search's facet columns and master_search, which database-schema
+    # v0.12.0 creates. An older schema lacks them, so the facets and master search would fail.
+    ("CATALOG_API_IMAGE", "0.11.2", "DATABASE_SCHEMA_IMAGE", "0.12.0"),
 )
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
