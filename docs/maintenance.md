@@ -508,6 +508,30 @@ only the API: `up -d --no-deps api`. No `schema-init` is needed; the schema is a
 `PAIRED_IMAGE_FLOORS` refuses `catalog-api` `0.11.0` on any `database-schema` older than `0.11.0`, since an older
 schema lacks `release_search`.
 
+### Promotion of catalog-api v0.11.1 (2026-11-09)
+
+One image: `catalog-api:v0.11.1`, the windowed ledger works read. It uses the per-work summary when the window holds
+every event, and otherwise full days from the per-day rollup (gm-catalog-api-tn5r). Nothing is deployed by this
+record. It runs on `database-schema` `0.11.0` and later, so it adds no new paired floor. `database-schema` `v0.12.0`
+is applied on lux with the rollup filled, and that does not change this image.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.11.1` | `sha256:426182b6e2023cb4f73e397c31956f53cb963b8c03df37d65f4990f23c15ee84` | `c04b540b8c005612505be99f3b614e0f90e04d3a` | `v0.11.0` — `sha256:25375d52a1484888b09b0f6daa31f1590672bc18d9d064ece503e9ef689e4830` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@sha256:426182b6…5ee84 --owner
+groovemap-music` exited 0. On `linux/amd64`, `org.opencontainers.image.revision` equals
+`c04b540b8c005612505be99f3b614e0f90e04d3a`, the commit the annotated tag `v0.11.1` peels to,
+`org.opencontainers.image.version` is `v0.11.1`, and the image user is `1000:1000`.
+
+**Supersedes** `catalog-api:v0.11.0` in the record above. The `v0.11.0` digest is the rollback target.
+
+**Operator step (lux).** Recreate only the API after the release set is reviewed: `up -d --no-deps api`. No
+`schema-init` is needed.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.1`. The
+existing `PAIRED_IMAGE_FLOORS` entry for `catalog-api` is unchanged.
+
 ### Promotion of database-schema v0.12.0 (2026-11-09)
 
 `database-schema:v0.12.0` resolved from its released tag on GHCR (the index digest). Nothing is deployed by
