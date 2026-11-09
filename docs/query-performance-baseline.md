@@ -78,6 +78,13 @@ Do not rely on a query log. Slow Cypher has to be measured from the API side or 
    required so the script cannot start by accident. Authenticated journeys (`/api/fit/...`, `/api/user/...`) are deliberately
    absent: they need a user's session, and a baseline must not borrow one.
 
+   **Roadmap targets.** `scripts/perf-baseline.sh roadmap` runs only the route targets of the
+   [performance roadmap](https://github.com/groovemap-music/design/blob/main/docs/audits/performance-roadmap-2026-11-09.md)
+   (heavy-term search with facets, master search, ledger window, trends, explore and expand, path), same pacing, and prints a
+   met or MISSED verdict per target (first-uncached and warm p95 must both be within the target). The ledger journey is admin-only and
+   runs only when `PERF_AUTH_HEADER` holds a header line. `scripts/perf-baseline.sh maintenance` reads maintenance-job durations and
+   their composition from `pg_stat_statements` with `scripts/perf-maintenance.sql` (read-only; needs `PERF_PSQL_CMD`).
+
 5. **Postgres report** *(approval)*. `scripts/perf-baseline.sh postgres` pipes `scripts/perf-baseline.sql` into `psql` inside
    `BEGIN READ ONLY ... ROLLBACK`: settings, table sizes, top 20 by total, mean, calls and rows, spill and JIT, cache hit ratio,
    unused indexes.
