@@ -41,7 +41,7 @@ def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, 
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.8.0"})
     assert policy["paired_floor_problems"](versions) == [
         f"{MB_LOADER} 0.6.1 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0",
-        f"{CATALOG} 0.11.0 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
+        f"{CATALOG} 0.11.1 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
     ]
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
     assert len(policy["paired_floor_problems"](versions)) == 3  # the Discogs loader is refused too
@@ -51,7 +51,7 @@ def test_the_promoted_catalog_api_is_refused_on_the_previous_schema(policy: dict
     """The real declaration: catalog-api 0.11.0 ranks search from public.release_search, which schema 0.10.0 lacks."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.10.0"})
     problems = policy["paired_floor_problems"](versions)
-    assert problems == [f"{CATALOG} 0.11.0 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0"]
+    assert problems == [f"{CATALOG} 0.11.1 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0"]
 
 
 def test_the_catalog_api_pair_is_enforced_by_check_images_itself(tmp_path: Path) -> None:
