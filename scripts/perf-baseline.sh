@@ -4,6 +4,8 @@
 #
 #   scripts/perf-baseline.sh list                 # print the journeys; touches nothing
 #   scripts/perf-baseline.sh api                  # time the API journeys (GET only), one request at a time
+#   scripts/perf-baseline.sh roadmap              # time only the performance-roadmap route targets (see below), with a verdict per target
+#   scripts/perf-baseline.sh maintenance          # maintenance-job durations and composition from pg_stat_statements (read-only SQL)
 #   scripts/perf-baseline.sh neo4j                # PROFILE the heavy Cypher cases, serially, 120 s cap each
 #   scripts/perf-baseline.sh postgres             # run scripts/perf-baseline.sql in a READ ONLY transaction
 #
@@ -20,6 +22,8 @@
 #                        ssh <host> "docker exec -i <neo4j container> sh -c 'exec cypher-shell -u neo4j -p \"\$(cat /run/secrets/neo4j_password)\" --access-mode read --format verbose'"
 #                        (verbose prints the operator table with page cache hits and misses; plain prints only totals)
 #                        The password stays inside the container; this script never reads, prints or stores it.
+#   PERF_AUTH_HEADER     optional full header line, e.g. "Authorization: Bearer <admin token>", for the ledger journey, which
+#                        needs an admin session. Without it that journey is skipped. Read from the environment only; never printed or stored.
 #   PERF_PSQL_CMD        required for `postgres`: a command that reads SQL on stdin and runs psql against the
 #                        groovemap database as a role that may read pg_stat_statements
 #   PERF_CONFIRM_LIVE    must be "yes" for api, neo4j and postgres: the operator approved this run
@@ -75,6 +79,24 @@ journeys=(
   "credits.autocomplete.flo|/api/credits/autocomplete?q=flo"
 )
 
+# Roadmap route targets (design docs/audits/performance-roadmap-2026-11-09.md, "Route p95"):
+# name | path | target p95 in ms | needs admin header (0/1). The first request of each journey is the first-uncached one (Valkey
+# holds no result yet); the rest are warm. Terms are chosen so the first request is uncached on a fresh Valkey; run once per term.
+roadmap_journeys=(
+  "search.love.facets|/api/search?q=love&types=release&genres=Jazz&year_min=1970&year_max=1979&media=vinyl|1000|0"
+  "search.love.all-types|/api/search?q=love|1000|0"
+  "search.master.love|/api/search?q=love&types=master|100|0"
+  "ledger.works.2026-11|/api/admin/identity/ledger/works?since=2026-11-01T00:00:00Z&until=2026-12-01T00:00:00Z&page_size=50|2000|1"
+  "trends.genre.rock|/api/trends?name=Rock&type=genre|1000|0"
+  "trends.style.trance|/api/trends?name=Trance&type=style|1000|0"
+  "trends.label.1818|/api/trends?name=Not%20On%20Label&type=label|1000|0"
+  "explore.artist.bowie|/api/explore?name=David%20Bowie&type=artist|1000|0"
+  "expand.artist.bowie.releases|/api/expand?node_id=10263&type=artist&category=releases&limit=50|1000|0"
+  "expand.label.1818.releases|/api/expand?node_id=1818&type=label&category=releases&limit=50|1000|0"
+  "path.bowie-to-cash|/api/path?from_name=David%20Bowie&from_type=artist&to_name=Johnny%20Cash&to_type=artist&max_depth=6|5000|0"
+  "path.rock-to-trance|/api/path?from_name=Rock&from_type=genre&to_name=Trance&to_type=style&max_depth=6|5000|0"
+)
+
 die() { echo "perf-baseline: $*" >&2; exit 2; }
 
 require_live_approval() {
@@ -102,19 +124,32 @@ summarize() { # tsv -> per-journey n, ok, cold, warm p50/p95/max (nearest rank),
         printf "%-40s %3d %4d %9s %9s %9s %9s\n", j, ok[j], bad[j], (j in cold) ? sprintf("%.0f", cold[j]) : "-", pct(j, 50), pct(j, 95), pct(j, 100) } }' "$1"
 }
 
-run_api() {
+run_api() { run_journeys "${journeys[@]}"; }
+
+run_roadmap() { PERF_ROADMAP=1 run_journeys "${roadmap_journeys[@]}"; }
+
+run_journeys() {
   require_live_approval
   command -v curl >/dev/null || die "curl is required"
   mkdir -p "$out"
   local tsv="$out/api-$stamp.tsv"
   printf 'journey\titeration\thttp_code\ttime_total_s\n' >"$tsv"
-  echo "perf-baseline: $((${#journeys[@]})) journeys x $iterations against $base, one request at a time, ${pause}s apart" >&2
-  local entry name path i res code t
-  for entry in "${journeys[@]}"; do
+  echo "perf-baseline: $(($#)) journeys x $iterations against $base, one request at a time, ${pause}s apart" >&2
+  local entry name path i res code t target admin
+  local -a hdr=()
+  [[ -n "${PERF_AUTH_HEADER:-}" ]] && hdr=(-H "$PERF_AUTH_HEADER")
+  : >"$out/targets-$stamp.tsv"
+  for entry in "$@"; do
     name="${entry%%|*}"
     path="${entry#*|}"
+    target="" admin=0
+    if [[ -n "${PERF_ROADMAP:-}" ]]; then
+      admin="${path##*|}"; path="${path%|*}"; target="${path##*|}"; path="${path%|*}"
+      if [[ "$admin" == 1 && -z "${PERF_AUTH_HEADER:-}" ]]; then echo "perf-baseline: $name skipped (needs PERF_AUTH_HEADER)" >&2; continue; fi
+      printf '%s\t%s\n' "$name" "$target" >>"$out/targets-$stamp.tsv"
+    fi
     for ((i = 1; i <= iterations; i++)); do
-      res="$(curl -sS -o /dev/null --max-time "$req_timeout" -w '%{http_code}\t%{time_total}' "$base$path" 2>/dev/null || printf '000\t0')"
+      res="$(curl -sS "${hdr[@]}" -o /dev/null --max-time "$req_timeout" -w '%{http_code}\t%{time_total}' "$base$path" 2>/dev/null || printf '000\t0')"
       code="${res%%$'\t'*}"
       t="${res#*$'\t'}"
       printf '%s\t%s\t%s\t%s\n' "$name" "$i" "$code" "$t" >>"$tsv"
@@ -125,6 +160,28 @@ run_api() {
   done
   echo "raw timings: $tsv" >&2
   summarize "$tsv" | tee "$out/api-$stamp.summary.txt"
+  if [[ -n "${PERF_ROADMAP:-}" ]]; then verdict "$tsv" "$out/targets-$stamp.tsv" | tee "$out/roadmap-$stamp.verdict.txt"; fi
+}
+
+# Per target: the first-uncached time and the warm p95 against the target, met or missed (a failed first request is "missed").
+verdict() { # tsv targets.tsv
+  awk -F'\t' '
+    FNR == NR { tgt[$1] = $2; order[++k] = $1; next }
+    FNR == 1 { next }
+    { j = $1; if ($3 !~ /^2/) { bad[j]++; next } ms = $4 * 1000
+      if ($2 == 1) first[j] = ms; else { w[j, ++nw[j]] = ms } }
+    function p95(j,   n, i, a, t, m, idx) {
+      n = nw[j]; if (n == 0) return -1
+      for (i = 1; i <= n; i++) a[i] = w[j, i]
+      for (i = 2; i <= n; i++) { t = a[i]; m = i - 1; while (m > 0 && a[m] > t) { a[m + 1] = a[m]; m-- } a[m + 1] = t }
+      idx = int(0.95 * n); if (idx < 0.95 * n) idx++; if (idx < 1) idx = 1
+      return a[idx] }
+    END {
+      printf "%-32s %9s %9s %9s %9s  %s\n", "target", "target_ms", "first_ms", "warm_p95", "bad", "verdict"
+      for (i = 1; i <= k; i++) { j = order[i]; w95 = p95(j)
+        f = (j in first) ? first[j] : -1
+        ok = (f >= 0 && f <= tgt[j] && w95 <= tgt[j] && bad[j] == 0) ? "met" : "MISSED"
+        printf "%-32s %9d %9s %9s %9d  %s\n", j, tgt[j], (f >= 0) ? sprintf("%.0f", f) : "-", (w95 >= 0) ? sprintf("%.0f", w95) : "-", bad[j], ok } }' "$2" "$1"
 }
 
 # Cypher cases: name, then the statement. Mirror catalog-api's queries (api/queries/neo4j_queries.py) so the plans match
@@ -179,10 +236,21 @@ run_postgres() {
   echo "report: $log" >&2
 }
 
+run_maintenance() {
+  require_live_approval
+  [[ -n "${PERF_PSQL_CMD:-}" ]] || die "set PERF_PSQL_CMD (see the header of this script)"
+  mkdir -p "$out"
+  local log="$out/maintenance-$stamp.txt"
+  { echo "BEGIN READ ONLY;"; cat "$root/scripts/perf-maintenance.sql"; echo "ROLLBACK;"; } | bash -c "$PERF_PSQL_CMD" | tee "$log"
+  echo "report: $log" >&2
+}
+
 case "${1:-}" in
-  list) printf '%s\n' "${journeys[@]}" | tr '|' '\t'; echo; cypher_cases | paste - - | cut -f1 ;;
+  list) printf '%s\n' "${journeys[@]}" | tr '|' '\t'; echo; printf '%s\n' "${roadmap_journeys[@]}" | tr '|' '\t'; echo; cypher_cases | paste - - | cut -f1 ;;
   api) run_api ;;
   neo4j) run_neo4j ;;
+  roadmap) run_roadmap ;;
+  maintenance) run_maintenance ;;
   postgres) run_postgres ;;
-  *) die "usage: perf-baseline.sh list|api|neo4j|postgres" ;;
+  *) die "usage: perf-baseline.sh list|api|roadmap|maintenance|neo4j|postgres" ;;
 esac

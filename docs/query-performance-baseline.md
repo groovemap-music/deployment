@@ -3,7 +3,7 @@
 How to collect query statistics from PostgreSQL and Neo4j, what each step costs, and who has to approve it.
 This is the procedure behind the query performance audit; the dated results live in
 [`query-performance-audit-2026-11-04.md`](query-performance-audit-2026-11-04.md), the post-load
-[`query-performance-baseline-2026-11-07.md`](query-performance-baseline-2026-11-07.md) and later
+[`query-performance-baseline-2026-11-07.md`](query-performance-baseline-2026-11-07.md), the route and maintenance [`2026-11-09`](query-performance-baseline-2026-11-09.md) baseline and later
 `query-performance-baseline-<date>.md` files. Nothing here runs in `just check` or CI.
 
 **Nothing is enabled by this repository.** Every step marked *approval* changes or loads a live environment and waits for the operator.
@@ -77,6 +77,13 @@ Do not rely on a query log. Slow Cypher has to be measured from the API side or 
    as warm, with p50, p95 and max. It stops a journey on a 429, a 5xx or a connection failure. `PERF_CONFIRM_LIVE=yes` is
    required so the script cannot start by accident. Authenticated journeys (`/api/fit/...`, `/api/user/...`) are deliberately
    absent: they need a user's session, and a baseline must not borrow one.
+
+   **Roadmap targets.** `scripts/perf-baseline.sh roadmap` runs only the route targets of the
+   [performance roadmap](https://github.com/groovemap-music/design/blob/main/docs/audits/performance-roadmap-2026-11-09.md)
+   (heavy-term search with facets, master search, ledger window, trends, explore and expand, path), same pacing, and prints a
+   met or MISSED verdict per target (first-uncached and warm p95 must both be within the target). The ledger journey is admin-only and
+   runs only when `PERF_AUTH_HEADER` holds a header line. `scripts/perf-baseline.sh maintenance` reads maintenance-job durations and
+   their composition from `pg_stat_statements` with `scripts/perf-maintenance.sql` (read-only; needs `PERF_PSQL_CMD`).
 
 5. **Postgres report** *(approval)*. `scripts/perf-baseline.sh postgres` pipes `scripts/perf-baseline.sql` into `psql` inside
    `BEGIN READ ONLY ... ROLLBACK`: settings, table sizes, top 20 by total, mean, calls and rows, spill and JIT, cache hit ratio,
