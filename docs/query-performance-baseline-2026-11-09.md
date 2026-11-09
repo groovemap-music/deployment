@@ -9,8 +9,8 @@ Prior state: [2026-11-07 baseline](query-performance-baseline-2026-11-07.md).
 - Read-only on lux. Routes: 2026-11-09 18:20 UTC, from the operator session's read access to the API, with
   `scripts/perf-baseline.sh roadmap` (`PERF_ITERATIONS=5`, `PERF_PAUSE=2.2`): one request at a time, GET only, 2.2 s apart.
   Maintenance: 2026-11-09 about 18:10 UTC through `gm-lux-sql`, one statement at a time.
-- **catalog-api v0.11.1, before v0.11.2.** Search on the new side tables and exact facets (v0.11.2) was not live; the search rows are the
-  **v0.11.1 baseline** and the "after v0.11.2" slot below is open. Delayed by a GitHub Actions outage.
+- **catalog-api v0.11.1 for the route table above.** Search on the new side tables and exact facets (v0.11.2) was not live at that point; the
+  search rows there are the **v0.11.1 baseline**. v0.11.2 was measured afterwards; see "After v0.11.2" below. Delayed by a GitHub Actions outage.
 - First request of each journey is first-uncached for that key (Valkey held no result); requests 2 to 5 are warm (served from Valkey, hence
   2 to 5 ms). With 5 requests, four are warm, so the warm p95 equals the warm max.
 - The Neo4j and Postgres page caches were warm from earlier traffic: "first" means uncached in Valkey, not cold on disk.
@@ -41,9 +41,10 @@ path.rock-to-trance 5 0 2018 2094 2165 2165. No request failed or returned a 429
 
 Readings:
 
-- **Search is the open gap**, and the roadmap's statement figures did not carry to the route. Filtered `love` was 0.67 s as a statement and is
-  11.8 s as a first route request; master search was 39 ms as a statement and is 651 ms. The route does more than that statement (several
-  branches, facets, highlighting) and the first request reads uncached pages. v0.11.2 is the change aimed at this; re-measure it.
+- **Search was the open gap on v0.11.1**, and the roadmap's statement figures did not carry to the route. Filtered `love` was 0.67 s as a
+  statement and is 11.8 s as a first route request; master search was 39 ms as a statement and is 651 ms. The route does more than that
+  statement (several branches, facets, highlighting) and the first request reads uncached pages. On v0.11.2 the two `love` searches now meet
+  1 s on first uncached request (702 ms and 778 ms), but master search is still 584 ms against 100 ms; see "After v0.11.2".
 - **Genre trends stay at 3.8 s first visit**, the same as the 2026-11-07 traversal (3.8 s). It is cached afterwards (2 ms), so the cost is
   every first visit and evicted key, as roadmap item 3 says. Style (410 ms) and label (929 ms) pass.
 - **The Valkey layer works**: warm requests are 2 to 5 ms everywhere except path.
@@ -51,13 +52,22 @@ Readings:
   5 s cap with 2.8 s to spare.
 - Not measured here: the "authentication under concurrent cold searches" target (needs concurrent load, which this run does not generate).
 
-### After v0.11.2 (open)
+### After v0.11.2
 
-| Journey | Target | First uncached | Warm p95 | Verdict |
+Measured on lux 2026-11-09 19:29 UTC, after the api recreate that deployed v0.11.2, with `scripts/perf-baseline.sh roadmap`
+(`PERF_ITERATIONS=5`, `PERF_PAUSE=2.2`). The first-uncached figures are the ones this run recorded; the warm p95 was not recorded for these three
+journeys, so it is left blank rather than estimated.
+
+| Journey | Target | First uncached (v0.11.1 → v0.11.2) | Warm p95 | Verdict |
 | --- | ---: | ---: | ---: | --- |
-| Search `love`, facets and filters | 1 s | _pending_ | _pending_ | _pending_ |
-| Search `love`, all types | 1 s | _pending_ | _pending_ | _pending_ |
-| Master search `love` | 100 ms | _pending_ | _pending_ | _pending_ |
+| Search `love`, facets and filters | 1 s | 11,751 ms → **702 ms** | not recorded | **Met** (first uncached) |
+| Search `love`, all types | 1 s | 1,603 ms → **778 ms** | not recorded | **Met** (first uncached) |
+| Master search `love` (`types=master`) | 100 ms | 651 ms → **584 ms** | not recorded | **Missed** (484 ms over; v0.11.2 improves it but does not meet it; see the catalog-api master-route bead) |
+
+Other uncached terms on v0.11.2 (same run): moonlight, xylophone, blue train and paradise each took 49 to 133 ms.
+
+Trends are unchanged in this run: the trends rows read 2 to 3 ms only because Valkey still cached them. Trends stay at the v0.11.1 numbers
+(Rock 3,780 ms first visit) until discogs-graph-enricher v0.7.0 ships.
 
 Re-run: `PERF_CONFIRM_LIVE=yes PERF_API_BASE=<origin> scripts/perf-baseline.sh roadmap`. Use a term whose key is not in Valkey (or a fresh
 term) so the first request is uncached.
@@ -73,7 +83,7 @@ is read with its own `stats_since`. Mean and max are for the calls counted.
 | `identity_ledger_refresh($1::jsonb)` | 5 | 283 s | 732 s | 2026-11-06 | under 60 s steady state | Missed |
 | `identity_ledger_refresh($1::jsonb)` | 8 | 62 s | 121 s | 2026-11-03 | under 60 s | Missed on the mean by 2 s, max 121 s |
 | `identity_ledger_refresh($1::jsonb)` | 5 | 92 s | 138 s | 2026-10-31 | under 60 s | Missed |
-| `identity_ledger_refresh()` (latest, 2026-11-09 03:15) | 1 | 461 s | 461 s | 2026-11-09 | under 60 s | **Missed**; the one latest run |
+| `identity_ledger_refresh()` (latest, 2026-11-09 03:15) | 1 | 461 s | 461 s | 2026-11-09 | under 60 s | Not a steady-state run: the requested full rebuild during the v0.12.0 rollout (see readings) |
 | `identity_ledger_rebuild()` | 4 | 399 s | 586 s | 2026-11-06 | none | n/a (full rebuild) |
 | `graph.refresh_vertex_degree()` | 1 each | 228 s, 216 s | 228 s | 2026-11-06, 11-05 | none | n/a |
 | `genre_stats` insert | 1 | 2,098 s (8,576 s on 11-05) | | 2026-11-06 | no longer than today after trends | baseline set; the 11-06 run is 4.1x faster than the 11-05 run |
@@ -92,12 +102,14 @@ Composition of the refresh and rebuild (statements, same period):
 
 Readings:
 
-- **"Incremental ledger refresh under 60 s" is not shown to hold.** The last refresh (2026-11-09 03:15) ran 461 s, and
-  `identity_ledger_refresh_state` records `duration` 9 ms for its own bookkeeping row, which is not the work (read it as a state record). The
-  one-call, one-day change is the run to explain; the per-day rollup statement inside it is 36 s, so about 425 s of the 461 s sits in
-  statements this run did not isolate. Roadmap item 4's "may show incremental does not hold" is borne out for this call. A
-  `pg_stat_statements` entry for the refresh function does not break down its inner statements per call; the next step is the server log
-  at `log_min_duration_statement` 1 s for the 2026-11-09 03:14 window.
+- **Ledger-refresh note: the 461 s run (2026-11-09 03:15) was the requested full rebuild during the v0.12.0 rollout, not a steady-state
+  incremental refresh.** It does not measure the incremental refresh against the under-60 s target, either way. The steady-state refresh
+  still has no isolated run in this record. The `identity_ledger_refresh($1::jsonb)` rows above (means 62 to 283 s) are the closest data,
+  and they are not isolated per call either.
+- The 461 s call's bookkeeping row in `identity_ledger_refresh_state` records `duration` 9 ms, which is not the work (read it as a state
+  record). The per-day rollup statement inside the run is 36 s, so about 425 s of the 461 s sits in statements this run did not isolate. A
+  `pg_stat_statements` entry for the refresh function does not break down its inner statements per call; the next step is the server log at
+  `log_min_duration_statement` 1 s for the 2026-11-09 03:14 window.
 - **The whole-ledger rebuild is dominated by two statements**: alias resolution (180 s) and `edition_parents` (143 s), about 86% of the
   four statements listed above. Those are the ones to look at first if the refresh recomputes them.
 - Genre and style stats each take about 35 min on the 2026-11-06 run. The 11-05 runs (8,576 s, 4,380 s) were earlier runs; why they took longer was not established.
@@ -107,9 +119,11 @@ Readings:
 
 ## Findings for the planner or operator (not filed)
 
-1. **Search is 1.6 to 11.8 s first-uncached on v0.11.1** against 1 s (100 ms for masters). Re-measure on v0.11.2 in the slot above.
+1. **Search on v0.11.2: both `love` searches meet 1 s first-uncached (702 ms, 778 ms); master search is 584 ms against 100 ms.** On v0.11.1 they
+   were 11.8 s, 1.6 s and 651 ms. The master-route gap is open; see the catalog-api master-route bead.
 2. **Genre trends first visit is 3.8 s against 1 s**; roadmap item 3 is the fix (stored per-year counts).
-3. **`identity_ledger_refresh` is 461 s on its latest run against a 60 s target.** Isolate its inner statements for that run.
+3. **Steady-state `identity_ledger_refresh` has no isolated run against its 60 s target.** The 461 s run was the full rebuild for the v0.12.0
+   rollout. Get a steady-state run and isolate its inner statements.
 4. **The ledger window route is unmeasured** (admin token). `PERF_AUTH_HEADER` supports it when an operator runs the script.
 5. **Master search: route 651 ms against a 39 ms statement.** The 600 ms gap is the route, not the statement; check what the route does
    beyond the ranked read on first request.
