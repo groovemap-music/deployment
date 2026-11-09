@@ -532,6 +532,29 @@ groovemap-music` exited 0. On `linux/amd64`, `org.opencontainers.image.revision`
 `check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.1`. The
 existing `PAIRED_IMAGE_FLOORS` entry for `catalog-api` is unchanged.
 
+### Promotion of catalog-api v0.11.3 (2026-11-09)
+
+One image: `catalog-api:v0.11.3`, the search release from the tag on `56db8b5537a3d514a98992340dea37be73751519`. It is
+`v0.11.2` plus only `gm-catalog-api-zi2r`, on the release branch `release/v0.11.x-search`. It carries none of `main`'s
+unreleased prototype or Missing/copy source. Searches that exclude releases (for example `types=master`) skip the
+release facets, which removes the ~0.6 s floor on master search. Nothing is deployed by this record.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.11.3` | `sha256:4e5a8d7f94d9d985a90d48c31306c903e61a8d7cc87a8412a843dcee3cbf8d57` | `56db8b5537a3d514a98992340dea37be73751519` | `v0.11.2` — `sha256:b0b74d531701e456ef30f8af3e0695cf458aa085a3b2269637679420c4cb6f37` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@sha256:4e5a8d7f…8d57 --owner groovemap-music`
+exited 0. On `linux/amd64`, `org.opencontainers.image.revision` equals `56db8b5537a3d514a98992340dea37be73751519`, the
+commit the `v0.11.3` tag is on, `org.opencontainers.image.version` is `v0.11.3`, and the image user is `1000:1000`.
+
+**Pair.** The image has the same schema requirement as `v0.11.2`: it reads `release_search`'s facet columns and
+`master_search`, which `database-schema` `v0.12.0` creates. The existing `PAIRED_IMAGE_FLOORS` row for `CATALOG_API_IMAGE`
+`0.11.2` already covers `0.11.3`, so it is unchanged. The reviewed `database-schema` `v0.13.0` meets it.
+
+**Supersedes** `catalog-api:v0.11.2` in the record above. The `v0.11.2` digest is the rollback target.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.3`.
+
 ### Promotion of catalog-api v0.11.2 (2026-11-09)
 
 One image: `catalog-api:v0.11.2`, the search release. It is `v0.11.1` plus only the search commits from
