@@ -555,6 +555,30 @@ commit the `v0.11.3` tag is on, `org.opencontainers.image.version` is `v0.11.3`,
 
 `check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.3`.
 
+### Promotion of catalog-api v0.11.4 (2026-11-09)
+
+One image: `catalog-api:v0.11.4`, the search release from the tag on `9f6980346e563eec8eb20eacd9a153e316b15504`. It is
+`v0.11.3` plus only `gm-catalog-api-2hrn`, on the release branch `release/v0.11.x-search`. Genre and style trends read
+the per-year series that `discogs-graph-enricher` `v0.7.0` stores (live on lux, `stats_version` 2), and fall back to the
+live traversal when that series is absent, so the image stays safe on an older enricher. Nothing is deployed by this
+record.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.11.4` | `sha256:6593499eeb761c45e0229e91ebfd1bf370587cdbc35f4b06ac3231479db1bb2a` | `9f6980346e563eec8eb20eacd9a153e316b15504` | `v0.11.3` — `sha256:4e5a8d7f94d9d985a90d48c31306c903e61a8d7cc87a8412a843dcee3cbf8d57` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@sha256:6593499e…1bb2a --owner groovemap-music`
+exited 0. On `linux/amd64`, `org.opencontainers.image.revision` equals `9f6980346e563eec8eb20eacd9a153e316b15504`, the
+commit the `v0.11.4` tag is on, `org.opencontainers.image.version` is `v0.11.4`, and the image user is `1000:1000`.
+
+**Pair.** No new paired floor. The image keeps the `v0.11.3` schema requirement, which the existing
+`PAIRED_IMAGE_FLOORS` row for `CATALOG_API_IMAGE` `0.11.2` already covers. The reviewed `database-schema` `v0.13.0`
+meets it.
+
+**Supersedes** `catalog-api:v0.11.3` in the record above. The `v0.11.3` digest is the rollback target.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["CATALOG_API_IMAGE"]` as `0.11.4`.
+
 ### Promotion of catalog-api v0.11.2 (2026-11-09)
 
 One image: `catalog-api:v0.11.2`, the search release. It is `v0.11.1` plus only the search commits from
