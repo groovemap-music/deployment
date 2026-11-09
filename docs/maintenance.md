@@ -508,6 +508,42 @@ only the API: `up -d --no-deps api`. No `schema-init` is needed; the schema is a
 `PAIRED_IMAGE_FLOORS` refuses `catalog-api` `0.11.0` on any `database-schema` older than `0.11.0`, since an older
 schema lacks `release_search`.
 
+### Promotion of database-schema v0.12.0 (2026-11-09)
+
+`database-schema:v0.12.0` resolved from its released tag on GHCR (the index digest). Nothing is deployed by
+this record: the operator runs the lux schema window below, after `database-schema` `v0.12.0` is pinned.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.12.0` | `sha256:2c39b94efd6ad2436e60114435275fd9887ecf49e5a777b6a573763aa9b9f522` | `df17cecead1ec8cfd83f103bb63e7ddb8d5db9b5` | `v0.11.0` — `sha256:4733f4b710bc1fc05752cb7418340f5657fb28ff156fbd20cfb7c0196031dfef` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/database-schema@sha256:2c39b94f…b522 --owner
+groovemap-music` exited 0. On `linux/amd64` (manifest `sha256:d7841999…bfef`), `org.opencontainers.image.revision`
+equals `df17cecead1ec8cfd83f103bb63e7ddb8d5db9b5`, the commit the annotated tag `v0.12.0` peels to,
+`org.opencontainers.image.version` is `v0.12.0`, and the image user is `1000:1000`.
+
+**Supersedes** `database-schema:v0.11.0` in the record above. The `v0.11.0` digest is the rollback target.
+
+**What it adds.** Search facet and filter columns on `public.release_search` (`genres`, `year`, `country`,
+`media_families`, `media_mediums`) and a new `public.master_search` with capture triggers on `public.masters`.
+It pins `n_distinct` on `graph.credited_on.release_id` and `graph.track_credited_on.release_id`, and on a populated
+identity ledger whose `work_summary_day` is empty or missing it requests one ledger rebuild. All changes are additive.
+
+**Operator steps (lux).** After `schema-init` as the schema owner, outside a transaction:
+
+1. `ANALYZE graph.credited_on;` and `ANALYZE graph.track_credited_on;`
+2. `SELECT identity_ledger_refresh();` (a full rebuild, about 6 minutes)
+3. `CALL public.master_search_backfill();` (about 1 minute), then `SELECT * FROM public.master_search_drift();`, which must return `(0,0,0)`
+4. `CALL public.release_search_backfill();` (about 10 minutes; it rewrites every `release_search` row), then `VACUUM public.release_search;`
+5. `SELECT * FROM public.release_search_drift();`, which must return `(0,0,0)`
+
+If a drift check hits `/dev/shm` limits, run `SET max_parallel_workers_per_gather = 0;` first. catalog-api reads the
+new columns and `master_search` only after both drift checks pass. Never run an older `schema-init`. Once `v0.12.0`
+has run, the schema is not rolled back: the rollback digest above is for the image pin only.
+
+`check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["DATABASE_SCHEMA_IMAGE"]` as `0.12.0`.
+The too-new schema floor tests now use `0.13.0`, since `0.12.0` is the pinned release.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0

@@ -66,7 +66,7 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "4733f4b710bc1fc05752cb7418340f5657fb28ff156fbd20cfb7c0196031dfef",  # database-schema v0.11.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "2c39b94efd6ad2436e60114435275fd9887ecf49e5a777b6a573763aa9b9f522",  # database-schema v0.12.0  gitleaks:allow
     "CATALOG_API_IMAGE": "25375d52a1484888b09b0f6daa31f1590672bc18d9d064ece503e9ef689e4830",  # catalog-api v0.11.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
@@ -82,7 +82,7 @@ RELEASED_IMAGE_DIGESTS = {
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.11.0",
+    "DATABASE_SCHEMA_IMAGE": "0.12.0",
     "CATALOG_API_IMAGE": "0.11.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
