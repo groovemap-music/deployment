@@ -595,6 +595,41 @@ has run, the schema is not rolled back: the rollback digest above is for the ima
 `check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["DATABASE_SCHEMA_IMAGE"]` as `0.12.0`.
 The too-new schema floor tests now use `0.13.0`, since `0.12.0` is the pinned release.
 
+### Promotion of the 2026-11-09 set: database-schema v0.13.0, discogs-sql-loader v0.6.0, musicbrainz-sql-loader v0.7.0 and discogs-graph-enricher v0.7.0
+
+Each digest is the index digest of the released tag on GHCR. Nothing is deployed by this record: the operator
+runs the lux window in [homelab](homelab.md#lux-upgrade-the-2026-11-09-set) afterwards.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.13.0` | `sha256:f04f4e08f5fa7df3c5613333ce57f92f7ee306b127e26d6387c496b5a82d01af` | `a225c3db6556adf3141ce115b5afb96068d2c44e` | `v0.12.0` — `sha256:2c39b94efd6ad2436e60114435275fd9887ecf49e5a777b6a573763aa9b9f522` (image pin only; never roll the schema back) |
+| `discogs-sql-loader:v0.6.0` | `sha256:64e18ea3554d5e3c944a59fd73397c6f5d0d2bb6ad821e939e0a3f5965b9f491` | `2232dd32fa136523fe6b45a0fb2268aa7ea9c4d0` | `v0.5.0` — `sha256:5a77fbdeb44759e3547b52bad7b9193a3d7f36dbb41668b553fedb2a1bff5f17` |
+| `musicbrainz-sql-loader:v0.7.0` | `sha256:16345121813c9b85d70d97f3ce28a2364299ff64e46c7accc4b6443424715212` | `a720a86d1c778b19c2a569850e1f40836dd1ecf2` | `v0.6.1` — `sha256:c5654945af2f05835139764888893f179242adf3e04868a3c8917b95f037f56c` |
+| `discogs-graph-enricher:v0.7.0` | `sha256:69634f1473574fec51623d0ba289137be7b0dce65684251357e333a57798d929` | `85bea6f2fd4af3042068f9193e3eacee28530337` | `v0.6.2` — `sha256:d13b496070b4deba6756d5f572f9b7c10bff9982257ef2739f99a6038e91b487` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for all four. On `linux/amd64`, `org.opencontainers.image.revision` equals the
+commit each release tag peels to, `org.opencontainers.image.version` equals the tag, and every image user is
+`1000:1000`.
+
+**Supersedes** `database-schema:v0.12.0`, `discogs-sql-loader:v0.5.0`, `musicbrainz-sql-loader:v0.6.1` and
+`discogs-graph-enricher:v0.6.2`; their digests are the rollback targets above.
+
+**What it adds.**
+
+- `database-schema` `v0.13.0`: `loader_seen` seen lists and a reordered `graph.issued_on` key. On lux the new index
+  `issued_on_pkey_new` was already built `CONCURRENTLY` and is valid (2026-11-09, 1009 MB), so `schema-init`'s key swap is
+  catalog-only.
+- `discogs-sql-loader` `v0.6.0` and `musicbrainz-sql-loader` `v0.7.0`: seen lists in shadow mode by default (a startup
+  probe; touch mode on an older schema). MusicBrainz also gets lock-free no-op upserts.
+- `discogs-graph-enricher` `v0.7.0`: per-year Genre and Style series and `STATS_VERSION` 2, so the first start runs
+  one full stats sweep.
+
+**Paired floor.** None is added. The loaders fall back to touch mode against a schema without `loader_seen`, so
+`PAIRED_IMAGE_FLOORS` is unchanged (a comment beside it says so). `check-images.py` records
+`RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
+too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
+
 ### Promotion of musicbrainz-ingestion v0.4.1 (2026-11-07)
 
 One image: `musicbrainz-ingestion:v0.4.1`, the fix for the first-load download phase. v0.4.0

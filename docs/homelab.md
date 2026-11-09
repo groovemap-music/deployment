@@ -1128,6 +1128,44 @@ schema `v0.10.0` first (`label_longevity.is_placeholder`), then `analytics-engin
 `up -d --no-deps`. Never roll the schema back; `v0.8.0` is additive, so `catalog-api` `v0.7.0` and the
 `v0.7.0` loaders still run on it, except that `discogs-sql-loader` `v0.4.5` ignores `purge_vetoed`.
 
+## Lux upgrade: the 2026-11-09 set
+
+Pins, revisions and rollback digests are in the
+[promotion record](maintenance.md#promotion-of-the-2026-11-09-set-database-schema-v0130-discogs-sql-loader-v060-musicbrainz-sql-loader-v070-and-discogs-graph-enricher-v070).
+Nothing here has been run on lux by this repository, and each stage needs explicit operator approval. Same
+rules as the earlier windows: do not use `just deploy`, a plain `docker compose up` or the homelab playbook, which
+end in a whole-stack `up`; use `up -d --no-deps <service>` only. Keep `TABLEINATOR_MEMORY_LIMIT=30g` in lux's `.env`.
+
+**Does it need a window?** A short one, for the two loaders. The new `graph.issued_on` index
+`issued_on_pkey_new` is already built and valid on lux, so `schema-init`'s key swap is catalog-only, but time it.
+Both loaders restart onto new pins and `schema-init` must finish before either starts. Do it between extractions:
+a restarted loader resumes from its queues.
+
+**Order.**
+
+1. Move the checkout and `.env` by hand: `git checkout --detach <merge commit>`, then `python3
+   scripts/env-init.py` (rewrites only `*_IMAGE` lines, old pins kept in `.env.<timestamp>.bak`), and compare the
+   render before and after. The changed services must be exactly `schema-init`, `tableinator`,
+   `brainztableinator` and `graphinator`; stop on anything else.
+2. Verify the index is valid before the swap:
+   `SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid = 'graph.issued_on_pkey_new'::regclass;`
+   must return `indisvalid = t`. If it is not valid, stop and ask.
+3. Stop both loaders: `docker compose stop tableinator brainztableinator`.
+4. `schema-init` `v0.13.0` once, timed, and require exit 0:
+   `time docker compose up --no-deps --exit-code-from schema-init schema-init; echo "schema-init exit=$?"`.
+   Never run an older `schema-init` afterwards; there is no schema rollback.
+5. Restart both loaders: `docker compose up -d --no-deps tableinator brainztableinator`. Require `healthy`, a consumer
+   attached on each queue, and `seen_list_mode` equal to `shadow` in each loader's `/health`. (`tableinator` still
+   needs `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' groovemap-tableinator` to print
+   `32212254720 32212254720`.)
+6. Recreate `graphinator` (graph enricher `v0.7.0`), with its own go-ahead: `docker compose up -d --no-deps graphinator`.
+   Expect one full stats sweep on first start (`STATS_VERSION` 2); watch its step durations in the log and do not
+   interrupt it.
+
+**Rollback.** Set a pin back to the rollback digest in the record and recreate only that service with
+`up -d --no-deps`. Never roll the schema back: `v0.13.0` is additive, so the `v0.12.0` image pin can be restored for
+reference only, and the `v0.5.0` and `v0.6.1` loaders and the `v0.6.2` enricher still run on it.
+
 ## Known limitations
 
 These describe current behavior. A follow-up is planned; no dates are promised.

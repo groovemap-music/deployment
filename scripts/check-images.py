@@ -66,14 +66,14 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "2c39b94efd6ad2436e60114435275fd9887ecf49e5a777b6a573763aa9b9f522",  # database-schema v0.12.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "f04f4e08f5fa7df3c5613333ce57f92f7ee306b127e26d6387c496b5a82d01af",  # database-schema v0.13.0  gitleaks:allow
     "CATALOG_API_IMAGE": "b0b74d531701e456ef30f8af3e0695cf458aa085a3b2269637679420c4cb6f37",  # catalog-api v0.11.2  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "d13b496070b4deba6756d5f572f9b7c10bff9982257ef2739f99a6038e91b487",  # discogs-graph-enricher v0.6.2  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "69634f1473574fec51623d0ba289137be7b0dce65684251357e333a57798d929",  # discogs-graph-enricher v0.7.0  gitleaks:allow
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "f382c6d1497fb598948876acb310ec355f98d99fbffe5820582e30df6d0c5329",  # musicbrainz-graph-enricher v0.5.0  gitleaks:allow
-    "DISCOGS_SQL_LOADER_IMAGE": "5a77fbdeb44759e3547b52bad7b9193a3d7f36dbb41668b553fedb2a1bff5f17",  # discogs-sql-loader v0.5.0  gitleaks:allow
-    "MUSICBRAINZ_SQL_LOADER_IMAGE": "c5654945af2f05835139764888893f179242adf3e04868a3c8917b95f037f56c",  # musicbrainz-sql-loader v0.6.1  gitleaks:allow
+    "DISCOGS_SQL_LOADER_IMAGE": "64e18ea3554d5e3c944a59fd73397c6f5d0d2bb6ad821e939e0a3f5965b9f491",  # discogs-sql-loader v0.6.0  gitleaks:allow
+    "MUSICBRAINZ_SQL_LOADER_IMAGE": "16345121813c9b85d70d97f3ce28a2364299ff64e46c7accc4b6443424715212",  # musicbrainz-sql-loader v0.7.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816",  # operations-console v0.3.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce",  # graph-explorer v0.3.3  gitleaks:allow
     "ANALYTICS_ENGINE_IMAGE": "eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f",  # analytics-engine v0.7.0  gitleaks:allow
@@ -82,14 +82,14 @@ RELEASED_IMAGE_DIGESTS = {
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.12.0",
+    "DATABASE_SCHEMA_IMAGE": "0.13.0",
     "CATALOG_API_IMAGE": "0.11.2",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.6.2",
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.7.0",
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "0.5.0",
-    "DISCOGS_SQL_LOADER_IMAGE": "0.5.0",
-    "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.6.1",
+    "DISCOGS_SQL_LOADER_IMAGE": "0.6.0",
+    "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.7.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.3.1",
     "GRAPH_EXPLORER_IMAGE": "0.3.3",
     "ANALYTICS_ENGINE_IMAGE": "0.7.0",
@@ -137,6 +137,9 @@ PAIRED_IMAGE_FLOORS = (
     # catalog-api v0.11.2 reads release_search's facet columns and master_search, which database-schema
     # v0.12.0 creates. An older schema lacks them, so the facets and master search would fail.
     ("CATALOG_API_IMAGE", "0.11.2", "DATABASE_SCHEMA_IMAGE", "0.12.0"),
+    # No row for the 2026-11-09 loaders (discogs-sql-loader v0.6.0, musicbrainz-sql-loader v0.7.0): their
+    # loader_seen seen lists need database-schema v0.13.0, but on an older schema a startup probe makes
+    # them fall back to touch mode, so no paired floor is required.
 )
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
