@@ -76,7 +76,7 @@ is read with its own `stats_since`. Mean and max are for the calls counted.
 | `identity_ledger_refresh()` (latest, 2026-11-09 03:15) | 1 | 461 s | 461 s | 2026-11-09 | under 60 s | **Missed**; the one latest run |
 | `identity_ledger_rebuild()` | 4 | 399 s | 586 s | 2026-11-06 | none | n/a (full rebuild) |
 | `graph.refresh_vertex_degree()` | 1 each | 228 s, 216 s | 228 s | 2026-11-06, 11-05 | none | n/a |
-| `genre_stats` insert | 1 | 2,098 s (8,576 s on 11-05) | | 2026-11-06 | no longer than today after trends | baseline set; 11-06 run is 4.1x faster than 11-05 |
+| `genre_stats` insert | 1 | 2,098 s (8,576 s on 11-05) | | 2026-11-06 | no longer than today after trends | baseline set; the 11-06 run is 4.1x faster than the 11-05 run |
 | `style_stats` insert | 1 | 2,106 s (4,380 s on 11-05) | | 2026-11-06 | same | baseline set |
 | `REFRESH MATERIALIZED VIEW CONCURRENTLY identity_ledger_density` | 7 and 4 | 47 s, 70 s | 73 s, 85 s | 11-04, 11-01 | none | n/a (pre-incremental view jobs) |
 | `identity_ledger_maintain()` | 1 | 26 s | 26 s | 2026-11-07 | none | n/a |
@@ -98,9 +98,9 @@ Readings:
   statements this run did not isolate. Roadmap item 4's "may show incremental does not hold" is borne out for this call. A
   `pg_stat_statements` entry for the refresh function does not break down its inner statements per call; the next step is the server log
   at `log_min_duration_statement` 1 s for the 2026-11-09 03:14 window.
-- **The whole-ledger rebuild is dominated by two statements**: alias resolution (180 s) and `edition_parents` (143 s), about 80% of the
-  rebuild's statement time. Those are the ones to look at first if the refresh recomputes them.
-- Genre and style stats each take about 35 min on the 2026-11-06 run. The 11-05 runs (8,576 s, 4,380 s) were the partial/first pass.
+- **The whole-ledger rebuild is dominated by two statements**: alias resolution (180 s) and `edition_parents` (143 s), about 86% of the
+  four statements listed above. Those are the ones to look at first if the refresh recomputes them.
+- Genre and style stats each take about 35 min on the 2026-11-06 run. The 11-05 runs (8,576 s, 4,380 s) were earlier runs; why they took longer was not established.
   Roadmap C3 asks that the yearly counts fold into the same pass without lengthening it; this is the figure to compare against.
 - The `completeness` count statement and the embedding edge queries (item 9) did not exceed the 5 s filter in this read and are not
   re-timed here; the 2026-11-07 figures stand.

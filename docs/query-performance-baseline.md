@@ -3,7 +3,7 @@
 How to collect query statistics from PostgreSQL and Neo4j, what each step costs, and who has to approve it.
 This is the procedure behind the query performance audit; the dated results live in
 [`query-performance-audit-2026-11-04.md`](query-performance-audit-2026-11-04.md), the post-load
-[`query-performance-baseline-2026-11-07.md`](query-performance-baseline-2026-11-07.md) and later
+[`query-performance-baseline-2026-11-07.md`](query-performance-baseline-2026-11-07.md), the route and maintenance [`2026-11-09`](query-performance-baseline-2026-11-09.md) baseline and later
 `query-performance-baseline-<date>.md` files. Nothing here runs in `just check` or CI.
 
 **Nothing is enabled by this repository.** Every step marked *approval* changes or loads a live environment and waits for the operator.
