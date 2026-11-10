@@ -99,7 +99,7 @@ def test_recipe_dag_preserves_the_required_validation_graph() -> None:
         'uv run pip-licenses --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only"',
         "bash scripts/check-compose.sh",
         "gitleaks git --config .gitleaks.toml --redact --no-banner",
-        "gitleaks dir . --config .gitleaks.toml --redact --no-banner",
+        "bash scripts/secret-scan-worktree.sh",
         HYGIENE_COMMAND,
         "uv run mypy",
         "uv run pytest --cov=scripts --cov-report=term-missing --cov-report=xml",
