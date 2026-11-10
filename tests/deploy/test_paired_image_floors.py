@@ -43,8 +43,8 @@ def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, 
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.8.0"})
     assert policy["paired_floor_problems"](versions) == [
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0",
-        f"{CATALOG} 0.15.2 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
-        f"{CATALOG} 0.15.2 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.8.0",
+        f"{CATALOG} 0.15.3 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
+        f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.8.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.8.0",
     ]
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
@@ -62,12 +62,12 @@ def test_the_musicbrainz_refresh_owner_is_refused_without_the_refresh_lock(polic
 
 
 def test_the_promoted_catalog_api_is_refused_on_the_previous_schema(policy: dict[str, Any]) -> None:
-    """The real declaration: catalog-api 0.15.2 reads release_search and master_search, which schema 0.10.0 lacks."""
+    """The real declaration: catalog-api 0.15.3 reads release_search and master_search, which schema 0.10.0 lacks."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.10.0"})
     problems = policy["paired_floor_problems"](versions)
     assert problems == [
-        f"{CATALOG} 0.15.2 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0",
-        f"{CATALOG} 0.15.2 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.10.0",
+        f"{CATALOG} 0.15.3 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0",
+        f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.10.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.10.0",
     ]
 
@@ -76,7 +76,7 @@ def test_the_catalog_api_is_refused_on_schema_0_11_because_it_lacks_master_searc
     """The real declaration: schema 0.11.0 has release_search but not the master_search or facet columns 0.12.0 adds."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.11.0"})
     assert policy["paired_floor_problems"](versions) == [
-        f"{CATALOG} 0.15.2 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.11.0",
+        f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.11.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.11.0",
     ]
 

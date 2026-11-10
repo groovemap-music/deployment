@@ -699,6 +699,25 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.15.3 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.15.3` | `sha256:1f92cc7c49691326b7d2cfbd086b58b07f5a0c9ce0f775e879335f3b150d6b1b` | `b01c5e670b60cad396a2a829905b47f05e54baa4` | `v0.15.2` — `sha256:890d69cf7e417622be335aafaa181e621260eee17e96d59598773b917ed4ece7` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.15.3` peels to,
+the version label is `v0.15.3`, and the image user is `1000:1000`.
+
+**What changes.** The database-latency histograms get seconds-scale buckets (0.1 ms to 60 s): catalog-api's own
+`db.client.operation.duration` for Valkey and Neo4j (gm-catalog-api-b13y), and, through the python-libraries pin move
+f0964cc -> c440b6f (gm-catalog-api-0feh, gm-python-libraries-ggkm), the runtime's PostgreSQL
+`db.client.operation.duration`, `db.client.connection.wait_time` and `messaging.client.operation.duration`. The bucket fix
+is the only runtime change. Quantiles on `consumers.json` and `neo4j.json` change scale at the deploy. On lux: an
+`api`-only recreate, after database-schema v0.15.0 and its ledger refresh.
+
+**Supersedes** `catalog-api:v0.15.2`.
+
 ### Promotion of database-schema v0.15.0 and catalog-api v0.15.2 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
