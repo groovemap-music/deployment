@@ -82,7 +82,7 @@ RELEASED_IMAGE_DIGESTS = {
     "OPERATIONS_CONSOLE_IMAGE": "07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816",  # operations-console v0.3.1  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce",  # graph-explorer v0.3.3  gitleaks:allow
     "ANALYTICS_ENGINE_IMAGE": "eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f",  # analytics-engine v0.7.0  gitleaks:allow
-    "POSTGRES_IMAGE": "43fee8e4ebe980dfec290ec46aecfbc78368a2c95d1ba5d7b591e60025ac04e1",  # postgres v18.6.0  gitleaks:allow
+    "POSTGRES_IMAGE": "7887f0365c4c36f007bd9238e69051483ed1617fc93f1e2b672b2cccdb10ae10",  # postgres v18.6.1  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
@@ -100,7 +100,7 @@ RELEASED_IMAGE_VERSIONS = {
     "GRAPH_EXPLORER_IMAGE": "0.3.3",
     "ANALYTICS_ENGINE_IMAGE": "0.7.0",
     # MAJOR.MINOR is the PostgreSQL release; the last number is groovemap-music/postgres's own revision.
-    "POSTGRES_IMAGE": "18.6.0",
+    "POSTGRES_IMAGE": "18.6.1",
 }
 
 # The digest a release is recorded with before it is published. check_declarations refuses it.

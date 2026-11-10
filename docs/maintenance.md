@@ -699,6 +699,24 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of postgres v18.6.1 (2026-11-09)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `postgres:v18.6.1` | `sha256:7887f0365c4c36f007bd9238e69051483ed1617fc93f1e2b672b2cccdb10ae10` | `85de3a89fede6a4f9568f87607bde37b87783e37` | `v18.6.0` — `sha256:43fee8e4ebe980dfec290ec46aecfbc78368a2c95d1ba5d7b591e60025ac04e1` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/postgres@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0; `org.opencontainers.image.revision` equals the commit `v18.6.1` peels to and
+`org.opencontainers.image.version` is `v18.6.1`.
+
+**What changes.** Only the base: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+(Alpine 3.24.4, still PostgreSQL 18.6) instead of 77f58511 (Alpine 3.24.2); pgvector v0.8.7 is unchanged. The collation
+proof on groovemap-music/postgres PR #1 built indexes under the previous base and read them under the new image: identical
+ordering, amcheck clean, so an existing data directory needs no REINDEX. In this repository the pin feeds the dedicated
+stack and store-check; lux's shared PostgreSQL is pinned in homelab.
+
+**Supersedes** `postgres:v18.6.0`.
+
 ### Promotion of postgres v18.6.0 (2026-11-09)
 
 One new image, `ghcr.io/groovemap-music/postgres:v18.6.0` (gm-deployment-p9ql): the official
