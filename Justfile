@@ -54,7 +54,7 @@ license-check: _require-uv
 
 secret-scan:
     gitleaks git --config .gitleaks.toml --redact --no-banner
-    gitleaks dir . --config .gitleaks.toml --redact --no-banner
+    bash scripts/secret-scan-worktree.sh
 
 build: _compose-check
 
