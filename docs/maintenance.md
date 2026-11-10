@@ -699,6 +699,25 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of discogs-graph-enricher v0.9.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `discogs-graph-enricher:v0.9.0` | `sha256:911f549dc4b39c8ca55388be8efcd4f813122fb7c7fcdada026339e0dbd35f3d` | `538bde9c30f2dadebb6d838ecff853e3555447ff` | `v0.8.0` — `sha256:f74eeda853eb0e54c74fa86a20ffb5a0469baee1bd6bc7b06e4e52b917362cf3` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/discogs-graph-enricher@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.9.0` peels to,
+the version label is `v0.9.0`, and the image user is `1000:1000`.
+
+**What changes.** After the label_stats pages, a rank phase stores each real label's place in catalog-api's
+label-longevity order as `l.longevity_rank`. It stores the ranked count M once, on the dump's ExtractionCompletion
+node, as `label_longevity_rank_of` (gm-discogs-graph-enricher-wo8n, part of gm-graph-explorer-i51p). STATS_VERSION goes
+to 4, so the first start runs one full stats sweep plus the rank phase. The rank read holds about 420 MB of Neo4j
+transaction memory (lux's cap is 3g in total) and must finish inside the 600 s transaction timeout. catalog-api serves
+the rank once gm-catalog-api-gkcu ships. On lux: a `graphinator`-only recreate. No schema dependency.
+
+**Supersedes** `discogs-graph-enricher:v0.8.0`.
+
 ### Promotion of database-schema v0.14.0 and musicbrainz-sql-loader v0.8.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
