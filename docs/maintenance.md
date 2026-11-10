@@ -699,6 +699,31 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of database-schema v0.15.0 and catalog-api v0.15.2 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.15.0` | `sha256:25725f652ec8da32bc952a6f2d8d36a48fe21423f4cc350f1d73c969aaee8e5e` | `974c0b718c85e52aae72af099ba9a507c63ed168` | `v0.14.0` — `sha256:5fecc4c16d5556f4cd614504128a13e412b314721b30766464402b334b32c5ce` |
+| `catalog-api:v0.15.2` | `sha256:890d69cf7e417622be335aafaa181e621260eee17e96d59598773b917ed4ece7` | `c027ced524d6fb1ca153f10a75db8ee37eb16ee4` | `v0.15.1` — `sha256:36099ce23c11f151edbe4a3493f0ad21a4cab8e92895d1507b459ac56a8bfd2c` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0 for both. On `linux/amd64`, each revision label is the commit its tag
+peels to, each version label is the tag, and each image user is `1000:1000`.
+
+**What changes.** database-schema adds `identity_ledger_work_events` (gm-database-schema-xq8r), a work-level event
+table with each work's previous and next event instant, so catalog-api's windowed Identity Ledger works list counts and
+pages a `[since, until)` window from one index (gm-catalog-api-l7ek.3). On lux the one-month window took 4.6 s (raw) to
+8.1 s (per-day rollup) against the 2 s budget once a window does not hold every event. catalog-api v0.15.2 reads the new
+table once it holds rows and falls back to the raw aggregation until then, so it is safe on v0.14.0.
+
+**On lux, outside a load window:** stop the loaders and run schema-init (it creates the table empty and requests one
+ledger rebuild). Then, as the schema owner and outside a transaction, `SELECT identity_ledger_refresh();` (a full rebuild,
+about 6 minutes plus an estimated 30 to 55 s for the new table) and `SELECT * FROM identity_ledger_verify();`, which
+must return `0, 0, 0` for every relation. The table takes about 1.1 GB. Restart the loaders, then an `api`-only recreate.
+Measure the 2026-11 window with catalog-api's `scripts/ledger_scale.py` and record it on gm-catalog-api-l7ek.3.
+
+**Supersedes** `database-schema:v0.14.0` and `catalog-api:v0.15.1`.
+
 ### Promotion of catalog-api v0.15.1 and analytics-engine v0.8.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
