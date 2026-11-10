@@ -699,6 +699,24 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.15.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.15.0` | `sha256:94df897773275125fb006372a7a111bbe3bc391f55846277925c39cb030858c2` | `e276256bf9b693ebbb8c4209e6a1ac40c4b693fd` | `v0.14.2` — `sha256:fc5d468235504769827809e6c5a42d01d102f20be8685ff6e15d9ee8debc81eb` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.15.0` peels to,
+the version label is `v0.15.0`, and the image user is `1000:1000`.
+
+**What changes.** The NLQ `find_path` tool takes `from_label_id` and `to_label_id` (gm-catalog-api-p4hv). The
+python-libraries runtime and agent-tools pin moves from 5f35c03 to f0964cc, which is runtime-identical to 89811f4, the
+runtime discogs-sql-loader v0.6.0 runs on lux. catalog-api now gets the PostgreSQL pool checkout-probe TTL (30 s), idle
+close (300 s), max lifetime (1800 s), TCP keepalives, Neo4j busy-pool probe handling and the pool metrics. On lux: an
+`api`-only recreate, deployed on its own. Watch the `groovemap` connection count, which was 14 idle before the deploy.
+
+**Supersedes** `catalog-api:v0.14.2`.
+
 ### Promotion of graph-explorer v0.7.0 and catalog-api v0.14.2 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
