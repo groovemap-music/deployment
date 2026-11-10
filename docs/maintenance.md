@@ -699,6 +699,22 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.4.0 (2026-11-09)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.4.0` | `sha256:1cfa53419e888e871e365a0f8f0d827c1a2963a6375cd63d57a92734e4e52ac6` | `c0d05dbf9f6696333ed49b5874d43ef7fea3e8a9` | `v0.3.3` — `sha256:885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/graph-explorer@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 (after the release run finished); on `linux/amd64` the revision label is the commit
+`v0.4.0` peels to, the version label is `v0.4.0`, and the image user is `1000:1000`.
+
+**What changes.** Label longevity on a label's detail panel and a longest-running-labels Trends timeline
+(gm-graph-explorer-uhnz, -oehx, -yulr), and the Missing preview and physical-copy selection UI (gm-graph-explorer-qgzv,
+operator-authorized for release 2026-11-09). Needs catalog-api v0.13.0 (live on lux). On lux: an `explore`-only recreate.
+
+**Supersedes** `graph-explorer:v0.3.3`.
+
 ### Promotion of catalog-api v0.13.0 (2026-11-09)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |

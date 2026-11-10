@@ -80,7 +80,7 @@ RELEASED_IMAGE_DIGESTS = {
     "DISCOGS_SQL_LOADER_IMAGE": "64e18ea3554d5e3c944a59fd73397c6f5d0d2bb6ad821e939e0a3f5965b9f491",  # discogs-sql-loader v0.6.0  gitleaks:allow
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "16345121813c9b85d70d97f3ce28a2364299ff64e46c7accc4b6443424715212",  # musicbrainz-sql-loader v0.7.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816",  # operations-console v0.3.1  gitleaks:allow
-    "GRAPH_EXPLORER_IMAGE": "885991da887c8f139b9ad5216c2e9b4a8cc95da9171e39b5e8d49ce56c8df2ce",  # graph-explorer v0.3.3  gitleaks:allow
+    "GRAPH_EXPLORER_IMAGE": "1cfa53419e888e871e365a0f8f0d827c1a2963a6375cd63d57a92734e4e52ac6",  # graph-explorer v0.4.0  gitleaks:allow
     "ANALYTICS_ENGINE_IMAGE": "eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f",  # analytics-engine v0.7.0  gitleaks:allow
     "POSTGRES_IMAGE": "7887f0365c4c36f007bd9238e69051483ed1617fc93f1e2b672b2cccdb10ae10",  # postgres v18.6.1  gitleaks:allow
 }
@@ -97,7 +97,7 @@ RELEASED_IMAGE_VERSIONS = {
     "DISCOGS_SQL_LOADER_IMAGE": "0.6.0",
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.7.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.3.1",
-    "GRAPH_EXPLORER_IMAGE": "0.3.3",
+    "GRAPH_EXPLORER_IMAGE": "0.4.0",
     "ANALYTICS_ENGINE_IMAGE": "0.7.0",
     # MAJOR.MINOR is the PostgreSQL release; the last number is groovemap-music/postgres's own revision.
     "POSTGRES_IMAGE": "18.6.1",
