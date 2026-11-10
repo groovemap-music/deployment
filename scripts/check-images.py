@@ -75,7 +75,7 @@ RELEASED_IMAGE_DIGESTS = {
     "CATALOG_API_IMAGE": "6593499eeb761c45e0229e91ebfd1bf370587cdbc35f4b06ac3231479db1bb2a",  # catalog-api v0.11.4  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "69634f1473574fec51623d0ba289137be7b0dce65684251357e333a57798d929",  # discogs-graph-enricher v0.7.0  gitleaks:allow
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "f74eeda853eb0e54c74fa86a20ffb5a0469baee1bd6bc7b06e4e52b917362cf3",  # discogs-graph-enricher v0.8.0  gitleaks:allow
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "f382c6d1497fb598948876acb310ec355f98d99fbffe5820582e30df6d0c5329",  # musicbrainz-graph-enricher v0.5.0  gitleaks:allow
     "DISCOGS_SQL_LOADER_IMAGE": "64e18ea3554d5e3c944a59fd73397c6f5d0d2bb6ad821e939e0a3f5965b9f491",  # discogs-sql-loader v0.6.0  gitleaks:allow
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "16345121813c9b85d70d97f3ce28a2364299ff64e46c7accc4b6443424715212",  # musicbrainz-sql-loader v0.7.0  gitleaks:allow
@@ -92,7 +92,7 @@ RELEASED_IMAGE_VERSIONS = {
     "CATALOG_API_IMAGE": "0.11.4",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
-    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.7.0",
+    "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.8.0",
     "MUSICBRAINZ_GRAPH_ENRICHER_IMAGE": "0.5.0",
     "DISCOGS_SQL_LOADER_IMAGE": "0.6.0",
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.7.0",

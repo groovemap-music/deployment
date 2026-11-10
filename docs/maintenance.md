@@ -642,6 +642,28 @@ has run, the schema is not rolled back: the rollback digest above is for the ima
 `check-images.py` pins the new digest and records `RELEASED_IMAGE_VERSIONS["DATABASE_SCHEMA_IMAGE"]` as `0.12.0`.
 The too-new schema floor tests now use `0.13.0`, since `0.12.0` is the pinned release.
 
+### Promotion of discogs-graph-enricher v0.8.0 (2026-11-09)
+
+The index digest of the released tag on GHCR. Nothing is deployed by this record: on lux it is a `graphinator`-only
+recreate (render compare, then `docker compose up -d --no-deps graphinator`), which runs one full stats sweep because
+`STATS_VERSION` moves to 3.
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `discogs-graph-enricher:v0.8.0` | `sha256:f74eeda853eb0e54c74fa86a20ffb5a0469baee1bd6bc7b06e4e52b917362cf3` | `7ce7e36eed9fdbca791c5c97f650acce19976f39` | `v0.7.0` — `sha256:69634f1473574fec51623d0ba289137be7b0dce65684251357e333a57798d929` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/discogs-graph-enricher@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, `org.opencontainers.image.revision` equals the
+commit `v0.8.0` peels to, `org.opencontainers.image.version` is `v0.8.0`, and the image user is `1000:1000`.
+
+**What changes.** Label nodes gain stored longevity fields (`first_year`, `last_year`, `years_active`,
+`total_releases`, `peak_decade`) computed in the existing `label_stats` walk (gm-discogs-graph-enricher-70nx).
+catalog-api reads them once the newest ExtractionCompletion has `stats_version >= 3` and falls back to a live traversal
+otherwise, so the order against catalog-api does not matter for correctness. The `label_stats` step reads about 4-5%
+more (an estimated 15-25 s on its 165 s); confirm the real figure from graphinator's step durations after deploy.
+
+**Supersedes** `discogs-graph-enricher:v0.7.0` from the 2026-11-09 set.
+
 ### Promotion of the 2026-11-09 set: database-schema v0.13.0, discogs-sql-loader v0.6.0, musicbrainz-sql-loader v0.7.0 and discogs-graph-enricher v0.7.0
 
 Each digest is the index digest of the released tag on GHCR. Nothing is deployed by this record: the operator
