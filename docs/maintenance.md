@@ -699,6 +699,24 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.14.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.14.0` | `sha256:5268511037c8a7a618a54c41b77e23b96feb597d984afaf149174efddff74cf9` | `a378a885969bb8df6a96bd919be57bb767af70a7` | `v0.13.0` — `sha256:53d3b686b4bf89dab16e74f797d5cc6daf71dd8e29369844c5514d58c14afe36` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.14.0` peels to,
+the version label is `v0.14.0`, and the image user is `1000:1000`.
+
+**What changes.** Label details return `longevity_rank` and `longevity_rank_of`, read from discogs-graph-enricher
+v0.9.0's stored rank in the existing stored-stats query (gm-catalog-api-gkcu, part of gm-graph-explorer-i51p). They
+are null until the newest ExtractionCompletion is maintained with `stats_version >= 4`. No live fallback. On lux: an
+`api`-only recreate. Lux's enricher stamped stats_version 4 on 2026-11-10: 929,239 labels ranked, and ranks 1-50 equal
+both catalog-api's live label-longevity statement and the stored insights snapshot.
+
+**Supersedes** `catalog-api:v0.13.0`.
+
 ### Promotion of discogs-graph-enricher v0.9.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
