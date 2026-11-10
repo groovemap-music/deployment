@@ -72,7 +72,7 @@ IMAGE_OWNERS = {
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
     "DATABASE_SCHEMA_IMAGE": "5fecc4c16d5556f4cd614504128a13e412b314721b30766464402b334b32c5ce",  # database-schema v0.14.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "94df897773275125fb006372a7a111bbe3bc391f55846277925c39cb030858c2",  # catalog-api v0.15.0  gitleaks:allow
+    "CATALOG_API_IMAGE": "36099ce23c11f151edbe4a3493f0ad21a4cab8e92895d1507b459ac56a8bfd2c",  # catalog-api v0.15.1  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "911f549dc4b39c8ca55388be8efcd4f813122fb7c7fcdada026339e0dbd35f3d",  # discogs-graph-enricher v0.9.0  gitleaks:allow
@@ -81,7 +81,7 @@ RELEASED_IMAGE_DIGESTS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "aadae1176b8137ad638cb9e5fc97a99919b46df5c6bfe5c9112fe7904bf08bd1",  # musicbrainz-sql-loader v0.8.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "9d1601c44decb380434b21dbd2f1bb9dbb3b715396158754f669c4877b66f234",  # operations-console v0.4.0  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "a260a020daff484d817700b8cf3b87ab47768ef1b8427b3b6452872cc12ac63e",  # graph-explorer v0.8.0  gitleaks:allow
-    "ANALYTICS_ENGINE_IMAGE": "eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f",  # analytics-engine v0.7.0  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "68a51785cdaa973e754470b1be0d08219b8b4494fd8687f64c080c106aa80d0c",  # analytics-engine v0.8.0  gitleaks:allow
     "POSTGRES_IMAGE": "7887f0365c4c36f007bd9238e69051483ed1617fc93f1e2b672b2cccdb10ae10",  # postgres v18.6.1  gitleaks:allow
 }
 
@@ -89,7 +89,7 @@ RELEASED_IMAGE_DIGESTS = {
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
     "DATABASE_SCHEMA_IMAGE": "0.14.0",
-    "CATALOG_API_IMAGE": "0.15.0",
+    "CATALOG_API_IMAGE": "0.15.1",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.9.0",
@@ -98,7 +98,7 @@ RELEASED_IMAGE_VERSIONS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.8.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.4.0",
     "GRAPH_EXPLORER_IMAGE": "0.8.0",
-    "ANALYTICS_ENGINE_IMAGE": "0.7.0",
+    "ANALYTICS_ENGINE_IMAGE": "0.8.0",
     # MAJOR.MINOR is the PostgreSQL release; the last number is groovemap-music/postgres's own revision.
     "POSTGRES_IMAGE": "18.6.1",
 }

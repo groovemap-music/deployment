@@ -699,6 +699,28 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.15.1 and analytics-engine v0.8.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.15.1` | `sha256:36099ce23c11f151edbe4a3493f0ad21a4cab8e92895d1507b459ac56a8bfd2c` | `ab3b189dfac957304afabf8c180acf75bf29727c` | `v0.15.0` — `sha256:94df897773275125fb006372a7a111bbe3bc391f55846277925c39cb030858c2` |
+| `analytics-engine:v0.8.0` | `sha256:68a51785cdaa973e754470b1be0d08219b8b4494fd8687f64c080c106aa80d0c` | `54dc115c576a2d99ee59150ea656da4d19b032e2` | `v0.7.0` — `sha256:eb6eecf916c876ea22bbfb0c669a780e702941b24c55dfacdea4a1f48968bd4f` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0 for both. On `linux/amd64`, each revision label is the commit its tag
+peels to, each version label is the tag, and each image user is `1000:1000`.
+
+**What changes.** catalog-api: the first search after a restart or a quiet spell no longer waits for new pool
+connections or behind the startup prewarm (gm-catalog-api-0n70). The pool opens 6 connections before `/health` is
+healthy, search statements run with `jit=off`, and the prewarm yields to user searches. Expect about 4 more idle
+`groovemap` connections on the shared PostgreSQL (71 of 300 in use before). analytics-engine: the embeddings job's
+memory estimate models the whole run, pinned to the 15.8 GiB lux measurement, and the edge stream no longer fragments
+the heap (gm-analytics-engine-y01w). It also ships `python -m insights.similar_artists_sizing`, a read-only sizing pass
+(gm-analytics-engine-3am). `ENABLE_SIMILAR_ARTISTS` stays off. On lux: an `api`-only recreate, and an `insights`-only
+recreate outside a MusicBrainz load window. `embeddings` is a one-shot and picks the image up on its next run.
+
+**Supersedes** `catalog-api:v0.15.0` and `analytics-engine:v0.7.0`.
+
 ### Lux recreate of the Dependabot #55 data-tier pins (2026-11-10)
 
 Dependabot #55 moved the third-party data-tier pins on main. They reach lux only when those services are recreated, which
