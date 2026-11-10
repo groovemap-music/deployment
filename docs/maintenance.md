@@ -699,6 +699,25 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.6.0 and catalog-api v0.14.1 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.6.0` | `sha256:dc984b2f3ba637429dd3e0b94979f960c35978183672cc21ab3da150e24fdad0` | `10b6588459711c45ed0bbaa14d4f9059c424ed9e` | `v0.5.0` — `sha256:e2166123f8e13092e0da8a0bc640845ff7364a4faee42055d37676f74359644d` |
+| `catalog-api:v0.14.1` | `sha256:b6d9c4a5bc3d28bfab34db2ce91a53628fabb9a40ae849bef601b6974c6e7808` | `a822da6f576b80961df59c20ef83ad3625016b3a` | `v0.14.0` — `sha256:5268511037c8a7a618a54c41b77e23b96feb597d984afaf149174efddff74cf9` |
+
+For both images, `gh attestation verify oci://ghcr.io/groovemap-music/<repository>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, each image's revision label is the commit its tag peels to, its version label
+is its tag, and its image user is `1000:1000`.
+
+**What changes.** Label trends match the label by id, so labels that share a name no longer merge (gm-catalog-api-1whr).
+An ambiguous bare name returns 409 plus candidates, and trends cache keys are namespaced by id vs name, so the trends
+cache starts cold once. graph-explorer sends the label's id with its name and lists the candidates on a 409
+(gm-graph-explorer-toyc). On lux: recreate `explore` first, then `api`, so no window shows a blank trends chart for the
+4 labels (2 names) that share a name.
+
+**Supersedes** `graph-explorer:v0.5.0` and `catalog-api:v0.14.0`.
+
 ### Promotion of graph-explorer v0.5.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
