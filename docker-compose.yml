@@ -572,7 +572,7 @@ services:
   # OpenTelemetry collector — the single ingest point for application metrics.
   # Services PUSH OTLP/HTTP-protobuf to :4318; nothing scrapes an application.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.164.0-386@sha256:40392928d2b988b77e7525dbac33e5e3d9bedb40b9ff8c1f9119d92ca3a8a1c3
+    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
     container_name: groovemap-otel-collector
     hostname: otel-collector
     command: ["--config=file:/etc/otelcol-contrib/config.yaml"]
