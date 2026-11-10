@@ -699,6 +699,29 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of database-schema v0.14.0 and musicbrainz-sql-loader v0.8.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.14.0` | `sha256:5fecc4c16d5556f4cd614504128a13e412b314721b30766464402b334b32c5ce` | `66e8891b1a05b93502fda3063e1356f532ebb2b6` | `v0.13.0` — `sha256:f04f4e08f5fa7df3c5613333ce57f92f7ee306b127e26d6387c496b5a82d01af` |
+| `musicbrainz-sql-loader:v0.8.0` | `sha256:aadae1176b8137ad638cb9e5fc97a99919b46df5c6bfe5c9112fe7904bf08bd1` | `57a9f7e304f8ff1fec55e282f2e2392171909a45` | `v0.7.0` — `sha256:16345121813c9b85d70d97f3ce28a2364299ff64e46c7accc4b6443424715212` |
+
+For both images, `gh attestation verify oci://ghcr.io/groovemap-music/<repository>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, each image's revision label is the commit its tag peels to, its version label
+is its tag, and its image user is `1000:1000`.
+
+**What changes.** The schema adds a transaction-scoped advisory lock to `graph.refresh_artist_member_of()` and
+`graph.refresh_vertex_degree()`, so a second refresh owner queues instead of interleaving `TRUNCATE`s
+(gm-database-schema-gqs2). Where `embedding_pipeline` exists, it grants that role `USAGE` on `public`. It also revokes
+PUBLIC's `EXECUTE` on the SECURITY DEFINER routines the schema owner owns (gm-database-schema-lag5). On a database
+where the revoke was already applied by hand, as on lux on 2026-11-10, the sweep is a no-op. When a MusicBrainz
+extraction completes, the loader now refreshes `artist_member_of` and `vertex_degree` (gm-musicbrainz-sql-loader-dikx).
+It writes only the media edges that changed, and dead-letters a duplicate-medium record instead of requeuing it
+(gm-musicbrainz-sql-loader-o0hb). The loader needs schema 0.14.0, and `PAIRED_IMAGE_FLOORS` enforces that. Seen mode
+stays shadow. On lux: stop the loaders, run schema-init, then recreate `brainztableinator` and restart the other loaders.
+
+**Supersedes** `database-schema:v0.13.0` and `musicbrainz-sql-loader:v0.7.0`.
+
 ### Promotion of operations-console v0.4.0 (2026-11-09)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |

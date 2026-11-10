@@ -34,19 +34,31 @@ def test_both_loaders_are_tied_to_their_schema(policy: dict[str, Any]) -> None:
         (MB_LOADER, "0.6.0", SCHEMA, "0.9.0"),
         (CATALOG, "0.11.0", SCHEMA, "0.11.0"),
         (CATALOG, "0.11.2", SCHEMA, "0.12.0"),
+        (MB_LOADER, "0.8.0", SCHEMA, "0.14.0"),
     ]
 
 
 def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, Any]) -> None:
-    """The real declaration: loader 0.7.0 on schema 0.8.0 (which has purge_vetoed but not the single key) is refused."""
+    """The real declaration: loader 0.8.0 on schema 0.8.0 (which has purge_vetoed but not the single key) is refused."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.8.0"})
     assert policy["paired_floor_problems"](versions) == [
-        f"{MB_LOADER} 0.7.0 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0",
+        f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.9.0 or newer, and the reviewed set has 0.8.0",
         f"{CATALOG} 0.13.0 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
         f"{CATALOG} 0.13.0 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.8.0",
+        f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.8.0",
     ]
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
-    assert len(policy["paired_floor_problems"](versions)) == 4  # the Discogs loader is refused too
+    assert len(policy["paired_floor_problems"](versions)) == 5  # the Discogs loader is refused too
+
+
+def test_the_musicbrainz_refresh_owner_is_refused_without_the_refresh_lock(policy: dict[str, Any]) -> None:
+    """The real declaration: loader 0.8.0 refreshes the shared derived tables, and schema 0.13.0 lacks the lock."""
+    versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.13.0"})
+    assert policy["paired_floor_problems"](versions) == [
+        f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.13.0",
+    ]
+    older_loader = dict(versions, **{MB_LOADER: "0.7.0"})
+    assert policy["paired_floor_problems"](older_loader) == []
 
 
 def test_the_promoted_catalog_api_is_refused_on_the_previous_schema(policy: dict[str, Any]) -> None:
@@ -56,6 +68,7 @@ def test_the_promoted_catalog_api_is_refused_on_the_previous_schema(policy: dict
     assert problems == [
         f"{CATALOG} 0.13.0 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0",
         f"{CATALOG} 0.13.0 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.10.0",
+        f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.10.0",
     ]
 
 
@@ -64,20 +77,21 @@ def test_the_catalog_api_is_refused_on_schema_0_11_because_it_lacks_master_searc
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.11.0"})
     assert policy["paired_floor_problems"](versions) == [
         f"{CATALOG} 0.13.0 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.11.0",
+        f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.11.0",
     ]
 
 
 def test_the_catalog_api_is_accepted_on_schema_0_12_and_newer(policy: dict[str, Any]) -> None:
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.12.0"})
-    assert policy["paired_floor_problems"](versions) == []
+    assert [p for p in policy["paired_floor_problems"](versions) if p.startswith(CATALOG)] == []
 
 
 def test_the_catalog_api_0_11_2_pair_is_enforced_by_check_images_itself(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     row = '("CATALOG_API_IMAGE", "0.11.2", "DATABASE_SCHEMA_IMAGE", "0.12.0")'
     assert row in source
-    broken = source.replace(row, '("CATALOG_API_IMAGE", "0.11.2", "DATABASE_SCHEMA_IMAGE", "0.14.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.14\.0 or newer"):
+    broken = source.replace(row, '("CATALOG_API_IMAGE", "0.11.2", "DATABASE_SCHEMA_IMAGE", "0.15.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.15\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
@@ -85,8 +99,8 @@ def test_the_catalog_api_pair_is_enforced_by_check_images_itself(tmp_path: Path)
     source = (ROOT / "scripts" / "check-images.py").read_text()
     row = '("CATALOG_API_IMAGE", "0.11.0", "DATABASE_SCHEMA_IMAGE", "0.11.0")'
     assert row in source
-    broken = source.replace(row, '("CATALOG_API_IMAGE", "0.11.0", "DATABASE_SCHEMA_IMAGE", "0.14.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.14\.0 or newer"):
+    broken = source.replace(row, '("CATALOG_API_IMAGE", "0.11.0", "DATABASE_SCHEMA_IMAGE", "0.15.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.15\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
@@ -135,8 +149,8 @@ def test_check_images_itself_refuses_a_broken_pair(tmp_path: Path) -> None:
     source = (ROOT / "scripts" / "check-images.py").read_text()
     row = '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.8.0")'
     assert row in source
-    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.14.0")')
-    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.14\.0 or newer"):
+    broken = source.replace(row, '("DISCOGS_SQL_LOADER_IMAGE", "0.5.0", "DATABASE_SCHEMA_IMAGE", "0.15.0")')
+    with pytest.raises(AssertionError, match=r"needs DATABASE_SCHEMA_IMAGE 0\.15\.0 or newer"):
         _with({"__name__": "broken", "__file__": str(tmp_path / "scripts" / "check-images.py")}, broken)
 
 
