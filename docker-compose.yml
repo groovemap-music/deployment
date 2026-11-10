@@ -1015,6 +1015,11 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
+      # Seen-list mode, read by the loader's own parser (discogs-sql-loader docs/operations.md). Unset or
+      # empty is the loader's default, shadow; an unknown value fails startup. Never set seen without a
+      # matching shadow reload and operator approval (docs/configuration.md, Seen-list modes).
+      SEEN_LIST_MODE: "${SEEN_LIST_MODE:-shadow}"
+      SEEN_MIN_FRACTION: "${SEEN_MIN_FRACTION:-0.95}"
       QUEUE_CHECK_INTERVAL: "3600"      # 1 hour between queue checks when idle
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
@@ -1069,6 +1074,10 @@ services:
       POSTGRES_PASSWORD: groovemap
       POSTGRES_USERNAME: groovemap
       PYTHONUNBUFFERED: "1"
+      # Reload mode, read by the loader's own parser (musicbrainz-sql-loader docs/configuration.md). Unset or
+      # empty is the loader's default, shadow; an unknown value fails startup. Never set seen without a
+      # matching shadow reload and operator approval (docs/configuration.md, Seen-list modes).
+      RELOAD_MODE: "${RELOAD_MODE:-shadow}"
       QUEUE_CHECK_INTERVAL: "3600"      # 1 hour between queue checks when idle
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PASSWORD: groovemap
