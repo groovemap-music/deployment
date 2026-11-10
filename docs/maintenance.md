@@ -1446,12 +1446,33 @@ re-deriving them; `database-schema`'s own `build_artist_embeddings_version_index
 identical statement byte-for-byte and is the function an operator with programmatic access
 should prefer over raw SQL. Run it as the stack superuser, never the `embedding_pipeline` login:
 
+Run it detached, not in the foreground. A `CREATE INDEX CONCURRENTLY` build on a ~9M-row model
+version runs for over an hour, and an interrupted one (dropped SSH session, killed client) leaves
+an `INVALID` index behind that must be dropped before the build can be retried. `nohup` keeps the
+psql client alive after the terminal closes, and the log records the outcome:
+
 ```bash
-docker exec groovemap-postgres psql -U groovemap -d groovemap -v ON_ERROR_STOP=1 \
-  -c "SET maintenance_work_mem = '8GB'" \
+nohup docker exec groovemap-postgres psql -U groovemap -d groovemap -v ON_ERROR_STOP=1 \
+  -c "SET maintenance_work_mem = '10GB'" \
+  -c "SET max_parallel_maintenance_workers = 0" \
   -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS <index_name> ON public.artist_embeddings USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE model_version = '<model_version>'" \
-  -c "RESET maintenance_work_mem"
+  > hnsw-<index_name>.log 2>&1 &
 ```
+
+`SET max_parallel_maintenance_workers = 0` keeps the build serial; the "Memory and `/dev/shm`"
+paragraph below says when parallel workers are safe. The session-level
+`SET`s end with the connection, so there is no `RESET` to run.
+
+When the job finishes, confirm the index is valid. `indisvalid` must be `t`:
+
+```bash
+docker exec groovemap-postgres psql -U groovemap -d groovemap -tAc \
+  "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = '<index_name>'"
+```
+
+If it returns `f`, or the log shows an error, drop the broken index with
+`DROP INDEX CONCURRENTLY IF EXISTS <index_name>` and rerun the build. Do not query
+`catalog-api` against the new `model_version` until `indisvalid` is `t`.
 
 Once `catalog-api` has switched its kNN retrieval to the new `model_version`, retire the
 superseded one — index before rows, so the bulk `DELETE` has nothing left to maintain row by
@@ -1469,23 +1490,39 @@ disk-spilling slow mode at both settings tried below full speed:
 | 2 GB | Slowed to 15,000–18,000 tuples/minute past about 3.4M of 6,869,453 rows (52.3%); killed after ~1h25m. |
 | 4.5 GB | Slowed past about 5.3M rows (77%). |
 | 8 GB, with `max_parallel_maintenance_workers = 4` on a 6-CPU host | Full speed throughout: 552.8 s (6,869,453 rows) and 596.1 s (6,896,892 rows). |
+| 8 GB, serial (`max_parallel_maintenance_workers = 0`), lux production, 9,152,168 rows | Outgrew memory at 8,847,504 tuples. Total `CREATE INDEX CONCURRENTLY` time 1 h 10 m 56 s (4,255,909 ms). Index 4,976 MB, valid. |
 
-Raise `maintenance_work_mem` to at least ~4.5 GB for a full-catalog build, and prefer 8 GB with
-parallel workers enabled where the host can spare it. A parallel HNSW build needs `/dev/shm` (or
-Docker's `--shm-size`) at least as large as whatever `maintenance_work_mem` it runs with. The
-stack's `postgres` service sets `shm_size` from `POSTGRES_SHM_SIZE` (default `2g`, see
-[configuration.md](configuration.md#postgresql-configuration)), which is below the 8 GB build above.
-A parallel HNSW build at that memory setting needs `POSTGRES_SHM_SIZE` raised to match. Set it
-alongside `maintenance_work_mem` before the first production HNSW build. These figures describe the shape of the sizing problem at this
-row count on a two-CPU-class host, not a value to plan the production host around — re-measure
-there.
+Recommended `maintenance_work_mem` for a model version of about 9M rows is **10GB**, and the build
+is **serial** (`max_parallel_maintenance_workers = 0`) unless `/dev/shm` is at least that size.
+The lux run above is the reason: at 8 GB, serial, the graph no longer fit in memory near the end
+of the build. 10GB has not yet been measured on lux; treat it as the next setting to confirm, and
+record the wall time and `indisvalid` result when it runs.
 
-**First full run.** No end-to-end run against a real PostgreSQL + pgvector instance has
-happened yet — the pipeline's ~7.6–8.5 GB peak RSS budget
-(`insights/embeddings.py::estimate_peak_bytes`, see analytics-engine's `docs/embeddings.md`) is
-an estimate, never measured end-to-end from a running container. The first operator to run this
-job for real must record peak RSS/physical footprint and wall time and report them back to
-`analytics-engine` (`docs/embeddings.md`), per gm-analytics-engine-ieu.3's own follow-up note.
+A parallel HNSW build keeps the graph in `/dev/shm`, and it needs `/dev/shm` (or Docker's
+`--shm-size`) at least as large as the `maintenance_work_mem` it runs with. The stack's `postgres`
+service sets `shm_size` from `POSTGRES_SHM_SIZE` (default `2g`, see
+[configuration.md](configuration.md#postgresql-configuration)). Lux's postgres has 4 GB of shm, so
+a 10GB build there must stay serial. Only enable parallel workers (`max_parallel_maintenance_workers`
+above 0) when `POSTGRES_SHM_SIZE` is raised to at least the chosen `maintenance_work_mem`. These
+figures describe this row count on a two-CPU-class host (the `gm-analytics-engine-ieu.3` bench)
+and lux's production host, not a value to plan other hosts around. Re-measure on each host.
+
+**First production run (lux, 2026-11-10).** The pipeline ran end to end against a real PostgreSQL
++ pgvector instance for the first time: analytics-engine `eb6eecf9`, deploy `c55e2f9`,
+`SOURCE_DUMP_ID=discogs-2026-11`.
+
+| Measure | Result |
+| --- | --- |
+| Rows written | 9,152,168 |
+| Wall time | About 37.5 min |
+| Peak container memory | 15.8 GiB (limit 60 GiB) |
+| Host available memory, lowest | Never below 43 GiB |
+| `artist_embeddings` size | 6,739 MB |
+
+The measured container peak (15.8 GiB) is about twice the 7.6–8.5 GB estimate from
+`insights/embeddings.py::estimate_peak_bytes`, so the estimate is too low for this catalog size.
+The figure is container memory, not process RSS alone. Report any further run's peak RSS and wall
+time to `analytics-engine` (`docs/embeddings.md`), per gm-analytics-engine-ieu.3's follow-up note.
 
 ## Media-aware loader upgrade
 
