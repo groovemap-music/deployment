@@ -72,7 +72,7 @@ IMAGE_OWNERS = {
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
     "DATABASE_SCHEMA_IMAGE": "f04f4e08f5fa7df3c5613333ce57f92f7ee306b127e26d6387c496b5a82d01af",  # database-schema v0.13.0  gitleaks:allow
-    "CATALOG_API_IMAGE": "6593499eeb761c45e0229e91ebfd1bf370587cdbc35f4b06ac3231479db1bb2a",  # catalog-api v0.11.4  gitleaks:allow
+    "CATALOG_API_IMAGE": "53d3b686b4bf89dab16e74f797d5cc6daf71dd8e29369844c5514d58c14afe36",  # catalog-api v0.13.0  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "f74eeda853eb0e54c74fa86a20ffb5a0469baee1bd6bc7b06e4e52b917362cf3",  # discogs-graph-enricher v0.8.0  gitleaks:allow
@@ -89,7 +89,7 @@ RELEASED_IMAGE_DIGESTS = {
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
     "DATABASE_SCHEMA_IMAGE": "0.13.0",
-    "CATALOG_API_IMAGE": "0.11.4",
+    "CATALOG_API_IMAGE": "0.13.0",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
     "DISCOGS_GRAPH_ENRICHER_IMAGE": "0.8.0",

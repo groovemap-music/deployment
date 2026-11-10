@@ -699,6 +699,26 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.13.0 (2026-11-09)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.13.0` | `sha256:53d3b686b4bf89dab16e74f797d5cc6daf71dd8e29369844c5514d58c14afe36` | `5584eb3e7e9b9b445f2afde5ffe64891ed825837` | `v0.11.4` — `sha256:6593499eeb761c45e0229e91ebfd1bf370587cdbc35f4b06ac3231479db1bb2a` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0; on `linux/amd64` the revision label is the commit `v0.13.0` peels to, the version
+label is `v0.13.0`, and the image user is `1000:1000`.
+
+**What changes.** The first catalog-api release cut from main since v0.11.1 (main CI green on 5584eb3, including the
+integration tier). It carries everything in v0.12.0, which is NOT promoted because it has the fresh-install label/trends
+gate bug that v0.13.0 fixes (gm-catalog-api-adq2): the dead-letter replay route with structured failure counts
+(gm-catalog-api-axbs, -3uvj) and label longevity on label details (gm-catalog-api-vflb). It adds the Missing preview and
+copy listing routes (gm-catalog-api-t3e9/8t16) and the prototype cores (gm-catalog-api-ifqv), which the operator
+authorized for release on 2026-11-09. graph-explorer v0.4.0 and operations-console v0.4.0 need it. No schema change: the
+existing catalog-api 0.11.2 -> database-schema 0.12.0 floor still covers it. On lux: an `api`-only recreate.
+
+**Supersedes** `catalog-api:v0.11.4`. `release/v0.11.x-search` is retired; releases come from main again.
+
 ### Promotion of postgres v18.6.1 (2026-11-09)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
