@@ -715,8 +715,11 @@ messages and no Neo4j transaction running.
 
 Each was pulled, then `docker compose up -d --no-deps <service>`. Neo4j was healthy about 20 s after the recreate. After
 it: all 16 work queues had their consumers back (the 16 without consumers are the `.dlq` queues), the `catalog-dlq-cap`
-policy was intact, and the api answered healthy. The observability services that lux does not run (Grafana,
-VictoriaMetrics, VictoriaTraces, cAdvisor, node-exporter) were left stopped.
+policy was intact, and the api answered healthy. The #55 pins for Grafana, VictoriaMetrics, VictoriaTraces, cAdvisor and
+node-exporter do not apply on lux: its `docker-compose.override.yml` scales GrooveMap's copies to `replicas: 0`, and
+GrooveMap uses the homelab stack's instances (`homelab-victoria-metrics`, `homelab-victoria-traces`, `homelab-grafana`,
+`homelab-cadvisor`, `homelab-node-exporter`), whose versions homelab owns. After the recreate, GrooveMap's
+`otel-collector` was still writing to `homelab-victoria-metrics` (RabbitMQ series from the last 2 minutes present).
 
 The first search after the Valkey recreate took 2,679 ms (all-types `love`); the same search with a fresh cache key a
 minute later took 546 ms, and uncached master searches took 12-51 ms. That first-request cost is gm-catalog-api-0n70.
