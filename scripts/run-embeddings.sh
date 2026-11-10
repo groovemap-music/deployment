@@ -39,4 +39,41 @@ export SOURCE_DUMP_ID SOURCE_DUMP_DATE
   exit 2
 }
 
-docker compose --env-file "$env_file" -f docker-compose.yml run --rm --no-deps embeddings
+# Which Compose files run the job. The job must run the same files as the stack it targets, or the
+# embeddings service loses its production wiring (the _FILE secrets, the embedding_pipeline login
+# and, on an external-store host, the external PostgreSQL overlay). So:
+#   - COMPOSE_FILE set (in the shell or in $env_file): pass no -f. Compose reads it from the env
+#     file itself. `just deploy` writes it there whenever an overlay is in use, so this is exactly
+#     the file list deploy runs: production overlay, store overlays, shared monitoring, override.
+#   - otherwise: a dedicated production stack, so docker-compose.yml + docker-compose.prod.yml, and
+#     docker-compose.override.yml when the host has one. That is the file list `just deploy` uses.
+#   - RUN_EMBEDDINGS_STACK=dev (only when COMPOSE_FILE is unset): the development stack, the base
+#     file alone (plus the override when present), as `just deploy --dev` runs it.
+# A bare `docker compose` on a production host would otherwise render the base file alone, which
+# the homelab rules forbid. --profile jobs enables the one-shot's profile explicitly.
+stack="${RUN_EMBEDDINGS_STACK:-prod}"
+[[ "$stack" == prod || "$stack" == dev ]] || {
+  echo "run-embeddings: RUN_EMBEDDINGS_STACK must be 'prod' or 'dev', got '$stack'." >&2
+  exit 2
+}
+
+# Bash-only scan, so a missing grep can never read as "no COMPOSE_FILE".
+env_file_names_compose_file() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[^[:space:]] ]] && return 0
+  done <"$env_file"
+  return 1
+}
+
+compose_files=()
+if [[ -z "${COMPOSE_FILE:-}" ]] && ! env_file_names_compose_file; then
+  compose_files+=(-f docker-compose.yml)
+  [[ "$stack" == dev ]] || compose_files+=(-f docker-compose.prod.yml)
+fi
+if [[ ${#compose_files[@]} -gt 0 && -f docker-compose.override.yml ]]; then
+  compose_files+=(-f docker-compose.override.yml)
+fi
+
+exec docker compose --env-file "$env_file" ${compose_files[@]+"${compose_files[@]}"} \
+  --profile jobs run --rm --no-deps --name groovemap-embeddings-run embeddings
