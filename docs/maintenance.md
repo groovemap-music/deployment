@@ -699,6 +699,28 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Lux recreate of the Dependabot #55 data-tier pins (2026-11-10)
+
+Dependabot #55 moved the third-party data-tier pins on main. They reach lux only when those services are recreated, which
+was done on its own at deployment `ebe60cd`, with every extractor waiting for its next check, every RabbitMQ queue at 0
+messages and no Neo4j transaction running.
+
+| Service | Before | After |
+| --- | --- | --- |
+| `neo4j` | `2026.10.0-community` | `2026.10.1-community` |
+| `rabbitmq` | `4-management@sha256:c200fd49…` | `4-management@sha256:af6f50d3…` |
+| `valkey` | `9.1.2-alpine` | `9.1.3-alpine` |
+| `valkey-exporter` | `v1.95.0` | `v1.97.0` |
+| `otel-collector` | `0.163.2` | `0.164.0` (multi-arch index, not the `-386` tag) |
+
+Each was pulled, then `docker compose up -d --no-deps <service>`. Neo4j was healthy about 20 s after the recreate. After
+it: all 16 work queues had their consumers back (the 16 without consumers are the `.dlq` queues), the `catalog-dlq-cap`
+policy was intact, and the api answered healthy. The observability services that lux does not run (Grafana,
+VictoriaMetrics, VictoriaTraces, cAdvisor, node-exporter) were left stopped.
+
+The first search after the Valkey recreate took 2,679 ms (all-types `love`); the same search with a fresh cache key a
+minute later took 546 ms, and uncached master searches took 12-51 ms. That first-request cost is gm-catalog-api-0n70.
+
 ### Promotion of graph-explorer v0.8.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
