@@ -699,6 +699,22 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of operations-console v0.4.0 (2026-11-09)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `operations-console:v0.4.0` | `sha256:9d1601c44decb380434b21dbd2f1bb9dbb3b715396158754f669c4877b66f234` | `ebdf76a35ca41d7e888466230ad6fdfda54509fb` | `v0.3.1` — `sha256:07825a1c1c4ca622a3199364085b5821f2ebb69e004547dc4734de8216156816` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/operations-console@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0; on `linux/amd64` the revision label is the commit `v0.4.0` peels to, the version
+label is `v0.4.0`, and the image user is `1000:1000`.
+
+**What changes.** A dead-letter Replay action beside Purge with exact partial-failure counts (gm-operations-console-7g18,
+-se5t) and Identity Ledger alias evidence (gm-operations-console-bg46, operator-authorized for release 2026-11-09). Needs
+catalog-api v0.13.0 (live). On lux: a `dashboard`-only recreate.
+
+**Supersedes** `operations-console:v0.3.1`.
+
 ### Promotion of graph-explorer v0.4.0 (2026-11-09)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
