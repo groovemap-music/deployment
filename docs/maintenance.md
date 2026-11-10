@@ -1459,9 +1459,24 @@ re-running for a dump already recorded under this algorithm is a no-op.
 `docker-compose.yml`'s `embeddings` service runs `analytics-engine-embeddings` against the same
 released image the always-on `insights` service uses (`ANALYTICS_ENGINE_IMAGE`), with its
 entrypoint overridden and no dependency on `api`/`valkey`/`neo4j` — the pipeline talks to
-PostgreSQL only. It sits behind Compose's `jobs` profile so `docker compose up` never starts it;
-`just embeddings-run` (`scripts/run-embeddings.sh`) reaches it directly with `docker compose run
---rm --no-deps`, regardless of active profiles.
+PostgreSQL only. It sits behind Compose's `jobs` profile so `docker compose up` never starts it.
+`just embeddings-run` (`scripts/run-embeddings.sh`) runs it as `docker compose --env-file .env
+[-f ...] --profile jobs run --rm --no-deps --name groovemap-embeddings-run embeddings`, so the
+one-shot gets the same Compose files as the stack it targets:
+
+- With `COMPOSE_FILE` set (in `.env` or the shell), no `-f` is passed and Compose reads the list.
+  `just deploy` writes that list whenever an overlay is in use, so on an external-store host
+  (lux) the job runs with the production overlay, the external PostgreSQL overlay and the
+  override, and gets the `embedding_pipeline` `_FILE` secrets and the `postgres_ca` secret.
+- Otherwise it is a dedicated production stack: `docker-compose.yml` +
+  `docker-compose.prod.yml`, plus `docker-compose.override.yml` when the host has one, the same
+  pair `just deploy` runs.
+- `RUN_EMBEDDINGS_STACK=dev` (used only when `COMPOSE_FILE` is unset) runs the development
+  stack instead: the base file alone, plus the override when present.
+
+A bare `docker compose` run of the base file is never the production job: it drops the prod
+overlay's `_FILE` secrets. The script is covered by `tests/deploy/test_run_embeddings.py`, which
+renders the embeddings service rather than running it.
 
 ### The post-load operator index step
 
