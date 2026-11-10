@@ -699,6 +699,22 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.8.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.8.0` | `sha256:a260a020daff484d817700b8cf3b87ab47768ef1b8427b3b6452872cc12ac63e` | `3fd8df6dd43dc7c18c2f59c91f08e08cf9f5ce2d` | `v0.7.0` — `sha256:a118adab9bd139259d99726d8542c4c7cba12f89ff232e6ce29be03f3a84a54b` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/graph-explorer@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.8.0` peels to,
+the version label is `v0.8.0`, and the image user is `1000:1000`.
+
+**What changes.** Path finding sends `from_id` and `to_id` for label ends, which catalog-api v0.14.2 and later serve
+(gm-graph-explorer-zl42). Leaving a path field cancels its pending suggestion request, so a stale list can no longer
+cover Connect on tablet layouts. On lux: an `explore`-only recreate.
+
+**Supersedes** `graph-explorer:v0.7.0`.
+
 ### Promotion of catalog-api v0.15.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
