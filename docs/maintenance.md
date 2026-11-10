@@ -699,6 +699,23 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.5.0 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.5.0` | `sha256:e2166123f8e13092e0da8a0bc640845ff7364a4faee42055d37676f74359644d` | `182330ee9ea9864312c5347a2705333c58f53bcb` | `v0.4.0` — `sha256:1cfa53419e888e871e365a0f8f0d827c1a2963a6375cd63d57a92734e4e52ac6` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/graph-explorer@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.5.0` peels to,
+the version label is `v0.5.0`, and the image user is `1000:1000`.
+
+**What changes.** A label's detail panel shows its full-catalog longevity rank as "#N of M", from catalog-api v0.14.0's
+`longevity_rank` and `longevity_rank_of` (gm-graph-explorer-ugpg, the last part of gm-graph-explorer-i51p). Placeholder
+labels show no rank. When the API returns no rank, the panel falls back to the top-50 lookup, so no paired floor is
+needed. On lux: an `explore`-only recreate.
+
+**Supersedes** `graph-explorer:v0.4.0`.
+
 ### Promotion of catalog-api v0.14.0 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
