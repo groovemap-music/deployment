@@ -699,6 +699,26 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.7.0 and catalog-api v0.14.2 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.7.0` | `sha256:a118adab9bd139259d99726d8542c4c7cba12f89ff232e6ce29be03f3a84a54b` | `0f449b41aee93a4d555694719a52b2a224dcb5d1` | `v0.6.0` — `sha256:dc984b2f3ba637429dd3e0b94979f960c35978183672cc21ab3da150e24fdad0` |
+| `catalog-api:v0.14.2` | `sha256:fc5d468235504769827809e6c5a42d01d102f20be8685ff6e15d9ee8debc81eb` | `feb10735f1299fd04c7ab7f5cb26953d3c9f41fc` | `v0.14.1` — `sha256:b6d9c4a5bc3d28bfab34db2ce91a53628fabb9a40ae849bef601b6974c6e7808` |
+
+For both images, `gh attestation verify oci://ghcr.io/groovemap-music/<repository>@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. On `linux/amd64`, each image's revision label is the commit its tag peels to, its version label
+is its tag, and its image user is `1000:1000`.
+
+**What changes.** Label explore, expand, the label counts and path match labels by id, so labels that share a name no
+longer merge. `/api/explore` and `/api/expand` take `id=` for type=label, and `/api/path` takes `from_id` and `to_id`.
+An ambiguous bare name returns 409 plus candidates. Explore cache keys are namespaced by id vs name, so the explore
+cache starts cold once (gm-catalog-api-ntnw, gm-catalog-api-jjuh). graph-explorer sends the label id with the name on
+explore, expand and path, and lets the user pick when a name is ambiguous (gm-graph-explorer-vag6). On lux: recreate
+`explore` first, then `api`.
+
+**Supersedes** `graph-explorer:v0.6.0` and `catalog-api:v0.14.1`.
+
 ### Promotion of graph-explorer v0.6.0 and catalog-api v0.14.1 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
