@@ -72,6 +72,62 @@ Trends are unchanged in this run: the trends rows read 2 to 3 ms only because Va
 Re-run: `PERF_CONFIRM_LIVE=yes PERF_API_BASE=<origin> scripts/perf-baseline.sh roadmap`. Use a term whose key is not in Valkey (or a fresh
 term) so the first request is uncached.
 
+### After v0.11.3 and v0.11.4
+
+Measured on lux 2026-11-09 after the api recreates that deployed catalog-api v0.11.3 and v0.11.4, with discogs-graph-enricher v0.7.0
+(`stats_version` 2) and database-schema v0.13.0 in place. The source record gives first-uncached figures only, so the warm p95 is left blank
+rather than estimated. Nothing here is a warm p95.
+
+**Master search (`types=master`, target 100 ms).** v0.11.3 skips the release facets for searches that exclude releases.
+
+| Term | Target | First uncached (v0.11.2 → v0.11.3) | Warm p95 | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| `love` | 100 ms | 584 ms → **224 ms** | not recorded | **Missed** (124 ms over); first request right after the container restart |
+| `rock` | 100 ms | not recorded → **58 ms** | not recorded | **Met** (first uncached) |
+| `dream` | 100 ms | not recorded → **55 ms** | not recorded | **Met** (first uncached) |
+| `sunset` | 100 ms | not recorded → **22 ms** | not recorded | **Met** (first uncached) |
+| `harbor` | 100 ms | not recorded → **21 ms** | not recorded | **Met** (first uncached) |
+
+Not recorded in this run: the release-facet searches (`love` with facets, `love` all types) on v0.11.3.
+
+**Trends (target 1 s), from the stored per-year series in discogs-graph-enricher v0.7.0 (catalog-api v0.11.4).** The source notes that some
+short values may have been served from Valkey, so they are not guaranteed first-uncached.
+
+| Journey | Target | First uncached (v0.11.4) | Warm p95 | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| Genre Electronic | 1 s | 80 ms | not recorded | **Met** |
+| Genre Jazz | 1 s | 7 ms | not recorded | **Met** |
+| Genre Hip Hop | 1 s | 5 ms | not recorded | **Met** |
+| Genre Classical | 1 s | 6 ms | not recorded | **Met** |
+| Genre Folk World & Country | 1 s | 31 ms | not recorded | **Met** |
+| Genre Latin | 1 s | 7 ms | not recorded | **Met** |
+| Style Techno | 1 s | 32 ms | not recorded | **Met** |
+| Style House | 1 s | 6 ms | not recorded | **Met** |
+| Style Ambient | 1 s | 5 ms | not recorded | **Met** |
+| Style Drum n Bass | 1 s | 28 ms | not recorded | **Met** |
+| Style Dub | 1 s | 5 ms | not recorded | **Met** |
+| Genre Rock | 1 s | **not recorded** | not recorded | **Unverified** |
+
+- **Genre Rock has no v0.11.4 figure in the source.** The record says the 1 s target is met, but it gives no Rock number. The earlier Rock
+  figures are 3,780 ms (the v0.11.1 table above, which the source calls "warm") and 17.5 s cold. Until the v0.11.4 Rock figure is recorded,
+  Rock is unverified, not met.
+- Style Trance and label 1818 were not measured in this record. The v0.11.1 trends rows are the last figures for them.
+
+**Graphinator sweep on lux (one full stats sweep, discogs-graph-enricher v0.7.0).** No target is recorded for the sweep, so no verdict is given.
+
+| Step | Duration |
+| --- | ---: |
+| `genre_stats` | 99.8 s |
+| `style_stats` | 160.7 s |
+| `label_stats` | 165.5 s |
+| `artist_stats` | 165.6 s |
+
+These are graphinator step durations. The `pg_stat_statements` rows in the next section are a different measure (database statements, not
+sweep steps), so do not compare them with these.
+
+**Schema index (database-schema v0.13.0, reordered `graph.issued_on` key).** The per-release `issued_on` lookup is an Index Only Scan on the new
+key: 1 search, about 2 ms cold. Before, it was a 74-search skip scan at 13.9 ms cold. No target is recorded for this lookup, so no verdict is given.
+
 ## Maintenance durations (`pg_stat_statements`)
 
 `scripts/perf-baseline.sh maintenance` (`scripts/perf-maintenance.sql`). Entries are per statement since `stats_since`; the extension
@@ -120,8 +176,10 @@ Readings:
 ## Findings for the planner or operator (not filed)
 
 1. **Search on v0.11.2: both `love` searches meet 1 s first-uncached (702 ms, 778 ms); master search is 584 ms against 100 ms.** On v0.11.1 they
-   were 11.8 s, 1.6 s and 651 ms. The master-route gap is open; see the catalog-api master-route bead.
-2. **Genre trends first visit is 3.8 s against 1 s**; roadmap item 3 is the fix (stored per-year counts).
+   were 11.8 s, 1.6 s and 651 ms. On v0.11.3 master search `love` is 224 ms (still missed, 124 ms over); see "After v0.11.3 and v0.11.4". The
+   master-route gap is narrowed, not closed; see the catalog-api master-route bead.
+2. **Genre trends first visit was 3.8 s against 1 s**; roadmap item 3 was the fix (stored per-year counts). On v0.11.4 the measured genre and style
+   rows are all under 1 s; Genre Rock has no v0.11.4 figure in the source, so it is unverified.
 3. **Steady-state `identity_ledger_refresh` has no isolated run against its 60 s target.** The 461 s run was the full rebuild for the v0.12.0
    rollout. Get a steady-state run and isolate its inner statements.
 4. **The ledger window route is unmeasured** (admin token). `PERF_AUTH_HEADER` supports it when an operator runs the script.
