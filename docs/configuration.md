@@ -179,12 +179,40 @@ The following groups are interpolated by the executable stack:
 | `RESEND_SENDER_EMAIL`, `RESEND_SENDER_NAME` | Production overlay email sender (defaults `noreply@groovemap.music`, `GrooveMap`) |
 | `NEO4J_HEAP_SIZE`, `NEO4J_PAGECACHE_SIZE`, `NEO4J_MEMORY_LIMIT`, `NEO4J_TRANSACTION_MEMORY_MAX` | Production overlay sizing (defaults `8g`, `16g`, `48G`, `8G`); see [Neo4j sizing written by `just deploy`](#neo4j-sizing-written-by-just-deploy) |
 | `TABLEINATOR_MEMORY_LIMIT` | Optional production overlay hard cap on the SQL loader, for example `30g`. Sets both `mem_limit` and `memswap_limit`, so the container cannot spill into swap. Unset leaves it unlimited. Set it here, not with `docker update`, which a recreate drops |
+| `RELOAD_MODE` | MusicBrainz SQL loader (`brainztableinator`) reload mode: `touch`, `shadow` or `seen`. Unset or empty is `shadow`; any other value fails startup. See [Loader seen-list modes](#loader-seen-list-modes) |
+| `SEEN_LIST_MODE`, `SEEN_MIN_FRACTION` | Discogs SQL loader (`tableinator`) seen-list mode (`touch`, `shadow` or `seen`; unset or empty is `shadow`) and the minimum share of the extractor's counts a seen list must hold before `seen` purges (unset or empty is `0.95`, must lie in (0, 1]). See [Loader seen-list modes](#loader-seen-list-modes) |
 | `BRAINZTABLEINATOR_MEMORY_LIMIT`, `BRAINZGRAPHINATOR_MEMORY_LIMIT` | Production overlay hard caps on the MusicBrainz SQL and graph loaders. Default `1g` each: the first load on lux (2026-11-07, 164 samples) peaked at 160 MiB and 136 MiB, so that is about 6x and 7x headroom. Each sets both `mem_limit` and `memswap_limit`, so the container cannot spill into swap. `0` removes the cap. Set them here, not with `docker update`, which a recreate drops |
 | `EXTERNAL_POSTGRES_HOST`, `EXTERNAL_POSTGRES_PORT`, `EXTERNAL_POSTGRES_DATABASE`, `EXTERNAL_VALKEY_HOST`, `EXTERNAL_VALKEY_PORT`, `EXTERNAL_VALKEY_DB`, `EXTERNAL_VALKEY_KEY_PREFIX` | External-store overlays only, selected by `GROOVEMAP_POSTGRES` and `GROOVEMAP_VALKEY`; see [External PostgreSQL and Valkey](#external-postgresql-and-valkey) |
 | `GM_EXTRACTION_RULES_FILE` | Optional host path for the Discogs extraction rules mounted by the infrastructure-smoke overlay (`docker-compose.smoke.yml`) |
 | `SMOKE_MEDIA_API_PORT`, `SMOKE_MEDIA_RABBITMQ_PORT`, `SMOKE_MEDIA_SERVICE_PLATFORM`, `SMOKE_MEDIA_SUBNET` | Isolated media-smoke settings only |
 | `SMOKE_ERASURE_API_PORT`, `SMOKE_ERASURE_SERVICE_PLATFORM`, `SMOKE_ERASURE_SUBNET` | Isolated erasure-smoke settings only |
 | `SMOKE_RELEASED_FIXTURE_RABBITMQ_PORT`, `SMOKE_RELEASED_FIXTURE_SERVICE_PLATFORM`, `SMOKE_RELEASED_FIXTURE_SUBNET` | Isolated released-fixture-smoke settings only |
+
+### Loader seen-list modes
+
+The two SQL loaders decide whether a reload proves a row is still upstream with a mode variable. Compose
+passes each one from `.env` to its loader and defaults it to the loader's own default, so leaving them unset
+changes nothing on any host:
+
+| Service | Variable | Default | Loader reference |
+| --- | --- | --- | --- |
+| `brainztableinator` | `RELOAD_MODE` | `shadow` | `musicbrainz-sql-loader` `docs/configuration.md` |
+| `tableinator` | `SEEN_LIST_MODE` | `shadow` | `discogs-sql-loader` `docs/operations.md` |
+| `tableinator` | `SEEN_MIN_FRACTION` | `0.95` | `discogs-sql-loader` `docs/operations.md` |
+
+The loaders read these values themselves. An empty value is the default; any other unknown value fails
+startup, and nothing rewrites it, so a typo shows up in the loader's logs instead of as a silent fallback.
+
+**The rule.** Never set `RELOAD_MODE=seen` or `SEEN_LIST_MODE=seen` without a matching shadow reload of that
+same loader and the operator's approval for that loader. `seen` deletes the rows its seen list does not hold,
+so an incomplete list deletes live data. Each loader's reference states the pass criteria for the shadow
+comparison (MusicBrainz: "Reload mode" in its configuration guide; Discogs: "Reload seen lists" in its
+operations guide), and the Discogs guide uses `seen_ratio` to calibrate `SEEN_MIN_FRACTION`. Roll back by
+setting the variable to `touch` and restarting; the loader references say which reload must precede the first
+purge after switching back.
+
+This repository only passes the settings through. Switching a loader to `seen` is a reviewed change to that
+host's `.env`, made per loader.
 
 ### Host ports and bind addresses
 
