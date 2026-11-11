@@ -699,6 +699,54 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Lux: MusicBrainz SQL loader switched to seen mode (2026-11-11)
+
+`brainztableinator` on lux now runs with `RELOAD_MODE=seen` (gm-deployment-ayza). That follows the rule in
+[Loader seen-list modes](configuration.md#loader-seen-list-modes): a matching shadow reload of this loader, and the
+operator's approval for it (2026-11-10: switch each loader only after its own shadow comparison matches). The Discogs
+loader (`tableinator`, `SEEN_LIST_MODE`) stays in shadow mode until its own shadow reload has matched.
+
+**Evidence.** It comes from the reload of MusicBrainz dump `20261107-001001` (13,928,765 records, all MusicBrainz
+queues drained, 0 DLQ messages). The loader logged the shadow comparison at 2026-11-11 03:52 UTC, with boundary
+2026-11-10T18:56:30Z:
+
+| Seen list | `matches` | `intact` | touch purge = seen purge | `refreshed_not_seen` | `seen_not_refreshed` | List opened |
+| --- | --- | --- | --- | --- | --- | --- |
+| `loader_seen.musicbrainz_relationships` | true | true | 2,585 | 0 | 0 | 2026-11-09T21:06:11Z |
+| `loader_seen.musicbrainz_external_links` | true | true | 950 | 0 | 0 | 2026-11-09T21:06:12Z |
+
+Both lists were opened before the reload began, so neither comparison comes from a reload the loader joined part-way.
+These two lists are the loader's whole seen-list scope: there is one per child table, and the touch and seen purges
+never cover entity tables. Delete-reconciliation then removed exactly 2,585 + 950 = 3,535 rows.
+
+**Change.** The change was made at deployment `ae584ec`, with the musicbrainz-sql-loader image
+`sha256:aadae1176b8137ad638cb9e5fc97a99919b46df5c6bfe5c9112fe7904bf08bd1` and no MusicBrainz reload running. In
+`/opt/groovemap/.env`, `RELOAD_MODE` was unset beforehand, so the loader ran in its default, shadow. Two lines were
+appended:
+
+```text
+# gm-deployment-ayza 2026-11-11: MusicBrainz loader seen mode after a matching shadow reload (20261107-001001)
+RELOAD_MODE=seen
+```
+
+Both loaders were then recreated, with `docker compose up -d --no-deps brainztableinator tableinator`. This was
+also the first lux recreate since gm-deployment-mp8j, which passes the seen-list variables through compose, so
+`tableinator`'s rendered environment changed as well. Both containers started at 2026-11-11T04:29:03Z and became healthy.
+`brainztableinator`'s environment carries `RELOAD_MODE=seen`, and its startup log reports `🧭 Reload mode seen`
+(`reload_mode: seen`). `tableinator` carries `SEEN_LIST_MODE=shadow` and `SEEN_MIN_FRACTION=0.95`, and its startup log
+reports `mode: shadow`. Homelab carries the same value in `groovemap_host_env` (homelab
+`5224c884`), so the next Ansible apply keeps it.
+
+**Rollback.** Set `RELOAD_MODE=touch`, or delete the two lines above to fall back to the default, shadow. Change
+homelab's `groovemap_host_env` the same way, or the next apply puts `seen` back. Then recreate only
+`brainztableinator`, with `docker compose up -d --no-deps brainztableinator`. The musicbrainz-sql-loader configuration guide says which reload must come before the first purge after
+switching back.
+
+**Still to verify, on the next MusicBrainz reload.** The purge should run from the seen lists, and it should remove
+what that reload's comparison predicts. Unchanged rows should no longer be rewritten, so WAL volume and dead tuples on
+`musicbrainz.relationships` and `musicbrainz.external_links` should fall against the shadow reload above. Those figures
+get added to this record.
+
 ### Promotion of graph-explorer v0.8.1 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
