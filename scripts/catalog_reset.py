@@ -86,7 +86,7 @@ LEDGER_POLL_OFF = ("env", f"{LEDGER_POLL_VARIABLE}=false")
 STOP_ORDER = (
     ("extractor-discogs", "extractor-musicbrainz"),
     ("tableinator", "brainztableinator", "graphinator", "brainzgraphinator"),
-    ("insights", "embeddings"),
+    ("insights", "embeddings", "similar-artists"),
     ("api", "dashboard", "explore"),
 )
 CONSUMERS = ("tableinator", "graphinator")

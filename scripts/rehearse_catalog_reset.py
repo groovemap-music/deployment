@@ -45,7 +45,17 @@ from smoke_homelab import provisioning_sql  # noqa: E402
 
 VERSION = "20261101"
 ADMIN_EMAIL = "rehearsal-admin@example.com"
-PG_CLIENTS = ("api", "brainztableinator", "dashboard", "embeddings", "insights", "schema-init", "store-check-postgres", "tableinator")
+PG_CLIENTS = (
+    "api",
+    "brainztableinator",
+    "dashboard",
+    "embeddings",
+    "insights",
+    "schema-init",
+    "similar-artists",
+    "store-check-postgres",
+    "tableinator",
+)
 GROOVEMAP_IMAGES = ("schema-init", "api", "dashboard", "explore", "insights", "extractor-discogs", "tableinator", "graphinator")
 PUBLISHED = ("rabbitmq", "neo4j", "valkey", "api", "dashboard", "explore")
 MONITORING = ("grafana", "victoria-metrics", "victoria-traces", "cadvisor", "node-exporter")

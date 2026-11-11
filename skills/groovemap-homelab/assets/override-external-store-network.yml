@@ -36,6 +36,9 @@ services:
   schema-init:
     networks:
       postgres: {}
+  similar-artists:
+    networks:
+      postgres: {}
   store-check-postgres:
     networks:
       postgres: {}

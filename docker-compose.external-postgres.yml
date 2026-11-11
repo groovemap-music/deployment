@@ -208,6 +208,18 @@ services:
       postgres: !reset null
       <<: *store-check-postgres
 
+  similar-artists:
+    environment:
+      <<: *external-postgres-env
+    env_file: *postgres-ca-env-file
+    secrets:
+      - postgres_ca
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres: !reset null
+      <<: *store-check-postgres
+
   # `[]` (no address) is a scrape job with no target: no scrape, no `up` series, no alert.
   otel-collector:
     environment:

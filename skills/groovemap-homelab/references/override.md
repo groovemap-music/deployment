@@ -123,7 +123,7 @@ as a container on its own Docker network, `EXTERNAL_POSTGRES_HOST` / `EXTERNAL_V
 name only that network resolves. Attach **every** service that connects to the store, not just
 the application, as `../assets/override-external-store-network.yml` does:
 
-- PostgreSQL clients: `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`. `store-check-postgres` is also where the Discogs gate and the
+- PostgreSQL clients: `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `similar-artists`, `store-check-postgres` and `tableinator`. `store-check-postgres` is also where the Discogs gate and the
   MusicBrainz latch probe run `psql`, so leaving it out breaks the deploy check, the gate and the
   latch, even though the application connects.
 - Valkey clients: `api`, `dashboard`, `insights` and `store-check-valkey`.

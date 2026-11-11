@@ -53,11 +53,14 @@ GrooveMap is built as a microservices platform that processes large-scale music 
 | cAdvisor | `cadvisor` | Per-container CPU, memory, network, and OOM metrics | 8080 (internal) |
 | Node exporter | `node-exporter` | Host CPU, memory, load, and filesystem metrics | 9100 (internal) |
 | DLQ policy initializer | `rabbitmq-dlq-policy-init` | One-shot: declares the catalog dead-letter queue size-cap policy | — |
-| Data volume initializer | `data-volume-init` | One-shot: re-owns `discogs_data` and `musicbrainz_data` to `${UID}:${GID}` for the extractors | — |
+| Data volume initializer | `data-volume-init` | One-shot: re-owns `discogs_data`, `musicbrainz_data` and `similar_artists_spool` to `${UID}:${GID}` for the extractors | — |
 
 The `embeddings` service is a one-shot `analytics-engine` job in the `jobs` profile,
 run monthly rather than started by `docker compose up`; see
-[Maintenance](maintenance.md#monthly-embedding-refresh).
+[Maintenance](maintenance.md#monthly-embedding-refresh). The `similar-artists`
+service is the same kind of job, run in nightly windows until the exact
+similar-artist lists are done; see
+[Maintenance](maintenance.md#nightly-similar-artists-job).
 
 Compose service, hostname, container, exchange, and queue names are retained
 compatibility identifiers. Canonical product and image identities come from
@@ -71,7 +74,10 @@ Compose owns named volumes for RabbitMQ (`rabbitmq_data`), PostgreSQL
 VictoriaMetrics (`victoria_metrics_data`), and VictoriaTraces
 (`victoria_traces_data`). Neo4j separates `neo4j_data`,
 `neo4j_import`, and `neo4j_plugins`. The producers persist downloads in
-`discogs_data` and `musicbrainz_data`; the API mounts both read-only. `/logs`
+`discogs_data` and `musicbrainz_data`; the API mounts both read-only. The
+similar-artists job keeps its spool and checkpoints in `similar_artists_spool`
+(explicit name `groovemap_similar_artists_spool`, so a scheduler outside this
+project can mount it). `/logs`
 in every service is a size-capped tmpfs owned by the runtime UID, not a
 volume; logs are read with `docker compose logs`.
 

@@ -1856,6 +1856,188 @@ The measured container peak (15.8 GiB) is about twice the 7.6–8.5 GB estimate 
 The figure is container memory, not process RSS alone. Report any further run's peak RSS and wall
 time to `analytics-engine` (`docs/embeddings.md`), per gm-analytics-engine-ieu.3's follow-up note.
 
+## Nightly similar-artists job
+
+The exact similar-artist lists (`public.artist_similar_artists`) are computed by
+`analytics-engine-similar-artists`, not by the monthly embeddings job (leave
+`ENABLE_SIMILAR_ARTISTS=false`). The full catalog takes about 34 h at 8 threads (55 h upper bound),
+far more than one quiet night, so the job runs in bounded windows and resumes from a checkpoint in
+the next one until it publishes. The interface is analytics-engine's
+`docs/similar_artists.md`, "Nightly runs"; this section is the deployment side of it.
+
+What this repository provides:
+
+- **The `similar-artists` service** (Compose profile `jobs`, so `docker compose up` never starts it).
+  It runs the same digest-pinned `ANALYTICS_ENGINE_IMAGE` as `insights` and `embeddings`, with the
+  `embedding_pipeline` login, the PostgreSQL TLS wiring and the `groovemap` network of the
+  `embeddings` job, `mem_limit` and `memswap_limit` of 16g and `cpus: 8`. Its command is
+  `--spool-dir /spool --max-runtime ${SIMILAR_ARTISTS_MAX_RUNTIME:-19800} --threads
+  ${SIMILAR_ARTISTS_THREADS:-8} --status-file /spool/status.json`.
+- **The spool volume**, `similar_artists_spool`, with the explicit name
+  `groovemap_similar_artists_spool` (not project-prefixed), so a scheduler outside the Compose
+  project mounts it by that name. `docker compose down` keeps it; only `down -v` or
+  `docker volume rm` removes it, and with it a paused run's checkpoint. Plan for about 3.75 GB of
+  lists plus two checkpoint files of about 3.78 GB each at K=50 (the job needs about 11.3 GB free), so
+  budget 2x, roughly 25 GB. `data-volume-init` hands the volume to `${UID}:${GID}`, the user the
+  job runs as.
+- **`just similar-artists-run`**, one window by hand. It exits with the job's own code, unchanged.
+
+### The multi-night cycle
+
+Run the window while the stack is quiet and no extraction, embeddings run or catalog reset is
+active:
+
+```bash
+just similar-artists-run; echo "exit $?"
+```
+
+1. **Start.** Run it once the monthly embeddings job has loaded a `model_version` with no published
+   release. With no `--model-version` the job picks that one version; several unpublished versions
+   is an exit 2 that asks for one.
+2. **Resume.** Run it again with the same volume. A spool whose identity (model, artist count,
+   dimensions, K, block size) matches continues from its checkpoint, so a run split over many windows
+   gives the same lists as one run. A kill loses at most 30 minutes of work: let `--max-runtime`
+   end the window instead.
+3. **Finish.** The window that completes the last block writes the lists in one transaction,
+   publishes them, retires releases older than the previous one, and removes that version's spool
+   directory. Running again is a no-op (`done`, `already_published`).
+
+Tell the outcomes apart by the exit code and the last stdout line (also `/spool/status.json`), a
+JSON object with `"kind": "similar_artists_status"`:
+
+| Exit | `status` | Meaning | What to do |
+| ---: | --- | --- | --- |
+| 0 | `done` | Published by this run, already published, or nothing pending (`model_version: null`) | Nothing until the next month's embeddings |
+| 0 | `skipped` | An extraction latch is open or the embeddings run holds its lock; `reason` names it. Nothing was computed | Nothing; the next night checks again |
+| 75 | `paused` | The window ended first; the checkpoint is valid (`blocks_done` of `blocks_total`) | Run again in the next window. This is success, not a failure |
+| 1 | `failed` | A runtime failure (database error, memory budget, spool lock held, failed publish); `error` says which | Fix the cause, then run again; it resumes |
+| 2 | `failed` | Refused before any work (bad arguments, non-persistent spool, missing credentials, ambiguous model) | Fix the configuration |
+
+Read the status with:
+
+```bash
+docker run --rm -v groovemap_similar_artists_spool:/spool:ro busybox cat /spool/status.json
+```
+
+A scheduler must count exit 0 **and** 75 as success. A run can overrun its window by about two
+minutes (the block in progress finishes), so set the scheduler's timeout well above
+`--max-runtime`.
+
+### Inspecting and clearing the spool
+
+```bash
+docker run --rm -v groovemap_similar_artists_spool:/spool:ro busybox ls -lR /spool
+docker volume inspect groovemap_similar_artists_spool
+```
+
+The spool holds one directory per `model_version` (a hash of its name) with `positions.i32`,
+`scores.f32`, `meta.json` and `checkpoint.npz`, next to `.lock` and `status.json`. A published version's
+directory is removed by the job. To abandon a run and start over (a wrong or superseded
+`model_version`, or a corrupt checkpoint), stop any running window, then remove that version's directory
+or the whole volume, which needs operator approval because it discards days of compute:
+
+```bash
+docker volume rm groovemap_similar_artists_spool   # no container may be using it
+```
+
+The next `just similar-artists-run` recreates it empty, owned by `${UID}:${GID}`. Clearing the
+spool never touches the database: lists written by an unfinished run roll back with its transaction.
+
+### Rollback
+
+- **A bad published release.** Republish the previous `model_version` with database-schema's
+  `publish_artist_embedding_release`; its rows are kept (only releases older than the previous one are
+  retired), and `catalog-api` switches back.
+- **Stop the job.** Disable the schedule (Cronduit: remove or pause the job; systemd: stop the timer).
+  The `similar-artists` service is a one-shot and has no restart policy. Leaving the volume in place keeps the checkpoint,
+  and removing it costs only the compute done so far.
+- **An image rollback.** `similar-artists` shares `ANALYTICS_ENGINE_IMAGE` with `insights` and
+  `embeddings`, so rolling the image back through the normal promotion flow rolls all three back. A
+  spool resumes whenever its identity (model, artist count, dimensions, K, block size) still matches.
+
+### Scheduling the nightly run
+
+Cronduit ([SimplicityGuy/cronduit](https://github.com/SimplicityGuy/cronduit)) is the recommended
+scheduler: it is a small self-hosted scheduler with a web UI and run history, it starts the job as a
+Docker container from a TOML file, it counts a configurable set of exit codes as success, and it can
+send a webhook when a run fails or times out. Whatever scheduler you use, four things hold:
+
+- **The window.** Give the job `--max-runtime` and a scheduler timeout above it. The default
+  19800 s is 5 h 30 min, under a 6 h 30 min timeout.
+- **Exit 75 and `skipped` are success.** 75 (`paused`) is the expected end of most windows and `skipped`
+  exits 0. If the scheduler alerts on them, you get a false alarm every night until the catalog is done.
+- **Concurrency 1.** The spool is single-writer: the job holds an `flock` on `/spool/.lock`, and a
+  second run fails with exit 1. Do not let the scheduler overlap runs (a run that overruns the next
+  start time must be skipped, not stacked).
+- **The same image and volume.** Use the digest from `ANALYTICS_ENGINE_IMAGE`, never a tag, and the
+  `groovemap_similar_artists_spool` volume.
+
+#### Cronduit (recommended)
+
+Run Cronduit from its secure compose variant (`examples/docker-compose.secure.yml`): a
+`docker-socket-proxy` sidecar holds the only Docker socket mount and Cronduit reaches it through
+`DOCKER_HOST`, never mounting `/var/run/docker.sock` itself. Pin the Cronduit image by digest, bind
+its UI to loopback or put it behind your authenticating proxy, and set `TZ` to the host's local time.
+A Cronduit instance has one `DOCKER_HOST`, so it must be the one for the Docker host that runs
+GrooveMap. Cronduit has no `user` option, so the container runs as the image's user, 1000:1000;
+leave `UID`/`GID` at 1000 on that host or the job cannot write the spool.
+
+`success_exit_codes`, `memory` and per-job limits need a Cronduit release that supports them
+(cronduit-m76, cronduit-yd2); check `cronduit check` accepts the file before relying on it. Secrets come
+from Cronduit's own environment through `${ENV}` references, which Cronduit resolves at parse time and
+never stores in clear text: do not write the values into the file.
+
+```toml
+[[jobs]]
+name = "similar-artists"
+schedule = "0 1 * * *"
+image = "ghcr.io/groovemap-music/analytics-engine@sha256:<ANALYTICS_ENGINE_IMAGE digest>"
+cmd = ["analytics-engine-similar-artists", "--spool-dir", "/spool", "--max-runtime", "19800"]
+network = "groovemap_groovemap"
+volumes = ["groovemap_similar_artists_spool:/spool"]
+timeout = "6h30m"
+success_exit_codes = [0, 75]
+memory = "16g"
+
+[jobs.env]
+POSTGRES_HOST = "${GROOVEMAP_POSTGRES_HOST}"
+POSTGRES_DATABASE = "groovemap"
+PGSSLMODE = "${GROOVEMAP_PGSSLMODE}"
+PGSSLROOTCERT = "${GROOVEMAP_PGSSLROOTCERT}"
+EMBEDDING_PIPELINE_POSTGRES_USERNAME = "${EMBEDDING_PIPELINE_POSTGRES_USERNAME}"
+EMBEDDING_PIPELINE_POSTGRES_PASSWORD = "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD}"
+```
+
+- `image` is the digest in `scripts/check-images.py` (`ANALYTICS_ENGINE_IMAGE`), so promoting a
+  release means updating this one value too.
+- `network` is the stack's Compose network, `<compose project>_groovemap`; `docker network ls` shows it.
+  `PGSSLROOTCERT` must be a path that exists inside the job container: mount the CA with an extra `volumes`
+  entry, or leave the TLS keys out when the database is on the same Compose network without TLS.
+- `19800` s of work plus up to two minutes of overrun leaves about an hour of the `6h30m` timeout
+  for process start and the 45 s read; the timeout is the safety net, not the plan.
+- Cronduit starts one run per schedule tick. A run still going at 01:00 the next day is a
+  failure to look at, not something to stack, so keep the job's concurrency at one.
+- Add a webhook on `failed` and `timeout` if you have a receiver; without one, a failed night is
+  visible only in Cronduit's UI and in `/spool/status.json`.
+
+#### Alternatives
+
+- **systemd timer.** A `OnCalendar=*-*-* 01:00:00` timer starting a `Type=oneshot` service that runs
+  `just similar-artists-run` from the stack directory. Set `SuccessExitStatus=75`, `TimeoutStartSec=6h30m`
+  and `SIMILAR_ARTISTS_MAX_RUNTIME=19800`. A oneshot unit is never started twice at once, which gives
+  concurrency 1. `Persistent=true` runs a night missed while the host was off.
+- **Host cron.** `0 1 * * * cd /srv/groovemap && flock -n /run/groovemap-similar-artists.lock just
+  similar-artists-run`. `flock -n` is the concurrency guard. cron has no notion of success codes, so
+  treat exit 75 as normal in whatever wrapper mails or logs failures (`just similar-artists-run || [ $? -eq 75 ]`).
+- **Ofelia and other Docker-label schedulers.** Define a job-run for the image and volume
+  (check the scheduler's documentation for the label names and its no-overlap setting). These
+  schedulers generally treat any non-zero exit as failure, so a paused window raises an alert. Wrap the command
+  (`sh -c '... ; rc=$?; [ $rc -eq 75 ] && exit 0; exit $rc'`) or use one that supports success codes.
+- **Kubernetes CronJob.** A `CronJob` with `concurrencyPolicy: Forbid`, `activeDeadlineSeconds` above 19800,
+  a PersistentVolumeClaim of at least 25 GiB mounted at `/spool`, the image by digest and
+  `restartPolicy: Never`. Kubernetes counts only exit 0 as success: end the container command with a wrapper that
+  maps 75 to 0, or the Job's backoff retries the paused window immediately. Set `memory` requests and limits to 16Gi.
+
 ## Media-aware loader upgrade
 
 Promoting the media-aware SQL loader and graph enricher images does not populate

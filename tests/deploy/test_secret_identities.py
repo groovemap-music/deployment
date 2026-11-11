@@ -97,7 +97,7 @@ INVENTORY: dict[str, dict[str, str]] = {
 # GrooveMap-built services: they must run under the explicit owner identity.
 OWNER_SERVICES = {
     "api", "brainzgraphinator", "brainztableinator", "dashboard", "embeddings", "extractor-discogs",
-    "extractor-musicbrainz", "graphinator", "insights", "schema-init", "tableinator",
+    "extractor-musicbrainz", "graphinator", "insights", "schema-init", "similar-artists", "tableinator",
 }  # fmt: skip
 
 STACKS = {

@@ -22,8 +22,9 @@ REGISTRY = "ghcr.io/groovemap-music"
 # Compose service -> the required image variable. Each Discogs/MusicBrainz producer
 # owns its own image after the ADR 0005 split; no variable is shared by two services,
 # except ANALYTICS_ENGINE_IMAGE: `embeddings` is the one-shot analytics-engine-embeddings
-# entry point (ADR 0013), invoked with an entrypoint override against the same released
-# image the always-on `insights` service runs, never a second published artifact.
+# entry point (ADR 0013) and `similar-artists` the nightly analytics-engine-similar-artists one,
+# each invoked with an entrypoint override against the same released image the always-on
+# `insights` service runs, never a second published artifact.
 INTERNAL_IMAGES = {
     "schema-init": "DATABASE_SCHEMA_IMAGE",
     "api": "CATALOG_API_IMAGE",
@@ -37,6 +38,7 @@ INTERNAL_IMAGES = {
     "explore": "GRAPH_EXPLORER_IMAGE",
     "insights": "ANALYTICS_ENGINE_IMAGE",
     "embeddings": "ANALYTICS_ENGINE_IMAGE",
+    "similar-artists": "ANALYTICS_ENGINE_IMAGE",
     # groovemap-music/postgres: the official postgres:18-alpine plus pgvector, published from its own
     # repository (gm-deployment-p9ql) and reviewed here like every other GrooveMap release. It stays
     # Alpine (musl), so data directories created under postgres:18-alpine keep their collation.

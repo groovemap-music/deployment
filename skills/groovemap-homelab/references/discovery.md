@@ -130,7 +130,7 @@ network, a VPN route or the LAN overlaps it, plan a different subnet
 For an existing PostgreSQL or Valkey that runs as a container, note which network it is on
 (`docker inspect <name> --format '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}'`).
 Every service that connects to it must join that network, including the one-shot store checks:
-PostgreSQL `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`; Valkey `api`, `dashboard`, `insights` and `store-check-valkey`
+PostgreSQL `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `similar-artists`, `store-check-postgres` and `tableinator`; Valkey `api`, `dashboard`, `insights` and `store-check-valkey`
 ([override.md](override.md#attaching-to-an-existing-stores-network)).
 
 ## Occupied ports
