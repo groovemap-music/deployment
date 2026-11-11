@@ -699,6 +699,41 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of analytics-engine v0.9.0 and database-schema v0.15.1 (2026-11-11)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `analytics-engine:v0.9.0` | `sha256:43e98416b62c93fb9d26f778d5f9b000ae8a61ec679e1c8e3ee0a5b57dc08cf0` | `54c482b4cf1c8c46f6d1ee85efd00b6d6f9125bb` | `v0.8.0` — `sha256:68a51785cdaa973e754470b1be0d08219b8b4494fd8687f64c080c106aa80d0c` |
+| `database-schema:v0.15.1` | `sha256:9a6f38e485ef1120524e90c936da15d166188762e059473b79b39bc006ca788a` | `c3a76c9971e7c781d028ba4b488e0073793e755d` | `v0.15.0` — `sha256:25725f652ec8da32bc952a6f2d8d36a48fe21423f4cc350f1d73c969aaee8e5e` (image pin only; never roll the schema back) |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/<repo>@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0 for both images. On `linux/amd64`, each revision label is the commit its tag peels
+to, each version label equals the tag, and both images run as user `1000:1000`.
+
+**What changes.**
+
+- `analytics-engine` `v0.9.0` adds `analytics-engine-similar-artists` (gm-analytics-engine-dhit, -d6vm). It runs the
+  exact similar-artist job for an existing embeddings `model_version`, bounded by a deadline, and resumes from
+  checkpoints. It exits 0 when done or skipped, 75 when paused, and 1 or 2 when it fails. It skips the night while a
+  Discogs or MusicBrainz extraction latch is open or the embeddings run holds its advisory lock. The embeddings pipeline
+  now holds that lock (key `7419286113405217`) for its whole run, and its pool grows from 1 to 2 connections, within
+  `embedding_pipeline_login`'s limit of 5 on lux. The `insights` API is unchanged.
+- `database-schema` `v0.15.1` grants `embedding_pipeline` `SELECT` on `public.loader_extraction_latch`, and nothing
+  more (gm-database-schema-37cl). It is applied by `schema-init` and needs no manual step.
+
+**Paired floor.** Added: `ANALYTICS_ENGINE_IMAGE` `0.9.0` needs `DATABASE_SCHEMA_IMAGE` `0.15.1`. The nightly job's
+load check reads the latch as `embedding_pipeline`. On `v0.15.0` that read is refused, so every night would end failed.
+`check-images.py` records `RELEASED_IMAGE_VERSIONS` as `0.9.0` and `0.15.1`.
+
+**Nothing schedules the new job yet.** That is gm-deployment-h0d4 and homelab-dfmy, using Cronduit. The job is not
+enabled until gm-analytics-engine-js2v has passed against `v0.15.1`. That test runs the job's full path as the
+restricted `embedding_pipeline` login on PostgreSQL with pgvector.
+
+**On lux** run `schema-init` first, then recreate `insights`. After `schema-init`,
+`has_table_privilege('embedding_pipeline', 'public.loader_extraction_latch', 'SELECT')` is true.
+
+**Supersedes** `analytics-engine:v0.8.0` and `database-schema:v0.15.0`.
+
 ### Lux: MusicBrainz SQL loader switched to seen mode (2026-11-11)
 
 `brainztableinator` on lux now runs with `RELOAD_MODE=seen` (gm-deployment-ayza). That follows the rule in

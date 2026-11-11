@@ -71,7 +71,7 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "25725f652ec8da32bc952a6f2d8d36a48fe21423f4cc350f1d73c969aaee8e5e",  # database-schema v0.15.0  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "9a6f38e485ef1120524e90c936da15d166188762e059473b79b39bc006ca788a",  # database-schema v0.15.1  gitleaks:allow
     "CATALOG_API_IMAGE": "1f92cc7c49691326b7d2cfbd086b58b07f5a0c9ce0f775e879335f3b150d6b1b",  # catalog-api v0.15.3  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
@@ -81,14 +81,14 @@ RELEASED_IMAGE_DIGESTS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "aadae1176b8137ad638cb9e5fc97a99919b46df5c6bfe5c9112fe7904bf08bd1",  # musicbrainz-sql-loader v0.8.0  gitleaks:allow
     "OPERATIONS_CONSOLE_IMAGE": "9d1601c44decb380434b21dbd2f1bb9dbb3b715396158754f669c4877b66f234",  # operations-console v0.4.0  gitleaks:allow
     "GRAPH_EXPLORER_IMAGE": "f73ad3fa6493dd8dc9244195a6ab59f3498189dd948e1c4dcedccf52876217b4",  # graph-explorer v0.8.1  gitleaks:allow
-    "ANALYTICS_ENGINE_IMAGE": "68a51785cdaa973e754470b1be0d08219b8b4494fd8687f64c080c106aa80d0c",  # analytics-engine v0.8.0  gitleaks:allow
+    "ANALYTICS_ENGINE_IMAGE": "43e98416b62c93fb9d26f778d5f9b000ae8a61ec679e1c8e3ee0a5b57dc08cf0",  # analytics-engine v0.9.0  gitleaks:allow
     "POSTGRES_IMAGE": "7887f0365c4c36f007bd9238e69051483ed1617fc93f1e2b672b2cccdb10ae10",  # postgres v18.6.1  gitleaks:allow
 }
 
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.15.0",
+    "DATABASE_SCHEMA_IMAGE": "0.15.1",
     "CATALOG_API_IMAGE": "0.15.3",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
@@ -98,7 +98,7 @@ RELEASED_IMAGE_VERSIONS = {
     "MUSICBRAINZ_SQL_LOADER_IMAGE": "0.8.0",
     "OPERATIONS_CONSOLE_IMAGE": "0.4.0",
     "GRAPH_EXPLORER_IMAGE": "0.8.1",
-    "ANALYTICS_ENGINE_IMAGE": "0.8.0",
+    "ANALYTICS_ENGINE_IMAGE": "0.9.0",
     # MAJOR.MINOR is the PostgreSQL release; the last number is groovemap-music/postgres's own revision.
     "POSTGRES_IMAGE": "18.6.1",
 }
@@ -155,6 +155,10 @@ PAIRED_IMAGE_FLOORS = (
     # refresh owner; database-schema v0.14.0 adds the advisory lock that queues it behind a Discogs
     # refresh. On an older schema the two refreshes' TRUNCATEs could interleave.
     ("MUSICBRAINZ_SQL_LOADER_IMAGE", "0.8.0", "DATABASE_SCHEMA_IMAGE", "0.14.0"),
+    # analytics-engine v0.9.0's nightly similar-artists job reads public.loader_extraction_latch as
+    # embedding_pipeline before each run; database-schema v0.15.1 grants that read. Without it the
+    # load check is refused and every night ends failed.
+    ("ANALYTICS_ENGINE_IMAGE", "0.9.0", "DATABASE_SCHEMA_IMAGE", "0.15.1"),
 )
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external
