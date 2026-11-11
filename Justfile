@@ -108,6 +108,12 @@ embeddings-provision-login:
 embeddings-run:
     bash scripts/run-embeddings.sh
 
+# Runs one --max-runtime window of the exact similar-artists job (SIMILAR_ARTISTS_MAX_RUNTIME,
+# default 19800 s) and exits with the job's own code: 0 done or skipped, 75 paused (run it again),
+# 1 or 2 failed. See docs/maintenance.md#nightly-similar-artists-job.
+similar-artists-run:
+    bash scripts/run-similar-artists.sh
+
 # Requires approved, real digest-pinned image values in .env.
 smoke:
     docker compose up -d --wait

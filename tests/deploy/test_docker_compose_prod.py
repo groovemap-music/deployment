@@ -293,11 +293,11 @@ def test_prod_long_running_services_restart_always() -> None:
     """Restart-on-crash is not weakened: every service the overlay manages restarts ``always``.
 
     Services the overlay leaves alone (one-shot ``schema-init`` and
-    ``rabbitmq-dlq-policy-init``, the ``embeddings`` job) keep their base value.
+    ``rabbitmq-dlq-policy-init``, the ``embeddings`` and ``similar-artists`` jobs) keep their base value.
     """
     prod = _prod_compose()["services"]
     effective = _effective_restart_settings()
-    one_shots = {"schema-init", "rabbitmq-dlq-policy-init", "data-volume-init", "embeddings"}
+    one_shots = {"schema-init", "rabbitmq-dlq-policy-init", "data-volume-init", "embeddings", "similar-artists"}
 
     for name in prod:
         if name in one_shots:

@@ -202,6 +202,7 @@ services:
     volumes:
       - discogs_data:/volumes/discogs-data
       - musicbrainz_data:/volumes/musicbrainz-data
+      - similar_artists_spool:/volumes/similar-artists-spool
       - ./scripts/data-volume-init.sh:/scripts/data-volume-init.sh:ro
     network_mode: none
     read_only: true
@@ -1333,6 +1334,70 @@ services:
       - /tmp
       - *logs-tmpfs
 
+  # The nightly exact similar-artists job (analytics-engine docs/similar_artists.md, "Nightly
+  # runs"; docs/maintenance.md#nightly-similar-artists-job). The full catalog takes days of
+  # compute, so each run is bounded by --max-runtime (SIMILAR_ARTISTS_MAX_RUNTIME, default 19800 s
+  # = 5.5 h) and resumes from its checkpoint in the next window. Exit 0 is done or skipped, 75 is
+  # paused (the window ended; both count as success to a scheduler), 1 or 2 is failed.
+  #
+  # Never started by `docker compose up`: the "jobs" profile keeps it out, and `just
+  # similar-artists-run` (scripts/run-similar-artists.sh) runs one window by hand. A scheduler
+  # outside this project (Cronduit, a systemd timer) runs the same image with the same arguments
+  # and mounts the spool volume by its stable name, groovemap_similar_artists_spool.
+  #
+  # Same image, embedding_pipeline login, network and PostgreSQL TLS wiring as `embeddings`. One
+  # run at a time: the spool is single-writer (the job takes an flock on /spool/.lock and a
+  # second run fails fast). Sized for the job's own 12 GB memory guard: mem_limit and memswap 16g.
+  similar-artists:
+    image: "${ANALYTICS_ENGINE_IMAGE:?Set ANALYTICS_ENGINE_IMAGE to a digest-pinned analytics-engine image}"
+    container_name: groovemap-similar-artists
+    hostname: similar-artists
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint: ["analytics-engine-similar-artists"]
+    command:
+      - "--spool-dir"
+      - "/spool"
+      - "--max-runtime"
+      - "${SIMILAR_ARTISTS_MAX_RUNTIME:-19800}"
+      - "--threads"
+      - "${SIMILAR_ARTISTS_THREADS:-8}"
+      - "--status-file"
+      - "/spool/status.json"
+    profiles:
+      - jobs
+    environment:
+      <<: [*otel-env, *log-rotation-env]
+      OTEL_SERVICE_NAME: similar-artists
+      LOG_LEVEL: INFO
+      POSTGRES_DATABASE: groovemap
+      POSTGRES_HOST: postgres
+      PYTHONUNBUFFERED: "1"
+      EMBEDDING_PIPELINE_POSTGRES_USERNAME: "${EMBEDDING_PIPELINE_POSTGRES_USERNAME:-embedding_pipeline}"
+      EMBEDDING_PIPELINE_POSTGRES_PASSWORD: "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD:-groovemap}"
+    volumes:
+      - similar_artists_spool:/spool
+    depends_on:
+      <<: *otel-depends-on
+      schema-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - groovemap
+    mem_limit: "16g"
+    memswap_limit: "16g"
+    cpus: 8
+    restart: "no"
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - *logs-tmpfs
+
 volumes:
   rabbitmq_data:
   postgres_data:
@@ -1345,3 +1410,9 @@ volumes:
   victoria_metrics_data:
   victoria_traces_data:
   grafana_data:
+  # The similar-artists job's spool and checkpoints (about 3.75 GB of lists plus two ~3.78 GB
+  # checkpoints at K=50: plan for 2x). A stable explicit name, not the project-prefixed default, so
+  # a scheduler outside this Compose project (Cronduit) mounts it by name. `down` keeps it; only
+  # `down -v` or `docker volume rm` removes a paused run's checkpoint.
+  similar_artists_spool:
+    name: groovemap_similar_artists_spool

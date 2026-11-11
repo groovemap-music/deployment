@@ -553,3 +553,14 @@ services:
     secrets:
       - embedding_pipeline_username
       - embedding_pipeline_password
+
+  # The nightly similar-artists job logs in as the same embedding_pipeline login, from the same
+  # _FILE secrets, and is also a one-shot (no restart policy override).
+  similar-artists:
+    environment:
+      <<: *otel-prod-env
+      EMBEDDING_PIPELINE_POSTGRES_USERNAME_FILE: /run/secrets/embedding_pipeline_username
+      EMBEDDING_PIPELINE_POSTGRES_PASSWORD_FILE: /run/secrets/embedding_pipeline_password
+    secrets:
+      - embedding_pipeline_username
+      - embedding_pipeline_password

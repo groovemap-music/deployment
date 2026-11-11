@@ -60,6 +60,7 @@ STORE_CLIENTS = {
         "embeddings",
         "insights",
         "schema-init",
+        "similar-artists",
         "store-check-postgres",
         "tableinator",
     ),

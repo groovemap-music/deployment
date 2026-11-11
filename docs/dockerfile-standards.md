@@ -23,13 +23,17 @@ released image into the stack.
 | `explore` | [`graph-explorer`](https://github.com/groovemap-music/graph-explorer) | `GRAPH_EXPLORER_IMAGE` |
 | `insights` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
 | `embeddings` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
+| `similar-artists` | [`analytics-engine`](https://github.com/groovemap-music/analytics-engine) | `ANALYTICS_ENGINE_IMAGE` |
 | `postgres` | [`postgres`](https://github.com/groovemap-music/postgres) | `POSTGRES_IMAGE` |
 
-`embeddings` is the one exception to "each variable promotes exactly one
-service": it runs the same released `analytics-engine` image as `insights`,
-with its entrypoint overridden to the one-shot `analytics-engine-embeddings`
-job (see [Monthly embedding refresh](maintenance.md#monthly-embedding-refresh)),
-never a second published artifact.
+`embeddings` and `similar-artists` are the exceptions to "each variable
+promotes exactly one service": they run the same released `analytics-engine`
+image as `insights`, with the entrypoint overridden to the one-shot
+`analytics-engine-embeddings` job (see [Monthly embedding
+refresh](maintenance.md#monthly-embedding-refresh)) and to the resumable
+`analytics-engine-similar-artists` job (see [Nightly similar-artists
+job](maintenance.md#nightly-similar-artists-job)), never a second published
+artifact.
 
 `postgres` runs `ghcr.io/groovemap-music/postgres`: the official `postgres:18-alpine`, pinned by
 digest, plus pgvector, published from its own repository. It is promoted and reviewed like every

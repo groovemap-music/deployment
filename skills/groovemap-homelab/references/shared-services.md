@@ -138,7 +138,7 @@ Only for a store whose floor is met, and only with the user's approval at each s
    or `host.docker.internal` for one on the Docker host.
    If the server is a container on its own Docker network (`EXTERNAL_*_HOST` is a container name),
    the override must attach **every** client of that store to the network. PostgreSQL:
-   `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `store-check-postgres` and `tableinator`. Valkey: `api`, `dashboard`, `insights` and `store-check-valkey`. Start from
+   `api`, `brainztableinator`, `dashboard`, `embeddings`, `insights`, `schema-init`, `similar-artists`, `store-check-postgres` and `tableinator`. Valkey: `api`, `dashboard`, `insights` and `store-check-valkey`. Start from
    [`assets/override-external-store-network.yml`](../assets/override-external-store-network.yml)
    ([override.md](override.md#attaching-to-an-existing-stores-network)). A host that is a LAN
    address or `host.docker.internal` needs none.

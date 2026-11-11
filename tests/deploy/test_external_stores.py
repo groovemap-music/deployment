@@ -132,7 +132,7 @@ def test_the_dedicated_stack_keeps_its_stores_and_their_health_gates(local_rende
         assert not services[name].get("profiles"), name
     for name in ("api", "insights"):
         assert services[name]["depends_on"]["valkey"]["condition"] == "service_healthy"
-    for name in ("schema-init", "api", "tableinator", "brainztableinator", "dashboard", "insights", "embeddings"):
+    for name in ("schema-init", "api", "tableinator", "brainztableinator", "dashboard", "insights", "embeddings", "similar-artists"):
         assert services[name]["depends_on"]["postgres"]["condition"] == "service_healthy"
         assert "POSTGRES_PREPROVISIONED" not in services[name]["environment"]
 
@@ -1390,7 +1390,17 @@ def test_verify_full_reaches_every_postgresql_client(
     local_render: dict[str, Any], external_render: dict[str, Any], require_render: dict[str, Any]
 ) -> None:
     clients = _store_dependents(local_render, "postgres") | {"store-check-postgres"}
-    assert clients == {"schema-init", "api", "tableinator", "brainztableinator", "dashboard", "insights", "embeddings", "store-check-postgres"}
+    assert clients == {
+        "schema-init",
+        "api",
+        "tableinator",
+        "brainztableinator",
+        "dashboard",
+        "insights",
+        "embeddings",
+        "similar-artists",
+        "store-check-postgres",
+    }
     for name in clients:
         service = external_render["services"][name]
         assert service["environment"]["PGSSLMODE"] == "verify-full", name

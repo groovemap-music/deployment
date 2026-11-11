@@ -152,7 +152,11 @@ def test_extractor_data_mounts_keep_nocopy_and_wait_for_the_volume_init(combinat
     assert init["environment"] == {"TARGET_UID": "1001", "TARGET_GID": "1001"}
     assert sorted(init["cap_add"]) == ["CHOWN", "DAC_READ_SEARCH"] and init["cap_drop"] == ["ALL"]
     assert init["network_mode"] == "none" and init["read_only"] is True and init["restart"] == "no"
-    assert {m["target"] for m in init["volumes"] if m["type"] == "volume"} == {"/volumes/discogs-data", "/volumes/musicbrainz-data"}
+    assert {m["target"] for m in init["volumes"] if m["type"] == "volume"} == {
+        "/volumes/discogs-data",
+        "/volumes/musicbrainz-data",
+        "/volumes/similar-artists-spool",
+    }
     for name, (volume, target) in DATA_MOUNTS.items():
         service = services.get(name)
         if service is None:

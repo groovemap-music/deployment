@@ -1451,6 +1451,20 @@ ENABLE_SIMILAR_ARTISTS=false                   # exactly true or false; true als
 
 Provision the login once per stack with `just embeddings-provision-login`.
 
+### Similar-artists job
+
+The one-shot `similar-artists` service (Compose profile `jobs`) runs `analytics-engine-similar-artists`
+in bounded windows until the exact similar-artist lists are published. Run one window with
+`just similar-artists-run`; see [Maintenance](maintenance.md#nightly-similar-artists-job). It uses the
+`EMBEDDING_PIPELINE_POSTGRES_*` login above, and its spool is the volume `similar_artists_spool`
+(explicit name `groovemap_similar_artists_spool`).
+
+```bash
+# Optional
+SIMILAR_ARTISTS_MAX_RUNTIME=19800              # seconds of one window; keep it below the scheduler's timeout
+SIMILAR_ARTISTS_THREADS=8                      # kernel threads; does not change the lists
+```
+
 ### Brainzgraphinator
 
 ```bash
