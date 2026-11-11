@@ -699,6 +699,22 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of graph-explorer v0.8.1 (2026-11-10)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `graph-explorer:v0.8.1` | `sha256:f73ad3fa6493dd8dc9244195a6ab59f3498189dd948e1c4dcedccf52876217b4` | `b1d91ea59df123b67d1df76225c8e65880711dd6` | `v0.8.0` — `sha256:a260a020daff484d817700b8cf3b87ab47768ef1b8427b3b6452872cc12ac63e` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/graph-explorer@<digest> --owner groovemap-music
+--signer-repo groovemap-music/automation` exited 0. The revision label is the commit `v0.8.1` peels to, the version
+label is `v0.8.1`, and the image user is `1000:1000`.
+
+**What changes.** The accent colours come from design's promoted brand tokens (design 46763e4, gm-graph-explorer-stsq)
+instead of hand-copied hex values. The brass and oxblood 700 shades are unchanged; the 900 tints differ slightly but
+nothing renders them, so there is no visible change. On lux: an `explore`-only recreate.
+
+**Supersedes** `graph-explorer:v0.8.0`.
+
 ### Promotion of catalog-api v0.15.3 (2026-11-10)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
