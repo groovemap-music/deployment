@@ -48,7 +48,7 @@ def test_the_musicbrainz_loader_is_refused_on_an_older_schema(policy: dict[str, 
         f"{CATALOG} 0.15.3 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.8.0",
         f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.8.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.8.0",
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.8.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.8.0",
     ]
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.7.0"})
     assert len(policy["paired_floor_problems"](versions)) == 6  # the Discogs loader is refused too
@@ -59,11 +59,11 @@ def test_the_musicbrainz_refresh_owner_is_refused_without_the_refresh_lock(polic
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.13.0"})
     assert policy["paired_floor_problems"](versions) == [
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.13.0",
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.13.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.13.0",
     ]
     older_loader = dict(versions, **{MB_LOADER: "0.7.0"})
     assert policy["paired_floor_problems"](older_loader) == [
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.13.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.13.0",
     ]
 
 
@@ -75,7 +75,7 @@ def test_the_promoted_catalog_api_is_refused_on_the_previous_schema(policy: dict
         f"{CATALOG} 0.15.3 needs {SCHEMA} 0.11.0 or newer, and the reviewed set has 0.10.0",
         f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.10.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.10.0",
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.10.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.10.0",
     ]
 
 
@@ -85,15 +85,15 @@ def test_the_catalog_api_is_refused_on_schema_0_11_because_it_lacks_master_searc
     assert policy["paired_floor_problems"](versions) == [
         f"{CATALOG} 0.15.3 needs {SCHEMA} 0.12.0 or newer, and the reviewed set has 0.11.0",
         f"{MB_LOADER} 0.8.0 needs {SCHEMA} 0.14.0 or newer, and the reviewed set has 0.11.0",
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.11.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.11.0",
     ]
 
 
 def test_the_nightly_similar_artists_job_is_refused_without_the_latch_grant(policy: dict[str, Any]) -> None:
-    """The real declaration: analytics-engine 0.9.0 reads loader_extraction_latch as embedding_pipeline, and 0.15.0 lacks the grant."""
+    """The real declaration: analytics-engine 0.9.0 and newer (0.10.0 reviewed) read loader_extraction_latch as embedding_pipeline, and 0.15.0 lacks the grant."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{SCHEMA: "0.15.0"})
     assert policy["paired_floor_problems"](versions) == [
-        f"{ANALYTICS} 0.9.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.15.0",
+        f"{ANALYTICS} 0.10.0 needs {SCHEMA} 0.15.1 or newer, and the reviewed set has 0.15.0",
     ]
     assert policy["paired_floor_problems"](dict(versions, **{ANALYTICS: "0.8.0"})) == []
     assert policy["paired_floor_problems"](dict(versions, **{SCHEMA: "0.15.1"})) == []

@@ -699,6 +699,34 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of analytics-engine v0.10.0 (2026-11-12)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `analytics-engine:v0.10.0` | `sha256:11e2d7810f74bd4dbab33ba126b7f77f930064600c9aad14dc62349a3d6d9fa9` | `00e3c06e702d5847310f356ebf64aa7492bc41a4` | `v0.9.0` — `sha256:43e98416b62c93fb9d26f778d5f9b000ae8a61ec679e1c8e3ee0a5b57dc08cf0` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/analytics-engine@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64` the revision label is the commit `v0.10.0` peels to, the version
+label equals the tag, the image runs as user `1000:1000`, and the entrypoint is still `/app/.venv/bin/analytics-engine`.
+Running the published image with `similar-artists --help` prints the job's usage, and with an unknown subcommand it
+exits 2.
+
+**What changes.** The image's `analytics-engine` entrypoint is now a subcommand dispatcher (gm-analytics-engine-ej6s):
+`similar-artists [args]` runs the nightly job, `embeddings` runs the monthly load, and no arguments still starts
+`insights`, so the `insights` service is unchanged. Schedulers that can only set arguments now reach the jobs. Cronduit is
+one of them: its `cmd` replaces only the image CMD and it has no entrypoint setting, so on `v0.9.0` the documented job
+would have started the insights server and run until its timeout. The Cronduit example under "Scheduling the nightly run"
+now uses the subcommand. The Compose `similar-artists` service keeps its `entrypoint` override, which works on both
+versions, so an image rollback does not break `just similar-artists-run`.
+
+**Paired floor.** None is added. The existing `ANALYTICS_ENGINE_IMAGE` `0.9.0` → `DATABASE_SCHEMA_IMAGE` `0.15.1` floor
+covers `0.10.0`. `check-images.py` records `RELEASED_IMAGE_VERSIONS` as `0.10.0`.
+
+**On lux** recreate `insights` (`docker compose up -d --no-deps insights`). No schema step. The Cronduit job on lux
+(homelab-dfmy) takes this digest through homelab's `groovemap_ref` re-pin.
+
+**Supersedes** `analytics-engine:v0.9.0`.
+
 ### Promotion of analytics-engine v0.9.0 and database-schema v0.15.1 (2026-11-11)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
@@ -1992,7 +2020,7 @@ never stores in clear text: do not write the values into the file.
 name = "similar-artists"
 schedule = "0 1 * * *"
 image = "ghcr.io/groovemap-music/analytics-engine@sha256:<ANALYTICS_ENGINE_IMAGE digest>"
-cmd = ["analytics-engine-similar-artists", "--spool-dir", "/spool", "--max-runtime", "19800"]
+cmd = ["similar-artists", "--spool-dir", "/spool", "--max-runtime", "19800", "--threads", "8", "--status-file", "/spool/status.json"]
 network = "groovemap_groovemap"
 volumes = ["groovemap_similar_artists_spool:/spool"]
 timeout = "6h30m"
@@ -2010,6 +2038,12 @@ EMBEDDING_PIPELINE_POSTGRES_PASSWORD = "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD}"
 
 - `image` is the digest in `scripts/check-images.py` (`ANALYTICS_ENGINE_IMAGE`), so promoting a
   release means updating this one value too.
+- `cmd` starts with the `similar-artists` subcommand, not the `analytics-engine-similar-artists` script.
+  Cronduit's `cmd` replaces only the image's CMD and Cronduit has no entrypoint setting, so the job goes
+  through the image's `analytics-engine` entrypoint, which dispatches subcommands from analytics-engine
+  v0.10.0 (gm-analytics-engine-ej6s). On v0.9.0 that entrypoint ignores its arguments and starts the
+  insights server, which would run until the timeout. `--threads` and `--status-file` match the Compose
+  `similar-artists` service, so `/spool/status.json` holds the last night's status.
 - `network` is the stack's Compose network, `<compose project>_groovemap`; `docker network ls` shows it.
   `PGSSLROOTCERT` must be a path that exists inside the job container: mount the CA with an extra `volumes`
   entry, or leave the TLS keys out when the database is on the same Compose network without TLS.

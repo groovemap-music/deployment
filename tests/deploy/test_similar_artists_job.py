@@ -273,7 +273,19 @@ def test_the_documented_cronduit_job_matches_the_homelab_job_definition() -> Non
     job = _cronduit_job()
     assert job["name"] == "similar-artists"
     assert job["schedule"] == "0 1 * * *"
-    assert job["cmd"] == ["analytics-engine-similar-artists", "--spool-dir", "/spool", "--max-runtime", "19800"]
+    # Cronduit cannot replace the ENTRYPOINT, so the job is the entrypoint's `similar-artists` subcommand
+    # (analytics-engine v0.10.0+), with the same arguments as the Compose service.
+    assert job["cmd"] == [
+        "similar-artists",
+        "--spool-dir",
+        "/spool",
+        "--max-runtime",
+        "19800",
+        "--threads",
+        "8",
+        "--status-file",
+        "/spool/status.json",
+    ]
     assert job["success_exit_codes"] == [0, 75]
     assert job["timeout"] == "6h30m"
     assert job["memory"] == "16g"
