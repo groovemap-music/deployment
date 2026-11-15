@@ -825,7 +825,9 @@ seen reload are:
 - `relationships`: 10,272 (0.03% of 30.4M live), including its 6,086 purged rows;
 - `external_links`: 30,323 (0.2% of 15.4M live).
 
-In the shadow reload, the same tables had about one dead tuple per row. WAL volume for this reload alone can't be
+No per-reload snapshot exists for the shadow reload. Touch mode rewrites every row it sees, so it leaves about
+one dead tuple per row. Cumulative `n_tup_upd` on `relationships` is 37.3M, consistent with one full 30M-row touch
+pass plus ordinary updates, and that reload ended in autovacuum. WAL volume for this reload alone can't be
 isolated after the fact. `pg_stat_wal` is cumulative for the whole shared server (since 2026-04-27, 24.2 TB at this
 reading), and VictoriaMetrics has no per-table or WAL series from postgres-exporter. The dead-tuple counts are the
 direct measure. gm-deployment-ayza's acceptance is complete.
