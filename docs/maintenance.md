@@ -805,10 +805,30 @@ homelab's `groovemap_host_env` the same way, or the next apply puts `seen` back.
 `brainztableinator`, with `docker compose up -d --no-deps brainztableinator`. The musicbrainz-sql-loader configuration guide says which reload must come before the first purge after
 switching back.
 
-**Still to verify, on the next MusicBrainz reload.** The purge should run from the seen lists, and it should remove
-what that reload's comparison predicts. Unchanged rows should no longer be rewritten, so WAL volume and dead tuples on
-`musicbrainz.relationships` and `musicbrainz.external_links` should fall against the shadow reload above. Those figures
-get added to this record.
+**Verified on the next MusicBrainz reload (2026-11-14).** Dump `20261111-001001` was the first reload in seen mode.
+Its extraction latch was refreshed at 2026-11-14 12:15:31Z, and `🧹 MusicBrainz delete-reconciliation complete` logged
+`reload_mode: seen` with boundary 2026-11-14T04:47:24Z. Both seen lists were opened at 2026-11-11T03:41:42Z, before
+the reload began, and both reported `intact: true`. The purge ran from the seen lists, and its accounting closes:
+
+| Table | Rows | Seen keys | Purged (not seen) | Seen keys + purged |
+| --- | --- | --- | --- | --- |
+| `musicbrainz.relationships` | 30,158,452 | 30,152,366 | 6,086 | 30,158,452 |
+| `musicbrainz.external_links` | 15,427,554 | 15,426,309 | 1,245 | 15,427,554 |
+
+Cumulative `n_tup_del` agrees: `external_links` shows 2,195 deletes, which is this purge's 1,245 plus the shadow
+reload's 950.
+
+Unchanged rows are no longer rewritten. The shadow reload touched every row and ended with autovacuum on both tables
+(2026-11-11 03:37Z). The seen reload processed all 30.2M relationship and 15.4M external-link records, but neither
+table has been autovacuumed since. Read 2026-11-14 23:5xZ, before any autovacuum, the dead tuples left by the whole
+seen reload are:
+- `relationships`: 10,272 (0.03% of 30.4M live), including its 6,086 purged rows;
+- `external_links`: 30,323 (0.2% of 15.4M live).
+
+In the shadow reload, the same tables had about one dead tuple per row. WAL volume for this reload alone can't be
+isolated after the fact. `pg_stat_wal` is cumulative for the whole shared server (since 2026-04-27, 24.2 TB at this
+reading), and VictoriaMetrics has no per-table or WAL series from postgres-exporter. The dead-tuple counts are the
+direct measure. gm-deployment-ayza's acceptance is complete.
 
 ### Promotion of graph-explorer v0.8.1 (2026-11-10)
 
