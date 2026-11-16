@@ -601,3 +601,10 @@ def test_runtime_tmpfs_and_positive_log_checks_follow_active_smoke_stages() -> N
     gate_complete = text.index('pass "gate (uv off PATH): exit 0 once both loaders')
     phase_two_check = text.index("check_stack phase-2")
     assert gate_complete < phase_two_check, "MusicBrainz log probes must remain after the gate reaches 0"
+
+
+def test_the_smoke_sizes_the_similar_artists_job_to_the_host() -> None:
+    # Docker refuses a cpus limit above the host's cores, so a 4-CPU runner needs fewer than the default 8.
+    script = (ROOT / "scripts" / "smoke-homelab.sh").read_text()
+    assert 'set_env SIMILAR_ARTISTS_THREADS "$(python3 -c' in script
+    assert "min(8," in script
