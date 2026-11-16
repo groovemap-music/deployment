@@ -699,6 +699,29 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.16.1 (2026-11-16)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.16.1` | `sha256:17a085b04de1a00859158058f5f905ef109ba5caa6c3e80667e010adf6988ac0` | `911645dfa99789c922863e524e54e5794b13c510` | `v0.16.0` — `sha256:deaef3c8bf6d4ca44bb6843b4e3b0cc66de0914e7bdc27376886325a00b0b140` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.16.1` peels to, the
+version label equals the tag, and the image runs as user `1000:1000`.
+
+**What changes.**
+
+- A search genre filter returns only releases tagged with one of the chosen genres (gm-catalog-api-9vdz, operator
+  decision 2026-11-16). Before, releases with no genres passed every genre filter and were counted in the total.
+  Artist, label and master hits are unchanged.
+- The persistence contract copy matches database-schema v0.16.1. catalog-api reads none of the changed fields.
+
+**Paired floor.** None added. The floor self-check tests now name catalog-api `0.16.1` as the reviewed version.
+
+**On lux.** Pull and recreate `api`. No schema change, no loader stop.
+
+**Supersedes** `catalog-api:v0.16.0`.
+
 ### Promotion of database-schema v0.16.1 (2026-11-15)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
