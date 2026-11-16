@@ -699,6 +699,35 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.16.0 (2026-11-15)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.16.0` | `sha256:deaef3c8bf6d4ca44bb6843b4e3b0cc66de0914e7bdc27376886325a00b0b140` | `cdeb88bec4753fc1bb17081edc958fbd4d921a6f` | `v0.15.3` — `sha256:1f92cc7c49691326b7d2cfbd086b58b07f5a0c9ce0f775e879335f3b150d6b1b` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.16.0` peels to, the
+version label equals the tag, and the image runs as user `1000:1000`.
+
+**What changes.** The expensive graph routes are rate-limited, and path and live-trends work is bounded
+(gm-catalog-api-8fou, the last open item of the 2026-11-04 Cypher audit).
+- Every route gets a default limit of 300/minute. `/api/explore`, `/api/expand`, `/api/trends` and `/api/path` get
+  30, 60, 10 and 6 per minute, keyed by the signed-in user when there is one, otherwise by client IP.
+- `/api/path` stops at 10 s (it allowed 120 s) and depth 8, and refuses a search between two endpoints that both
+  have more than 500,000 edges.
+- `/api/trends` reads the stored per-year series. Its live fallback has an 8 s budget and runs one traversal at a
+  time.
+- All of these are environment-configurable (catalog-api `docs/configuration.md`), and the defaults need no `.env`
+  change.
+- The persistence contract copy matches database-schema v0.16.0, and OpenTelemetry moves to 1.45.2.
+
+**Paired floor.** None is added. The database-schema `0.16.0` → catalog-api `0.15.2` floor is met.
+`check-images.py` records `RELEASED_IMAGE_VERSIONS` as `0.16.0`.
+
+**On lux** recreate `api` after the database-schema v0.16.0 `schema-init`.
+
+**Supersedes** `catalog-api:v0.15.3`.
+
 ### Promotion of database-schema v0.16.0 (2026-11-15)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
