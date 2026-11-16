@@ -73,7 +73,7 @@ IMAGE_OWNERS = {
 # anything else. `.env.example` and `config/validation.env` deliberately stay on
 # placeholder and syntax-only digests, so these are the only real digests in the tree.
 RELEASED_IMAGE_DIGESTS = {
-    "DATABASE_SCHEMA_IMAGE": "9a6f38e485ef1120524e90c936da15d166188762e059473b79b39bc006ca788a",  # database-schema v0.15.1  gitleaks:allow
+    "DATABASE_SCHEMA_IMAGE": "3e3bf08be4e8344130c070a452d5edd951ecaa53497a94357cfb38878ae89100",  # database-schema v0.16.0  gitleaks:allow
     "CATALOG_API_IMAGE": "1f92cc7c49691326b7d2cfbd086b58b07f5a0c9ce0f775e879335f3b150d6b1b",  # catalog-api v0.15.3  gitleaks:allow
     "DISCOGS_INGESTION_IMAGE": "aff3558504b8166ec8fb11a96b48eaee2754a57209b4b57a5f39603000dc74d9",  # discogs-ingestion v0.4.1  gitleaks:allow
     "MUSICBRAINZ_INGESTION_IMAGE": "b3f03785faa03b0d445b74a3ab31f82d842bc0e739500b2021ac515fcf6a712c",  # musicbrainz-ingestion v0.4.1  gitleaks:allow
@@ -90,7 +90,7 @@ RELEASED_IMAGE_DIGESTS = {
 # Image variable -> the release RELEASED_IMAGE_DIGESTS pins, as written in the comment beside each
 # digest (tests keep the two in step). The capability floors below are judged against these.
 RELEASED_IMAGE_VERSIONS = {
-    "DATABASE_SCHEMA_IMAGE": "0.15.1",
+    "DATABASE_SCHEMA_IMAGE": "0.16.0",
     "CATALOG_API_IMAGE": "0.15.3",
     "DISCOGS_INGESTION_IMAGE": "0.4.1",
     "MUSICBRAINZ_INGESTION_IMAGE": "0.4.1",
@@ -161,6 +161,10 @@ PAIRED_IMAGE_FLOORS = (
     # embedding_pipeline before each run; database-schema v0.15.1 grants that read. Without it the
     # load check is refused and every night ends failed.
     ("ANALYTICS_ENGINE_IMAGE", "0.9.0", "DATABASE_SCHEMA_IMAGE", "0.15.1"),
+    # database-schema v0.16.0 drops public.identity_ledger_work_summary_day (gm-database-schema-ahg8).
+    # catalog-api before v0.15.2 reads it for a works-list window of full days; v0.15.2
+    # (gm-catalog-api-l7ek.3) reads identity_ledger_work_events instead. An older API would fail that route.
+    ("DATABASE_SCHEMA_IMAGE", "0.16.0", "CATALOG_API_IMAGE", "0.15.2"),
 )
 
 # Overlay service -> the base service whose pinned image it must run, byte for byte: the external

@@ -699,6 +699,36 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of database-schema v0.16.0 (2026-11-15)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.16.0` | `sha256:3e3bf08be4e8344130c070a452d5edd951ecaa53497a94357cfb38878ae89100` | `83296964752abbfd2cfe6230863ccf0bf356f1af` | `v0.15.1` — `sha256:9a6f38e485ef1120524e90c936da15d166188762e059473b79b39bc006ca788a` (image pin only; a rollback re-creates the dropped table empty, see below) |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/database-schema@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.16.0` peels to, the
+version label equals the tag, and the image runs as user `1000:1000`.
+
+**What changes.**
+
+- Schema-init drops 16 indexes nothing reads, freeing 14.6 GiB on lux (gm-database-schema-zd7u). Each had zero
+  scans on lux and no reader in any consumer repository, rarely-run paths included. The evidence, and the 68
+  never-scanned indexes kept with a reason for each, are in database-schema
+  `docs/audits/2026-11-14-unread-index-drops.md`. Each drop is `DROP INDEX IF EXISTS` under schema-init's
+  `lock_timeout`.
+- Schema-init drops `public.identity_ledger_work_summary_day` (796 MB on lux), and a full ledger rebuild gets about
+  50 s shorter (gm-database-schema-ahg8). catalog-api stopped reading it in v0.15.2; lux runs v0.15.3.
+- OpenTelemetry moves to 1.45.2 / 0.66b2 (`traceparent` parsing denial of service).
+
+**Paired floor.** Added: `DATABASE_SCHEMA_IMAGE` `0.16.0` needs `CATALOG_API_IMAGE` `0.15.2`. A catalog-api older
+than that reads the dropped table for a works-list window of full days. The too-new schema used in the floor
+self-check tests moves to `0.17.0`.
+
+**On lux.** Stop the two loaders, run `schema-init`, then start them again, the same sequence as earlier schema
+promotions. There's no manual SQL.
+
+**Supersedes** `database-schema:v0.15.1`.
+
 ### Promotion of analytics-engine v0.10.0 (2026-11-12)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
