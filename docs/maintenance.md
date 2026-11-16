@@ -699,6 +699,42 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of database-schema v0.16.1 (2026-11-15)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `database-schema:v0.16.1` | `sha256:57a31631cc672bc38c2879c2992bf7aace22b070e0659c2c2a4f68417c75f092` | `c093c092524b9ac206c40ed73986b009d933888e` | `v0.16.0` — `sha256:3e3bf08be4e8344130c070a452d5edd951ecaa53497a94357cfb38878ae89100` (image pin only; the dropped indexes come back only with a rebuild, see below) |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/database-schema@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.16.1` peels to and the
+version label equals the tag.
+
+**What changes.** Schema-init drops eight more indexes that nothing reads, 2.35 GB (2.19 GiB) on lux
+(gm-database-schema-ntr5):
+
+- The free-text key lookups `graph.credited_to_company_id_hash`, `graph.person_name_trgm`, `graph.person_name_hash`
+  and `graph.company_company_id_hash` (2.12 GB). They were built for a PostgreSQL read of person and company that
+  went away with catalog-api's PostgreSQL graph backend in October 2026. `graph.same_as_person_name_hash` stays: the
+  embedding pipeline joins on it (30.9M scans).
+- The search filter indexes `idx_releases_year`, `idx_masters_year`, `idx_releases_genres` and
+  `idx_releases_media_families` (232 MB). catalog-api's search filters run on `public.release_search` and
+  `public.master_search` after the title match, so no query reaches them (gm-catalog-api-q6fy).
+
+Lux showed 0 lifetime scans for seven of the eight and 2 for `idx_releases_year` (statistics never reset). The free-text
+key migration now restores `NOT NULL` on `graph.person.name`, `graph.company.company_id` and
+`graph.credited_to.company_id` without building a lookup; on lux all three already have it. The persistence contract's
+`graph_schema.free_text_keys` records `lookup: null` for those relations and a new `not_null_restored` field, which no
+consumer reads. Rollback of a drop is the original `CREATE INDEX` (in database-schema
+`tests/integration/test_unread_index_drops.py`), `CONCURRENTLY` on a live database.
+
+**Paired floor.** None added: no image reads the dropped indexes. The day-rollup floor test now names the reviewed
+schema version instead of a fixed `0.16.0`.
+
+**On lux.** Stop the two loaders, run `schema-init`, then start them again, the same sequence as earlier schema
+promotions. There's no manual SQL.
+
+**Supersedes** `database-schema:v0.16.0`.
+
 ### Promotion of catalog-api v0.16.0 (2026-11-15)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |

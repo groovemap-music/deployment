@@ -201,8 +201,10 @@ def test_check_images_refuses_a_malformed_floor(tmp_path: Path) -> None:
 def test_the_schema_that_drops_the_day_rollup_is_refused_with_an_api_that_still_reads_it(policy: dict[str, Any]) -> None:
     """The real declaration: schema 0.16.0 drops identity_ledger_work_summary_day, which catalog-api before 0.15.2 reads."""
     versions = dict(policy["RELEASED_IMAGE_VERSIONS"], **{CATALOG: "0.15.1"})
+    # The problem names the reviewed schema version, which moves with every schema promotion.
+    reviewed_schema = versions[SCHEMA]
     assert policy["paired_floor_problems"](versions) == [
-        f"{SCHEMA} 0.16.0 needs {CATALOG} 0.15.2 or newer, and the reviewed set has 0.15.1",
+        f"{SCHEMA} {reviewed_schema} needs {CATALOG} 0.15.2 or newer, and the reviewed set has 0.15.1",
     ]
     assert policy["paired_floor_problems"](dict(versions, **{CATALOG: "0.15.2"})) == []
     assert policy["paired_floor_problems"](dict(versions, **{SCHEMA: "0.15.1"})) == []
