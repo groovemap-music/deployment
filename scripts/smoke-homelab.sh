@@ -243,6 +243,8 @@ set_env COMPOSE_PROJECT_NAME "$PROJECT"
 set_env UID "$uid"
 set_env GID "$gid"
 set_env WEB_BIND_ADDRESS 127.0.0.1
+# The similar-artists job asks Docker for as many CPUs as threads: size it to this host, at most the default 8.
+set_env SIMILAR_ARTISTS_THREADS "$(python3 -c 'import os; print(min(8, len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1))')"
 set_env DATA_BIND_ADDRESS 127.0.0.1
 set_env GROOVEMAP_POSTGRES external
 set_env EXTERNAL_POSTGRES_HOST homelab-postgres
