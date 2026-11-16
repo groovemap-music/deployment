@@ -726,6 +726,14 @@ version label equals the tag, and the image runs as user `1000:1000`.
 
 **On lux** recreate `api` after the database-schema v0.16.0 `schema-init`.
 
+**Deployed on lux 2026-11-16 01:17Z** at deployment `f599218`, together with database-schema v0.16.0. `env-init`
+refreshed `DATABASE_SCHEMA_IMAGE` and `CATALOG_API_IMAGE` (backup `.env.20261116T011715798486Z.bak`). The two loaders
+were stopped (both idle, every extraction latch refreshed), `schema-init` exited 0, and the loaders were started again
+(healthy; `brainztableinator` still reports `Reload mode seen`). Then `api` was recreated, and it is healthy. All 16
+retired indexes and `identity_ledger_work_summary_day` are gone, and the database shrank from 277 GB to 261 GB
+(297,272,907,455 to 280,212,330,175 bytes). `/api/trends` for Rock answers in 0.10 s from the stored series (17.5 s in
+the audit), and `/api/explore` and `/api/trends` return `X-RateLimit-Limit` 30 and 10.
+
 **Supersedes** `catalog-api:v0.15.3`.
 
 ### Promotion of database-schema v0.16.0 (2026-11-15)
