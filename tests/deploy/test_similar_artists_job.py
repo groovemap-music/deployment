@@ -116,6 +116,23 @@ def test_the_window_comes_from_the_environment(tmp_path: Path) -> None:
     assert command[command.index("--threads") + 1] == "4"
 
 
+def test_the_cpu_limit_and_the_thread_count_come_from_one_setting(tmp_path: Path) -> None:
+    docker = _docker()
+    default = _render("docker-compose.yml")["services"]["similar-artists"]
+    assert float(default["cpus"]) == 8.0
+    assert default["command"][default["command"].index("--threads") + 1] == "8"
+    env = tmp_path / "threads.env"
+    env.write_text((ROOT / "config" / "validation.env").read_text() + "SIMILAR_ARTISTS_THREADS=3\n")
+    completed = subprocess.run(
+        [docker, "compose", "--env-file", str(env), "--profile", "jobs", "config", "--format", "json"],
+        cwd=ROOT, capture_output=True, text=True, check=False, timeout=120,
+    )  # fmt: skip
+    assert completed.returncode == 0, completed.stderr
+    job = json.loads(completed.stdout)["services"]["similar-artists"]
+    assert float(job["cpus"]) == 3.0
+    assert job["command"][job["command"].index("--threads") + 1] == "3"
+
+
 def test_the_spool_volume_has_a_stable_name_and_is_not_external() -> None:
     volumes = _render("docker-compose.yml")["volumes"]
     assert volumes["similar_artists_spool"]["name"] == SPOOL_VOLUME
