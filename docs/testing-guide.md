@@ -284,6 +284,8 @@ runner (4 vCPU, 16 GB). The successful full run below took **725 seconds
 (12 minutes 5 seconds)**, including both monitoring shapes, the real fixture,
 MusicBrainz phase 2 and all negative cases. GitHub does not bill hosted runners
 for a public repository. Pushes to the same branch cancel the run in progress.
+Adding any other label to a pull request (Dependabot labels each one it opens)
+skips the smoke and leaves the branch's run alone.
 
 Ordinary CI uses `env-init`'s reviewed release table. Manual `workflow_dispatch`
 can select an explicit SQL or graph candidate in its scratch stack. A graph
