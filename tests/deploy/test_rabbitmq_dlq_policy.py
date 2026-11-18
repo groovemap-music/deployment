@@ -69,7 +69,7 @@ def _construct_undefined(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
     return None
 
 
-_IgnoreUnknownTagsLoader.add_constructor(None, _construct_undefined)  # type: ignore[arg-type]
+_IgnoreUnknownTagsLoader.add_constructor(None, _construct_undefined)
 
 
 # The 16 real DLQ names, computed the same way as the checker script, kept here

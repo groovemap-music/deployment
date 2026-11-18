@@ -51,7 +51,7 @@ def _construct_undefined(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
 
 # PyYAML supports a None tag as the default/fallback constructor at runtime;
 # the type stub only types the tag param as str, hence the ignore below.
-_IgnoreUnknownTagsLoader.add_constructor(None, _construct_undefined)  # type: ignore[arg-type]
+_IgnoreUnknownTagsLoader.add_constructor(None, _construct_undefined)
 
 
 def _load_compose(path: Path) -> dict[str, Any]:
