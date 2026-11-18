@@ -24,7 +24,7 @@ def _construct_tagged(loader: yaml.SafeLoader, node: yaml.Node) -> Any:
     return loader.construct_scalar(node)
 
 
-_ComposeLoader.add_constructor(None, _construct_tagged)  # type: ignore[arg-type]
+_ComposeLoader.add_constructor(None, _construct_tagged)
 
 
 def _compose(name: str) -> dict[str, Any]:
