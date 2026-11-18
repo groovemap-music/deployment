@@ -34,8 +34,10 @@ GROOVEMAP_POSTGRES = "ghcr.io/groovemap-music/postgres@sha256:" + "1" * 64  # co
 #   "root":  image config has no USER; the entrypoint (or the wrapper in scripts/) reads the
 #            secret as root, then drops privileges. Needs root and CAP_DAC_OVERRIDE.
 INVENTORY: dict[str, dict[str, str]] = {
+    # Linux/amd64 config sha256:bc5ca66188ced0ed137172d30a53944c7f13e183c099cae842da777103feedaa:
+    # User 472, entrypoint /run.sh; Compose still runs it as the secret owner.
     "grafana": {
-        "image": "grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205",
+        "image": "grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf",
         "image_user": "472",
         "reads_as": "owner",
     },
@@ -57,23 +59,27 @@ INVENTORY: dict[str, dict[str, str]] = {
         "image_user": "",
         "reads_as": "root",  # docker-entrypoint.sh file_env, before gosu postgres
     },
+    # Linux/amd64 config sha256:5903962107e844811c3f5176676cd6009bfd67ac7f1a925bb100c9c65c1e2ba9:
+    # No USER; docker-entrypoint.sh still starts as root.
     "rabbitmq": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # scripts/rabbitmq-entrypoint.sh, before docker-entrypoint.sh drops
     },
     "rabbitmq-dlq-policy-init": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # runs as the image default (root); scripts/rabbitmq-dlq-policy-init.sh
     },
     "data-volume-init": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # user 0:0 with CHOWN + DAC_READ_SEARCH only; scripts/data-volume-init.sh reads no secret
     },
+    # Linux/amd64 config sha256:220fc14aef35347025f2cc7d27032e04ba53ff69de451fb2d98786a2e5c45cc5:
+    # No USER; the tini entrypoint still runs /startup/docker-entrypoint.sh.
     "neo4j": {
-        "image": "neo4j:2026.10.1-community@sha256:7dbd307cc8f35d6a061cf71659d3d8f783c3db9e8c2f5bb9d54f77921931952a",
+        "image": "neo4j:2026.10.2-community@sha256:4a2fd4f41ce384aa7d6a74b399f22c202e154f3966119c28a18ed9a500904f5e",
         "image_user": "",
         "reads_as": "root",  # scripts/neo4j-entrypoint.sh, before /startup/docker-entrypoint.sh drops
     },
