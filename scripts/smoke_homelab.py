@@ -173,6 +173,9 @@ def override_model(
         networks[MONITORING_NETWORK_KEY] = {"external": True, "name": monitoring_network}
     for name in STAND_INS:
         services.setdefault(name, {}).update(json.loads(json.dumps(STAND_IN)))
+    # The fixture and ownership probes are not performance measurements. Keep the
+    # real job image and mounts while making its 8-CPU production limit fit CI hosts.
+    services.setdefault("similar-artists", {})["cpus"] = 1
     for name, variables in (environment or {}).items():
         services.setdefault(name, {}).setdefault("environment", {}).update(variables)
     return {"services": dict(sorted(services.items())), "networks": networks}
