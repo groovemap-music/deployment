@@ -59,18 +59,20 @@ INVENTORY: dict[str, dict[str, str]] = {
         "image_user": "",
         "reads_as": "root",  # docker-entrypoint.sh file_env, before gosu postgres
     },
+    # Linux/amd64 config sha256:5903962107e844811c3f5176676cd6009bfd67ac7f1a925bb100c9c65c1e2ba9:
+    # No USER; docker-entrypoint.sh still starts as root.
     "rabbitmq": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # scripts/rabbitmq-entrypoint.sh, before docker-entrypoint.sh drops
     },
     "rabbitmq-dlq-policy-init": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # runs as the image default (root); scripts/rabbitmq-dlq-policy-init.sh
     },
     "data-volume-init": {
-        "image": "rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407",
+        "image": "rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c",
         "image_user": "",
         "reads_as": "root",  # user 0:0 with CHOWN + DAC_READ_SEARCH only; scripts/data-volume-init.sh reads no secret
     },
