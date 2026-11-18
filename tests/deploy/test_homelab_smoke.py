@@ -160,6 +160,14 @@ def test_only_the_extractors_are_stand_ins() -> None:
         assert set(model["services"][name]) == {"entrypoint", "init", "healthcheck"}
 
 
+def test_smoke_jobs_fit_ci_hosts_without_replacing_their_runtime() -> None:
+    model = smoke.override_model(_asset(), NETWORK)
+    assert model["services"]["similar-artists"]["cpus"] == 1
+    assert set(model["services"]["similar-artists"]) == {"cpus", "networks"}
+    production = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    assert production["services"]["similar-artists"]["cpus"] == 8
+
+
 def test_negative_cases_omit_an_attachment_or_add_environment() -> None:
     model = smoke.override_model(
         _asset(), NETWORK, omit=["store-check-postgres"], environment={"api": {"POSTGRES_HOST": "elsewhere"}, "rabbitmq-dlq-policy-init": {"X": "1"}}
