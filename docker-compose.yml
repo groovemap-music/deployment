@@ -1386,7 +1386,7 @@ services:
       - groovemap
     mem_limit: "16g"
     memswap_limit: "16g"
-    cpus: 8
+    cpus: "${SIMILAR_ARTISTS_THREADS:-8}"
     restart: "no"
     logging: *default-logging
     security_opt:

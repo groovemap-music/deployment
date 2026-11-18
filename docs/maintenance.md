@@ -699,6 +699,29 @@ commit each release tag peels to, `org.opencontainers.image.version` equals the 
 `RELEASED_IMAGE_VERSIONS` as `0.13.0`, `0.6.0`, `0.7.0` and `0.7.0` for the four images; no other pin changes. The
 too-new schema floor tests now use `0.14.0`, since `0.13.0` is the pinned release.
 
+### Promotion of catalog-api v0.16.1 (2026-11-16)
+
+| Image | Reviewed digest | Source revision | Rollback tag and digest |
+| --- | --- | --- | --- |
+| `catalog-api:v0.16.1` | `sha256:17a085b04de1a00859158058f5f905ef109ba5caa6c3e80667e010adf6988ac0` | `911645dfa99789c922863e524e54e5794b13c510` | `v0.16.0` — `sha256:deaef3c8bf6d4ca44bb6843b4e3b0cc66de0914e7bdc27376886325a00b0b140` |
+
+`gh attestation verify oci://ghcr.io/groovemap-music/catalog-api@<digest> --owner groovemap-music --signer-repo
+groovemap-music/automation` exited 0. On `linux/amd64`, the revision label is the commit `v0.16.1` peels to, the
+version label equals the tag, and the image runs as user `1000:1000`.
+
+**What changes.**
+
+- A search genre filter returns only releases tagged with one of the chosen genres (gm-catalog-api-9vdz, operator
+  decision 2026-11-16). Before, releases with no genres passed every genre filter and were counted in the total.
+  Artist, label and master hits are unchanged.
+- The persistence contract copy matches database-schema v0.16.1. catalog-api reads none of the changed fields.
+
+**Paired floor.** None added. The floor self-check tests now name catalog-api `0.16.1` as the reviewed version.
+
+**On lux.** Pull and recreate `api`. No schema change, no loader stop.
+
+**Supersedes** `catalog-api:v0.16.0`.
+
 ### Promotion of database-schema v0.16.1 (2026-11-15)
 
 | Image | Reviewed digest | Source revision | Rollback tag and digest |
@@ -2023,7 +2046,7 @@ What this repository provides:
 - **The `similar-artists` service** (Compose profile `jobs`, so `docker compose up` never starts it).
   It runs the same digest-pinned `ANALYTICS_ENGINE_IMAGE` as `insights` and `embeddings`, with the
   `embedding_pipeline` login, the PostgreSQL TLS wiring and the `groovemap` network of the
-  `embeddings` job, `mem_limit` and `memswap_limit` of 16g and `cpus: 8`. Its command is
+  `embeddings` job, `mem_limit` and `memswap_limit` of 16g, and a `cpus` limit equal to `--threads`. Its command is
   `--spool-dir /spool --max-runtime ${SIMILAR_ARTISTS_MAX_RUNTIME:-19800} --threads
   ${SIMILAR_ARTISTS_THREADS:-8} --status-file /spool/status.json`.
 - **The spool volume**, `similar_artists_spool`, with the explicit name
@@ -2169,6 +2192,12 @@ EMBEDDING_PIPELINE_POSTGRES_PASSWORD = "${EMBEDDING_PIPELINE_POSTGRES_PASSWORD}"
   v0.10.0 (gm-analytics-engine-ej6s). On v0.9.0 that entrypoint ignores its arguments and starts the
   insights server, which would run until the timeout. `--threads` and `--status-file` match the Compose
   `similar-artists` service, so `/spool/status.json` holds the last night's status.
+- **Size `--threads` and `cpus` together.** The example is sized for an 8-core host (lux). On a host with
+  fewer cores set both to a number it can grant: Docker refuses to create a container whose CPU limit
+  exceeds the host's cores ("range of CPUs is from 0.01 to 4.00"). Run time scales roughly inversely with
+  threads, so 4 threads take about twice the 34 h of the full catalog at 8. In Compose both come from the
+  one setting `SIMILAR_ARTISTS_THREADS` (default 8, in `.env`); with a scheduler, set the `--threads` value
+  and the job's `cpus` to the same number.
 - `network` is the stack's Compose network, `<compose project>_groovemap`; `docker network ls` shows it.
   `PGSSLROOTCERT` must be a path that exists inside the job container: mount the CA with an extra `volumes`
   entry, or leave the TLS keys out when the database is on the same Compose network without TLS.
