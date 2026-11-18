@@ -95,7 +95,7 @@ services:
     restart: "no"
 
   homelab-victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
+    image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
     networks:
       monitoring:
         aliases:
@@ -116,7 +116,7 @@ services:
     restart: "no"
 
   homelab-grafana:
-    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     environment:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/homelab_admin_password
       GF_ANALYTICS_REPORTING_ENABLED: "false"
