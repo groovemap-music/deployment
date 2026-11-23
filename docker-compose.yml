@@ -82,7 +82,7 @@ networks:
 services:
   # Message broker
   rabbitmq:
-    image: rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c
+    image: rabbitmq:4-management@sha256:61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677
     container_name: groovemap-rabbitmq
     hostname: rabbitmq
     ulimits:
@@ -154,7 +154,7 @@ services:
   # Neither this service nor the policy it declares touches any queue declaration — the
   # four catalog consumers' DLQs stay classic; see docs/admin-guide.md#dlq-size-cap-policy.
   rabbitmq-dlq-policy-init:
-    image: rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c
+    image: rabbitmq:4-management@sha256:61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677
     container_name: groovemap-rabbitmq-dlq-policy-init
     hostname: rabbitmq-dlq-policy-init
     entrypoint: ["/scripts/rabbitmq-dlq-policy-init.sh"]
@@ -191,7 +191,7 @@ services:
   # network, and it never deletes, chmods or rewrites contents. A no-op when ownership already
   # matches. See docs/docker-security.md.
   data-volume-init:
-    image: rabbitmq:4-management@sha256:753099a19b577c322117f793f864b3129cbba96d40317221a69d73976e3c843c
+    image: rabbitmq:4-management@sha256:61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677
     container_name: groovemap-data-volume-init
     hostname: data-volume-init
     user: "0:0"
@@ -312,7 +312,7 @@ services:
       - no-new-privileges:true
 
   valkey:
-    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    image: valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882
     container_name: groovemap-valkey
     hostname: valkey
     command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
@@ -339,7 +339,7 @@ services:
   # scrapes this on :9187. Not published to the host — it exposes server
   # internals and has no authentication of its own.
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    image: prometheuscommunity/postgres-exporter:v0.21.1@sha256:3b8e05a84282cd1199ad2fb6c66f362738bf4c68c1547d8f4226a34a7dd6d8d7
     container_name: groovemap-postgres-exporter
     hostname: postgres-exporter
     environment:
@@ -460,7 +460,7 @@ services:
   # That is still the right denominator for these containers, but it is not the
   # machine's own resource usage. See docs/observability.md.
   node-exporter:
-    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    image: prom/node-exporter:v1.13.1@sha256:7296504d4ada44b7d7ab4431e27e9f9900d8488f8d55842f4b12ae2704e16dfe
     container_name: groovemap-node-exporter
     hostname: node-exporter
     command:
